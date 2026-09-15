@@ -101,3 +101,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-15 | Frontend Web Application | Built Next.js UI with Timeline, Smart Triage dashboard, People tab, and Sync manager | `[Completed]` |
 | 2026-09-15 | Event Stories & Live Search | Added Spatiotemporal event clustering ("Moments & Outings") and real-time multi-attribute search | `[Completed]` |
 | 2026-09-15 | Inotify Background Watcher | Integrated `watchdog` daemon to automatically detect and ingest dropped files into `/data/originals` | `[Completed]` |
+| 2026-09-15 | Dockerfile Fix | Fixed frontend Dockerfile COPY syntax and ensured public directory creation | `[Completed]` |
