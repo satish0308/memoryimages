@@ -1,0 +1,1 @@
+"""MyMemoryPics Core Services Package."""
