@@ -10,8 +10,9 @@ from app.models.media import SourceType
 from app.services.scanner import scan_file
 
 SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/photoslibrary.readonly"
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/drive.readonly"
 ]
 
 def get_google_auth_url() -> Dict[str, str]:
@@ -39,7 +40,7 @@ def get_google_auth_url() -> Dict[str, str]:
         auth_url, state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
-            prompt="consent"
+            prompt="select_account consent"
         )
         return {"auth_url": auth_url, "state": state}
     except Exception as e:
