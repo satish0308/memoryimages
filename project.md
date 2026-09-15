@@ -142,3 +142,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-15 | Interactive Pan & Zoom | Implemented smooth wheel zooming, drag-to-pan, 100% reset, and keyboard navigation in Lightbox | `[Completed]` |
 | 2026-09-15 | Timeline Scale & Density Zoom | Added Year/Month/Day scaling, grid thumbnail density controls (Compact/Normal/Large), and group select | `[Completed]` |
 | 2026-09-15 | Bulk Actions & ZIP Export | Built BulkActionBar, streaming ZIP download endpoint, batch category updates, and safe batch deletion | `[Completed]` |
+| 2026-09-15 | Moments & Outings Story Modal | Implemented interactive click-to-view modal with event photo grid, 1-click ZIP export, and select all | `[Completed]` |
