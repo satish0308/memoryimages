@@ -51,10 +51,11 @@ def classify_media_item(
 ) -> Tuple[MediaCategory, float, datetime | None]:
     """
     Intelligent classifier that segregates media into:
-    - SCREENSHOT: Auto-assigned an expiration date (default 30 days)
-    - DOCUMENT_BILL: Placed into Document Vault
-    - MEME_JUNK: Flagged for quick cleanup review
+    - SCREENSHOT: Flagged for manual review (default 30 days, NEVER auto-deleted)
+    - DOCUMENT_BILL: Placed into Document & Receipts Vault
+    - MEME_JUNK: Flagged for manual clutter review
     - MEMORY: High-value personal memory
+    NOTE: Zero Auto-Deletion Policy - no photos are ever deleted automatically.
     """
     base_name = os.path.basename(filename).lower()
     has_camera_exif = bool(camera_make or camera_model)

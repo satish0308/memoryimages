@@ -149,11 +149,11 @@ export default function TriagePage() {
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-amber-700 font-bold text-lg">
               <Sparkles className="w-5 h-5 text-amber-500" />
-              Smart Triage & Clutter Sweep
+              Smart Triage & Manual Review
             </div>
             <p className="text-xs text-slate-600 max-w-2xl">
-              Automatic segregation keeps your precious memories pure while temporary screenshots, 
-              utility bills, and duplicate burst photos are managed with smart expiration rules.
+              <b>Zero Auto-Delete Guarantee:</b> Photos are never deleted automatically. 
+              The system groups screenshots, bills, and burst duplicates so you can review candidates and decide what to keep or delete.
             </p>
           </div>
 
@@ -161,7 +161,7 @@ export default function TriagePage() {
           <div className="bg-white/80 backdrop-blur-sm border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3">
             <HardDrive className="w-8 h-8 text-indigo-500 flex-shrink-0" />
             <div>
-              <p className="text-[10px] uppercase font-bold text-slate-400">Reclaimable Space</p>
+              <p className="text-[10px] uppercase font-bold text-slate-400">Potential Savings</p>
               <p className="text-base font-bold text-slate-800">
                 {overview?.reclaimable_mb || 0} MB
               </p>
@@ -188,8 +188,8 @@ export default function TriagePage() {
             <p className="text-xl font-bold text-slate-900 mt-1">
               {overview?.total_screenshots || 0}
             </p>
-            <p className="text-[11px] text-amber-600 font-medium">
-              {overview?.expiring_screenshots || 0} expiring soon
+            <p className="text-[11px] text-blue-600 font-medium">
+              {overview?.expiring_screenshots || 0} flagged for review
             </p>
           </div>
         </button>
@@ -282,15 +282,15 @@ export default function TriagePage() {
         </div>
       )}
 
-      {/* Tab: Screenshots with Expiration Rules */}
+      {/* Tab: Screenshots for Manual Review */}
       {activeTab === 'screenshots' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-800">
-              Ephemeral Screenshots ({screenshots.length})
+              Screenshots for Review ({screenshots.length})
             </h3>
             <span className="text-xs text-slate-400">
-              Select items to snooze retention or sweep to trash
+              Select items to delete or keep safely in your library. Nothing is deleted automatically.
             </span>
           </div>
 
@@ -316,14 +316,14 @@ export default function TriagePage() {
                       className="w-full h-full object-cover"
                     />
 
-                    {/* Expiry Pill */}
+                    {/* Review Age Pill */}
                     <div className="absolute top-2 left-2 right-2 flex justify-between items-center">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md ${
                         s.is_expired 
-                          ? 'bg-red-600 text-white' 
+                          ? 'bg-amber-600 text-white' 
                           : 'bg-black/60 text-white'
                       }`}>
-                        {s.is_expired ? 'Expired' : `${s.days_left}d left`}
+                        {s.is_expired ? '30+ days old' : 'Recent'}
                       </span>
                       <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
                         isSelected ? 'bg-blue-600 text-white' : 'bg-black/30 text-transparent'

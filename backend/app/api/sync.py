@@ -46,12 +46,22 @@ def get_google_oauth_url():
 from fastapi.responses import RedirectResponse
 
 @router.get("/google/callback")
-def google_oauth_callback(code: str, db: Session = Depends(get_db)):
+def google_oauth_callback(
+    code: str,
+    state: Optional[str] = None,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db)
+):
     """OAuth callback endpoint where Google redirects with the authorization code."""
-    res = handle_oauth_callback(db, code)
+    res = handle_oauth_callback(db, code, state)
     if res.get("status") == "error":
         raise HTTPException(status_code=400, detail=res.get("error"))
-    return RedirectResponse(url="http://localhost:3000/sync?status=connected")
+        
+    source_id = res.get("source_id")
+    if source_id:
+        background_tasks.add_task(run_google_drive_sync, db, source_id)
+        
+    return RedirectResponse(url="http://localhost:3000/sync?status=connected&syncing=1")
 
 @router.post("/google/{source_id}/trigger")
 def trigger_google_sync(source_id: int, db: Session = Depends(get_db)):

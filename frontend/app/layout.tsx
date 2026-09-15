@@ -9,7 +9,9 @@ import {
   Search, 
   Upload, 
   ShieldCheck,
-  Clock
+  Clock,
+  BookOpen,
+  Globe
 } from 'lucide-react';
 
 export const metadata: Metadata = {
@@ -51,6 +53,20 @@ export default function RootLayout({
                 Photos
               </Link>
               <Link
+                href="/albums"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+              >
+                <BookOpen className="w-4 h-4 text-slate-500" />
+                Albums
+              </Link>
+              <Link
+                href="/map"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+              >
+                <Globe className="w-4 h-4 text-slate-500" />
+                Places & Map
+              </Link>
+              <Link
                 href="/triage"
                 className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
               >
@@ -79,14 +95,14 @@ export default function RootLayout({
             </nav>
           </div>
 
-          {/* Bottom Card: Autonomous Storage Guard */}
+          {/* Bottom Card: Zero Auto-Deletion Guarantee */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs">
             <div className="flex items-center gap-2 text-indigo-600 font-semibold mb-1">
               <ShieldCheck className="w-4 h-4" />
-              <span>Auto-Expiry Guard</span>
+              <span>Zero Auto-Delete Policy</span>
             </div>
             <p className="text-slate-500 leading-relaxed">
-              Screenshots automatically queue for review after 30 days to keep your memories clutter-free.
+              Photos are never deleted automatically. The system only highlights suggestions for your manual review.
             </p>
           </div>
         </aside>

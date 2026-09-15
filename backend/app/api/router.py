@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import media, triage, people, sync, search
+from app.api import media, triage, people, sync, search, albums
 
 api_router = APIRouter()
 
@@ -8,6 +8,7 @@ api_router.include_router(triage.router, prefix="/triage", tags=["Smart Triage &
 api_router.include_router(people.router, prefix="/people", tags=["People & Faces"])
 api_router.include_router(sync.router, prefix="/sync", tags=["Sync & Sources"])
 api_router.include_router(search.router, prefix="/search", tags=["Search & Events"])
+api_router.include_router(albums.router, prefix="/albums", tags=["Albums & Collections"])
 
 @api_router.get("/health", tags=["System"])
 def health_check():

@@ -7,11 +7,12 @@
 
 ## 🌟 Key Features
 
-1. **Smart Triage & Clutter Sweep ("Inbox Zero" for Photos)**:
-   - **Ephemeral Screenshots**: Automatically flagged with a 30-day countdown timer. 1-click snooze for another month or sweep to trash.
+1. **Smart Triage & Review Trays (Zero Auto-Deletion Policy)**:
+   - **Zero Auto-Deletion**: Photos and files are **never** deleted automatically. The system only highlights suggestions for your manual review.
+   - **Screenshot Review Tray**: Screenshots older than 30 days are grouped so you can easily review and decide what to keep or discard.
    - **Documents & Bills Vault**: Invoices, receipts, and paper documents are separated from family memories.
-   - **Burst / Duplicate Detection**: Identifies near-duplicate photos using perceptual hashing (`pHash`) to keep only the best shot.
-   - **Blurry Shot Detection**: Automated sharpness scoring (Laplacian variance) to clean accidental camera rolls.
+   - **Burst / Duplicate Detection**: Identifies near-duplicate photos using perceptual hashing (`pHash`) to help you keep only the best shot.
+   - **Blurry Shot Detection**: Automated sharpness scoring (Laplacian variance) to review accidental camera rolls.
 2. **Infinite Timeline (Google Photos Style)**:
    - Grouped chronologically by day, month, and year.
    - Multi-tier WebP thumbnailing (256px ultra-fast grid thumbnails + 1080px modal lightbox previews).

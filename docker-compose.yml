@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -18,7 +16,9 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI:-http://localhost:8000/api/v1/sync/google/callback}
+      - OAUTHLIB_RELAX_TOKEN_SCOPE=1
     volumes:
+      - ./backend/app:/app/app
       - ./data/db:/data/db
       - ./data/originals:/data/originals
       - ./data/thumbnails:/data/thumbnails

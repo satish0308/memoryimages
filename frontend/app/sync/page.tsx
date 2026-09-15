@@ -10,8 +10,19 @@ import {
   ExternalLink,
   RefreshCw,
   Copy,
-  Check
+  Check,
+  Play
 } from 'lucide-react';
+
+interface SyncSourceItem {
+  id: number;
+  name: string;
+  sync_type: string;
+  target_path: string;
+  status: string;
+  items_count: number;
+  last_synced_at: string | null;
+}
 
 export default function SyncPage() {
   const [scanning, setScanning] = useState(false);
@@ -20,9 +31,23 @@ export default function SyncPage() {
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [sources, setSources] = useState<SyncSourceItem[]>([]);
+  const [syncingGoogle, setSyncingGoogle] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
+
+  const fetchSources = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/sync/sources`);
+      if (res.ok) {
+        const data = await res.json();
+        setSources(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const triggerLocalScan = async () => {
     try {
@@ -35,10 +60,27 @@ export default function SyncPage() {
       });
       const data = await res.json();
       setScanResult(data);
+      fetchSources();
     } catch (e) {
       console.error(e);
     } finally {
       setScanning(false);
+    }
+  };
+
+  const triggerGoogleSync = async (sourceId: number) => {
+    try {
+      setSyncingGoogle(true);
+      const res = await fetch(`${API_URL}/api/v1/sync/google/${sourceId}/trigger`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      setSyncStatus(`Sync complete: imported ${data.synced_photos || 0} photos!`);
+      fetchSources();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSyncingGoogle(false);
     }
   };
 
@@ -58,15 +100,25 @@ export default function SyncPage() {
 
   useEffect(() => {
     fetchGoogleAuthUrl();
+    fetchSources();
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       if (params.get('status') === 'connected') {
-        setSyncStatus('Google Drive connected successfully!');
+        const isSyncing = params.get('syncing') === '1';
+        setSyncStatus(isSyncing 
+          ? 'Google Drive connected successfully! Ingesting photos in the background...' 
+          : 'Google Drive connected successfully!'
+        );
+        fetchSources();
       } else if (params.get('code')) {
         const code = params.get('code');
-        fetch(`${API_URL}/api/v1/sync/google/callback?code=${code}`)
+        const state = params.get('state');
+        fetch(`${API_URL}/api/v1/sync/google/callback?code=${code}${state ? `&state=${state}` : ''}`)
           .then(res => {
-            if (res.ok) setSyncStatus('Google Drive connected successfully!');
+            if (res.ok) {
+              setSyncStatus('Google Drive connected successfully! Ingesting photos...');
+              fetchSources();
+            }
           })
           .catch(e => console.error(e));
       }
@@ -78,6 +130,8 @@ export default function SyncPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const googleSource = sources.find(s => s.sync_type === 'google_drive');
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -92,7 +146,7 @@ export default function SyncPage() {
       </div>
 
       {syncStatus && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-3">
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-3 animate-fadeIn">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
           <p className="text-xs font-semibold">{syncStatus}</p>
         </div>
@@ -146,13 +200,34 @@ export default function SyncPage() {
               </div>
               <div>
                 <h3 className="font-semibold text-sm text-slate-800">Google Drive & Photos</h3>
-                <p className="text-xs text-slate-400">Cloud incremental sync</p>
+                <p className="text-xs text-slate-400">
+                  {googleSource ? googleSource.name : 'Cloud incremental sync'}
+                </p>
               </div>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Connect your Google account using OAuth 2.0 to import cloud photos and albums.
-            </p>
+            {googleSource ? (
+              <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Connected
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-700">
+                    {googleSource.items_count || 0} photos synced
+                  </span>
+                </div>
+                {googleSource.last_synced_at && (
+                  <p className="text-[10px] text-slate-500">
+                    Last sync: {new Date(googleSource.last_synced_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Connect your Google account using OAuth 2.0 to import cloud photos and albums.
+              </p>
+            )}
 
             {/* Exact Redirect URI Copy Box */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
@@ -171,12 +246,9 @@ export default function SyncPage() {
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <p className="text-[10px] text-slate-400">
-                Must be listed under <b>Authorized redirect URIs</b> in Google Cloud Console.
-              </p>
             </div>
 
-            {googleError && (
+            {googleError && !googleSource && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
                 <p>{googleError}</p>
@@ -184,12 +256,30 @@ export default function SyncPage() {
             )}
           </div>
 
-          <div className="pt-2">
-            {googleAuthUrl ? (
+          <div className="pt-2 space-y-2">
+            {googleSource ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => triggerGoogleSync(googleSource.id)}
+                  disabled={syncingGoogle}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingGoogle ? 'animate-spin' : ''}`} />
+                  {syncingGoogle ? 'Syncing Photos...' : 'Sync Google Drive Now'}
+                </button>
+                {googleAuthUrl && (
+                  <a
+                    href={googleAuthUrl}
+                    className="p-2.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-semibold transition"
+                    title="Reconnect Google Account"
+                  >
+                    Reconnect
+                  </a>
+                )}
+              </div>
+            ) : googleAuthUrl ? (
               <a
                 href={googleAuthUrl}
-                target="_blank"
-                rel="noreferrer"
                 className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-sm transition"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
