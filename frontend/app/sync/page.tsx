@@ -7,9 +7,10 @@ import {
   Cloud, 
   CheckCircle2, 
   AlertCircle, 
-  Play, 
   ExternalLink,
-  RefreshCw 
+  RefreshCw,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export default function SyncPage() {
@@ -17,8 +18,11 @@ export default function SyncPage() {
   const [scanResult, setScanResult] = useState<any>(null);
   const [googleAuthUrl, setGoogleAuthUrl] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
 
   const triggerLocalScan = async () => {
     try {
@@ -54,7 +58,26 @@ export default function SyncPage() {
 
   useEffect(() => {
     fetchGoogleAuthUrl();
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('status') === 'connected') {
+        setSyncStatus('Google Drive connected successfully!');
+      } else if (params.get('code')) {
+        const code = params.get('code');
+        fetch(`${API_URL}/api/v1/sync/google/callback?code=${code}`)
+          .then(res => {
+            if (res.ok) setSyncStatus('Google Drive connected successfully!');
+          })
+          .catch(e => console.error(e));
+      }
+    }
   }, []);
+
+  const copyRedirectUri = () => {
+    navigator.clipboard.writeText(REDIRECT_URI);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -67,6 +90,13 @@ export default function SyncPage() {
           Configure where MyMemoryPics discovers photos. Both local directories and Google Drive are supported.
         </p>
       </div>
+
+      {syncStatus && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+          <p className="text-xs font-semibold">{syncStatus}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Local Directory Source */}
@@ -82,7 +112,7 @@ export default function SyncPage() {
           </div>
 
           <p className="text-xs text-slate-600 leading-relaxed">
-            Scans the container's media directory for photos, automatically extracts EXIF metadata,
+            Continuously monitors the container's media directory for photos, automatically extracts EXIF metadata,
             generates WebP thumbnails, and executes the smart classification triage.
           </p>
 
@@ -121,16 +151,35 @@ export default function SyncPage() {
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              Connect your Google account using OAuth 2.0. MyMemoryPics pulls down new photos 
-              in the background and sorts them seamlessly into your unified timeline.
+              Connect your Google account using OAuth 2.0 to import cloud photos and albums.
             </p>
+
+            {/* Exact Redirect URI Copy Box */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5">
+              <p className="text-[11px] font-semibold text-slate-600">
+                Required Google Cloud Console Redirect URI:
+              </p>
+              <div className="flex items-center justify-between gap-2 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg">
+                <code className="text-[11px] text-slate-800 font-mono truncate select-all">
+                  {REDIRECT_URI}
+                </code>
+                <button
+                  onClick={copyRedirectUri}
+                  className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-slate-800 transition flex-shrink-0"
+                  title="Copy to clipboard"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Must be listed under <b>Authorized redirect URIs</b> in Google Cloud Console.
+              </p>
+            </div>
 
             {googleError && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
-                <p>
-                  To enable Google sync, set <code className="font-mono text-[11px] bg-amber-100 px-1 rounded">GOOGLE_CLIENT_ID</code> and <code className="font-mono text-[11px] bg-amber-100 px-1 rounded">GOOGLE_CLIENT_SECRET</code> in your <code className="font-mono text-[11px] bg-amber-100 px-1 rounded">.env</code> file.
-                </p>
+                <p>{googleError}</p>
               </div>
             )}
           </div>
