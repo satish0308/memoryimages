@@ -55,3 +55,4 @@ token.json
 Thumbs.db
 .idea/
 .vscode/
+*:Zone.Identifier
