@@ -24,10 +24,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.services.watcher import start_watcher, stop_watcher
+
 @app.on_event("startup")
 def on_startup():
-    """Initializes SQLite/PostgreSQL schema upon container startup."""
+    """Initializes SQLite/PostgreSQL schema upon container startup and launches background directory watcher."""
     Base.metadata.create_all(bind=engine)
+    try:
+        start_watcher()
+    except Exception as e:
+        print(f"Directory watcher startup warning: {e}")
+
+@app.on_event("shutdown")
+def on_shutdown():
+    """Cleanly stops background watchers."""
+    stop_watcher()
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 

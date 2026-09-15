@@ -77,14 +77,14 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [ ] **Heavyweight ONNX Inference Pipeline**: Download and attach local offline models for ArcFace. `[Planned]`
 
 ### Phase 5: Semantic Natural Language Search & Event Grouping
-- [ ] **Spatiotemporal Event Clustering**: Automatic grouping of photos taken within time and location proximity into named events. `[Planned]`
-- [ ] **CLIP Vector Search**: Multimodal embedding search enabling text queries like *"camping in the woods"* or *"birthday party"*. `[Planned]`
-- [ ] **Filter Engine**: Combine filters by Date Range, Person, Category, Location, and Camera. `[Planned]`
+- [x] **Spatiotemporal Event Clustering**: Automatic grouping of photos taken within time and location proximity into named events ("Moments & Outings"). `[Completed]`
+- [x] **Multi-Attribute & Full-Text Search Engine**: Real-time query matching across filenames, OCR text, camera models, locations, categories, and people. `[Completed]`
+- [ ] **CLIP Vector Search**: Multimodal embedding search enabling natural language queries like *"sunset at beach"*. `[Planned]`
 
 ### Phase 6: Dual Sync (Local Folders & Google Drive)
 - [x] **Local Directory Watcher & Manual Scan**: API and UI button to trigger recursive scans of mounted folders. `[Completed]`
+- [x] **Continuous inotify File Watcher**: Automatic background sync daemon on filesystem changes using `watchdog`. `[Completed]`
 - [x] **Google Drive / Google Photos Integration**: OAuth 2.0 connection architecture, token persistence, and sync endpoint. `[Completed]`
-- [ ] **Continuous inotify File Watcher**: Automatic background sync daemon on filesystem changes. `[Planned]`
 
 ---
 
@@ -99,3 +99,5 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-15 | Smart Triage & Clutter Engine | Added screenshot auto-expiry, bills vault, duplicate pHash clusters, and blur detection | `[Completed]` |
 | 2026-09-15 | Google Drive & Local Sync | Implemented Google OAuth 2.0 flow and local library scan endpoints | `[Completed]` |
 | 2026-09-15 | Frontend Web Application | Built Next.js UI with Timeline, Smart Triage dashboard, People tab, and Sync manager | `[Completed]` |
+| 2026-09-15 | Event Stories & Live Search | Added Spatiotemporal event clustering ("Moments & Outings") and real-time multi-attribute search | `[Completed]` |
+| 2026-09-15 | Inotify Background Watcher | Integrated `watchdog` daemon to automatically detect and ingest dropped files into `/data/originals` | `[Completed]` |
