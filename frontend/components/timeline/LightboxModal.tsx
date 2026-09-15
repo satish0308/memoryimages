@@ -41,13 +41,22 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [isHighResLoaded, setIsHighResLoaded] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
 
-  // Reset zoom and pan whenever a new photo is opened
+  // Reset zoom, pan, and high-res state whenever a new photo is opened
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
-  }, [photo?.id]);
+    setIsHighResLoaded(false);
+
+    if (photo?.id) {
+      // Progressively preload the uncompressed original image for pixel-perfect zoom
+      const img = new window.Image();
+      img.src = `${apiUrl}/api/v1/media/${photo.id}/view`;
+      img.onload = () => setIsHighResLoaded(true);
+    }
+  }, [photo?.id, apiUrl]);
 
   // Keyboard navigation & zoom shortcuts
   useEffect(() => {
@@ -159,7 +168,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           )}
 
           <img
-            src={`${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`}
+            src={
+              isHighResLoaded
+                ? `${apiUrl}/api/v1/media/${photo.id}/view`
+                : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
+            }
             alt={photo.filename}
             className="max-h-[82vh] max-w-full object-contain rounded transition-transform duration-75 origin-center"
             style={{
@@ -201,6 +214,22 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 <RotateCcw className="w-3.5 h-3.5" />
               </button>
             )}
+
+            {/* Quality Indicator Badge */}
+            <span
+              className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border transition-all ${
+                isHighResLoaded
+                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-700/60'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title={
+                isHighResLoaded
+                  ? 'Uncompressed original camera image loaded'
+                  : 'Loading uncompressed original quality...'
+              }
+            >
+              {isHighResLoaded ? 'Original HD' : 'Loading HD...'}
+            </span>
           </div>
         </div>
 

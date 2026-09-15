@@ -178,15 +178,23 @@ def get_media_detail(media_id: int, db: Session = Depends(get_db)):
 @router.get("/{media_id}/thumbnail")
 def get_thumbnail(
     media_id: int,
-    size: str = Query("256", regex="^(256|1080)$"),
+    size: str = Query("256", regex="^(256|512|1080|2048|original)$"),
     db: Session = Depends(get_db)
 ):
-    """Serves high-performance WebP thumbnail."""
+    """Serves high-performance WebP thumbnail or full uncompressed original."""
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
         
-    thumb_path = media.thumbnail_256_path if size == "256" else media.thumbnail_1080_path
+    if size == "original":
+        if media.original_path and os.path.isfile(media.original_path):
+            return FileResponse(
+                media.original_path,
+                media_type=media.mime_type or "image/jpeg",
+                headers={"Content-Disposition": "inline"}
+            )
+            
+    thumb_path = media.thumbnail_256_path if size in ("256", "512") else media.thumbnail_1080_path
     if thumb_path and os.path.isfile(thumb_path):
         return FileResponse(thumb_path, media_type="image/webp")
         
@@ -194,6 +202,38 @@ def get_thumbnail(
         return FileResponse(media.original_path, media_type=media.mime_type or "image/jpeg")
         
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on disk")
+
+@router.get("/{media_id}/view")
+def view_original(media_id: int, db: Session = Depends(get_db)):
+    """Streams full uncompressed original photo directly for pixel-perfect zoom inspection."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media or not media.original_path or not os.path.isfile(media.original_path):
+        raise HTTPException(status_code=404, detail="Original image not found")
+    return FileResponse(
+        media.original_path,
+        media_type=media.mime_type or "image/jpeg",
+        headers={"Content-Disposition": "inline"}
+    )
+
+@router.post("/regenerate-thumbnails")
+def regenerate_all_thumbnails(db: Session = Depends(get_db)):
+    """Regenerates all thumbnails with high-DPI 512px and 2560px ultra-HD tiers."""
+    from app.services.thumbnail import generate_thumbnails
+    photos = db.query(Media).filter(Media.is_deleted == False).all()
+    updated = 0
+    for p in photos:
+        if p.original_path and os.path.isfile(p.original_path):
+            try:
+                res = generate_thumbnails(p.original_path, p.id)
+                p.thumbnail_256_path = res["thumbnail_256_path"]
+                p.thumbnail_1080_path = res["thumbnail_1080_path"]
+                p.blurriness_score = res["blurriness_score"]
+                p.is_blurry = res["is_blurry"]
+                updated += 1
+            except Exception:
+                pass
+    db.commit()
+    return {"status": "completed", "updated_photos": updated}
 
 @router.get("/{media_id}/download")
 def download_original(media_id: int, db: Session = Depends(get_db)):

@@ -69,15 +69,24 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
         blur_score = calculate_blurriness(img_rgb)
         is_blurry = blur_score < 80.0
         
-        # 1. 256px Thumbnail (aspect-preserved fit for fast masonry grid)
+        # Preserve ICC profile if present to avoid washed out colors
+        icc_profile = img.info.get("icc_profile")
+
+        # 1. High-DPI Grid Thumbnail (512px @ Q90 for crisp display on Retina/Large screens)
         img_256 = img_rgb.copy()
-        img_256.thumbnail((256, 256), Image.Resampling.LANCZOS)
-        img_256.save(thumb_256_path, "WEBP", quality=80, method=4)
+        img_256.thumbnail((512, 512), Image.Resampling.LANCZOS)
+        thumb_256_kwargs = {"quality": 90, "method": 5}
+        if icc_profile:
+            thumb_256_kwargs["icc_profile"] = icc_profile
+        img_256.save(thumb_256_path, "WEBP", **thumb_256_kwargs)
         
-        # 2. 1080px Preview (for modal lightbox)
+        # 2. Ultra-HD 2K/4K Preview (2560px bounding box @ Q92 for razor-sharp modal display)
         img_1080 = img_rgb.copy()
-        img_1080.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-        img_1080.save(thumb_1080_path, "WEBP", quality=85, method=4)
+        img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
+        thumb_1080_kwargs = {"quality": 92, "method": 5}
+        if icc_profile:
+            thumb_1080_kwargs["icc_profile"] = icc_profile
+        img_1080.save(thumb_1080_path, "WEBP", **thumb_1080_kwargs)
         
     return {
         "thumbnail_256_path": thumb_256_path,
