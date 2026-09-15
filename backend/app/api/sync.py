@@ -43,13 +43,15 @@ def get_google_oauth_url():
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+from fastapi.responses import RedirectResponse
+
 @router.get("/google/callback")
 def google_oauth_callback(code: str, db: Session = Depends(get_db)):
     """OAuth callback endpoint where Google redirects with the authorization code."""
     res = handle_oauth_callback(db, code)
     if res.get("status") == "error":
         raise HTTPException(status_code=400, detail=res.get("error"))
-    return {"message": "Google Drive connected successfully!", "source_id": res.get("source_id")}
+    return RedirectResponse(url="http://localhost:3000/sync?status=connected")
 
 @router.post("/google/{source_id}/trigger")
 def trigger_google_sync(source_id: int, db: Session = Depends(get_db)):
