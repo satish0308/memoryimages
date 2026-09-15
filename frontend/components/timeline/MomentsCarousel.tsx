@@ -3,6 +3,8 @@
 import React from 'react';
 import { Compass } from 'lucide-react';
 
+import { MediaItem } from './PhotoCard';
+
 export interface EventStory {
   title: string;
   date: string;
@@ -10,6 +12,7 @@ export interface EventStory {
   cover_id: number;
   cover_thumbnail_url: string;
   media_ids: number[];
+  items?: MediaItem[];
 }
 
 interface MomentsCarouselProps {
@@ -36,7 +39,7 @@ export const MomentsCarousel: React.FC<MomentsCarouselProps> = ({
           <div
             key={idx}
             onClick={() => onSelectEvent && onSelectEvent(ev)}
-            className="relative flex-shrink-0 w-44 h-60 rounded-2xl overflow-hidden cursor-pointer group shadow-sm hover:shadow-md transition"
+            className="relative flex-shrink-0 w-44 h-60 rounded-2xl overflow-hidden cursor-pointer group shadow-sm hover:shadow-xl hover:ring-2 hover:ring-indigo-500 transition-all duration-300 transform hover:-translate-y-1"
           >
             <img
               src={`${apiUrl}${ev.cover_thumbnail_url}`}
@@ -44,12 +47,17 @@ export const MomentsCarousel: React.FC<MomentsCarouselProps> = ({
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent p-3 flex flex-col justify-between text-white">
-              <span className="self-end bg-black/40 backdrop-blur-md px-2 py-0.5 rounded-full text-[10px] font-medium">
-                {ev.photo_count} photos
-              </span>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent p-3 flex flex-col justify-between text-white">
+              <div className="flex items-center justify-between">
+                <span className="bg-black/50 backdrop-blur-md px-2 py-0.5 rounded-full text-[10px] font-medium text-slate-200">
+                  {ev.photo_count} photos
+                </span>
+                <span className="opacity-0 group-hover:opacity-100 bg-indigo-600/90 text-white text-[9px] font-bold px-2 py-0.5 rounded-full transition-opacity shadow">
+                  View
+                </span>
+              </div>
               <div>
-                <h3 className="font-bold text-xs leading-snug">{ev.title}</h3>
+                <h3 className="font-bold text-xs leading-snug group-hover:text-indigo-200 transition-colors">{ev.title}</h3>
                 <p className="text-[10px] text-slate-300 mt-0.5">{ev.date}</p>
               </div>
             </div>

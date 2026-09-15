@@ -6,6 +6,7 @@ import { Search, X, FolderOpen, CheckSquare } from 'lucide-react';
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
 import { MomentsCarousel, EventStory } from '@/components/timeline/MomentsCarousel';
+import { MomentStoryModal } from '@/components/timeline/MomentStoryModal';
 import { CategoryFilterBar } from '@/components/timeline/CategoryFilterBar';
 import { ScaleSelector, TimelineScale, GridDensity } from '@/components/timeline/ScaleSelector';
 import { BulkActionBar } from '@/components/timeline/BulkActionBar';
@@ -15,6 +16,7 @@ import { OnThisDaySection } from '@/components/flashbacks/OnThisDaySection';
 export default function PhotosPage() {
   const [timeline, setTimeline] = useState<TimelineGroup[]>([]);
   const [events, setEvents] = useState<EventStory[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventStory | null>(null);
   const [loading, setLoading] = useState(true);
   const [scale, setScale] = useState<TimelineScale>('day');
   const [density, setDensity] = useState<GridDensity>('normal');
@@ -173,6 +175,18 @@ export default function PhotosPage() {
         if (selectedPhoto && selectedPhoto.id === id) {
           setSelectedPhoto((prev) => (prev ? { ...prev, is_favorite: !prev.is_favorite } : null));
         }
+        if (selectedEvent) {
+          setSelectedEvent((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  items: prev.items?.map((item) =>
+                    item.id === id ? { ...item, is_favorite: !item.is_favorite } : item
+                  ),
+                }
+              : null
+          );
+        }
       }
     } catch (err) {
       console.error('Error toggling favorite:', err);
@@ -198,6 +212,17 @@ export default function PhotosPage() {
         }
         if (selectedPhoto && selectedPhoto.id === id) {
           setSelectedPhoto(null);
+        }
+        if (selectedEvent) {
+          setSelectedEvent((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  items: prev.items?.filter((i) => i.id !== id),
+                  photo_count: Math.max(0, prev.photo_count - 1),
+                }
+              : null
+          );
         }
       }
     } catch (err) {
@@ -249,7 +274,13 @@ export default function PhotosPage() {
       )}
 
       {/* Highlights & Outing Stories Carousel */}
-      {!searchResults && <MomentsCarousel events={events} apiUrl={API_URL} />}
+      {!searchResults && (
+        <MomentsCarousel
+          events={events}
+          apiUrl={API_URL}
+          onSelectEvent={(ev) => setSelectedEvent(ev)}
+        />
+      )}
 
       {/* Timeline Controls Bar: Scale Switcher (Days/Months/Years) & Grid Density */}
       {!searchResults && (
@@ -359,6 +390,22 @@ export default function PhotosPage() {
         onAlbumAdded={() => {
           clearSelection();
         }}
+      />
+
+      {/* Moment & Outing Story Detail Modal */}
+      <MomentStoryModal
+        event={selectedEvent}
+        apiUrl={API_URL}
+        selectedIds={selectedIds}
+        onClose={() => setSelectedEvent(null)}
+        onSelectPhoto={(photo) => setSelectedPhoto(photo)}
+        onToggleSelectPhoto={toggleSelectPhoto}
+        onToggleSelectAll={(ids) => {
+          const allIn = ids.length > 0 && ids.every((id) => selectedIds.includes(id));
+          toggleSelectGroup(ids, !allIn);
+        }}
+        onToggleFavorite={toggleFavorite}
+        onDelete={deletePhoto}
       />
 
       {/* Full-Screen Lightbox Modal with Pan & Zoom & Navigation */}

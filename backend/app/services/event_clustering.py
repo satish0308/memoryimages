@@ -77,5 +77,16 @@ def _create_event_payload(cluster: List[Media]) -> Dict[str, Any]:
         "photo_count": len(cluster),
         "cover_id": cover.id,
         "cover_thumbnail_url": f"/api/v1/media/{cover.id}/thumbnail?size=1080",
-        "media_ids": [m.id for m in cluster]
+        "media_ids": [m.id for m in cluster],
+        "items": [{
+            "id": m.id,
+            "filename": m.filename,
+            "category": m.category,
+            "width": m.width,
+            "height": m.height,
+            "captured_at": m.captured_at,
+            "is_favorite": m.is_favorite,
+            "is_blurry": m.is_blurry,
+            "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
+        } for m in cluster]
     }
