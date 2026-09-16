@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
@@ -14,7 +14,7 @@ from app.database import get_db
 from app.models.media import Media, MediaCategory, SourceType
 from app.services.scanner import scan_file, extract_exif, reverse_geocode
 from app.services.settings_service import get_storage_mode, get_setting
-from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file
+from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file, fetch_google_drive_thumbnail_bytes
 from app.config import settings
 
 router = APIRouter()
@@ -204,9 +204,27 @@ def get_thumbnail(
     # 1. Google Drive In-Memory / CDN Serving (9drive architecture: zero local disk usage)
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (use_google_cdn or storage_mode == "in_memory"):
         size_int = 2048 if size == "original" else int(size)
+        
+        # Server-side proxy with in-memory caching: guarantees NO 429 Referer block from Google
+        thumb_bytes = fetch_google_drive_thumbnail_bytes(media.source_id, db, size_int)
+        if thumb_bytes:
+            return Response(
+                content=thumb_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "X-Thumbnail-Source": "google_cdn_proxy"
+                }
+            )
+            
+        # Secondary fallback: redirect with strict no-referrer policy if byte fetching was unavailable
         cdn_url = get_google_drive_thumbnail_url(media.source_id, db, size_int)
         if cdn_url:
-            return RedirectResponse(cdn_url, status_code=307)
+            return RedirectResponse(
+                cdn_url,
+                status_code=307,
+                headers={"Referrer-Policy": "no-referrer"}
+            )
 
     # 2. Local Disk Thumbnail Serving (if cached/saved)
     if size == "original":

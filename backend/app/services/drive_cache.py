@@ -72,6 +72,46 @@ def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256) -
 
     return None
 
+_DRIVE_THUMBNAIL_BYTES_CACHE: Dict[str, bytes] = {}
+
+def fetch_google_drive_thumbnail_bytes(file_id: str, db: Session, size: int = 256) -> Optional[bytes]:
+    """
+    Fetches Google Drive CDN thumbnail bytes server-side with in-memory caching.
+    This bypasses Google's Referer 429 anti-hotlinking block by fetching without browser referrer headers.
+    """
+    cache_key = f"{file_id}_{size}"
+    if cache_key in _DRIVE_THUMBNAIL_BYTES_CACHE:
+        return _DRIVE_THUMBNAIL_BYTES_CACHE[cache_key]
+
+    cdn_url = get_google_drive_thumbnail_url(file_id, db, size)
+    if not cdn_url:
+        return None
+
+    try:
+        import requests
+        resp = requests.get(
+            cdn_url,
+            timeout=8,
+            headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8"
+            }
+        )
+        if resp.status_code == 200 and resp.content:
+            # Bound cache size to 1000 items (~15MB RAM)
+            if len(_DRIVE_THUMBNAIL_BYTES_CACHE) > 1000:
+                keys_to_evict = list(_DRIVE_THUMBNAIL_BYTES_CACHE.keys())[:200]
+                for k in keys_to_evict:
+                    _DRIVE_THUMBNAIL_BYTES_CACHE.pop(k, None)
+            _DRIVE_THUMBNAIL_BYTES_CACHE[cache_key] = resp.content
+            return resp.content
+        else:
+            logger.warning(f"[drive_cache] Google CDN returned status {resp.status_code} for {file_id}")
+    except Exception as e:
+        logger.warning(f"[drive_cache] Failed to fetch thumbnail bytes for {file_id}: {e}")
+
+    return None
+
 def cache_drive_thumbnail_link(file_id: str, thumbnail_link: str):
     """Populates in-memory cache directly from Google Drive files.list response."""
     if file_id and thumbnail_link:
@@ -128,15 +168,18 @@ def get_memory_cache_stats() -> Dict[str, Any]:
     """Returns telemetry on in-memory thumbnail and streaming caches."""
     now = time.time()
     active_entries = [k for k, v in _DRIVE_THUMBNAIL_CACHE.items() if v.get("expires_at", 0) > now]
-    # Estimate average 256 bytes per entry in memory
-    est_mb = round((len(active_entries) * 256) / (1024.0 * 1024.0), 4)
+    bytes_count = len(_DRIVE_THUMBNAIL_BYTES_CACHE)
+    total_bytes = sum(len(b) for b in _DRIVE_THUMBNAIL_BYTES_CACHE.values())
+    est_mb = round((len(active_entries) * 256 + total_bytes) / (1024.0 * 1024.0), 2)
     return {
-        "cached_entries": len(active_entries),
+        "cached_entries": len(active_entries) + bytes_count,
         "estimated_cache_mb": est_mb
     }
 
 def clear_memory_cache() -> int:
     """Flushes all entries from in-memory cache."""
-    count = len(_DRIVE_THUMBNAIL_CACHE)
+    count = len(_DRIVE_THUMBNAIL_CACHE) + len(_DRIVE_THUMBNAIL_BYTES_CACHE)
     _DRIVE_THUMBNAIL_CACHE.clear()
+    _DRIVE_THUMBNAIL_BYTES_CACHE.clear()
     return count
+

@@ -21,6 +21,7 @@ import { MainContentWrapper } from '@/components/layout/MainContentWrapper';
 export const metadata: Metadata = {
   title: 'MyMemoryPics - World-Class AI Photo Manager',
   description: 'AI-driven photo organization with smart triage, face recognition, and dual sync.',
+  referrer: 'no-referrer',
 };
 
 export default function RootLayout({
