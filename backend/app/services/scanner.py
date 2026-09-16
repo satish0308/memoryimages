@@ -1,9 +1,15 @@
 import os
 import hashlib
 from datetime import datetime
+import io
+import json
+import urllib.request
 from typing import Optional, Tuple, Dict, Any
 from PIL import Image, ExifTags
 from sqlalchemy.orm import Session
+
+# Prevent DecompressionBombWarning for ultra high-res / composite mobile photos
+Image.MAX_IMAGE_PIXELS = None
 
 from app.models.media import Media, SourceType
 from app.services.thumbnail import generate_thumbnails
@@ -11,6 +17,32 @@ from app.services.triage_engine import classify_media_item
 from app.config import settings
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".bmp"}
+
+_GEOCODE_CACHE: Dict[Tuple[float, float], str] = {}
+
+def reverse_geocode(lat: float, lon: float) -> Optional[str]:
+    """Reverse geocodes GPS coordinates into a city/region name with in-memory caching."""
+    cache_key = (round(lat, 3), round(lon, 3))
+    if cache_key in _GEOCODE_CACHE:
+        return _GEOCODE_CACHE[cache_key]
+
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=12"
+        req = urllib.request.Request(url, headers={"User-Agent": "MyMemoryPics/1.0 (contact@memorypics.local)"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+            addr = data.get("address", {})
+            city = addr.get("city") or addr.get("town") or addr.get("suburb") or addr.get("village") or addr.get("county")
+            state = addr.get("state")
+            country = addr.get("country")
+            parts = [p for p in [city, state, country] if p]
+            name = ", ".join(parts) if parts else data.get("display_name", "")
+            if name:
+                _GEOCODE_CACHE[cache_key] = name
+                return name
+    except Exception:
+        pass
+    return None
 
 def compute_file_hash(filepath: str) -> str:
     hasher = hashlib.sha256()
@@ -29,7 +61,58 @@ def _convert_gps_to_degrees(value) -> Optional[float]:
     except Exception:
         return None
 
-def extract_exif(image: Image.Image) -> Dict[str, Any]:
+def extract_gps_from_bytes(buf: bytes) -> Optional[Tuple[float, float]]:
+    """
+    Exhaustively scans image buffer for GPS coordinates, including multi-picture
+    concatenated JPEGs (e.g. Xiaomi Portrait mode, Samsung dual-camera captures).
+    """
+    # 1. Primary image check
+    try:
+        img = Image.open(io.BytesIO(buf))
+        raw_exif = img.getexif()
+        if raw_exif:
+            gps_ifd = raw_exif.get_ifd(ExifTags.IFD.GPSInfo)
+            if gps_ifd and 2 in gps_ifd and 4 in gps_ifd:
+                lat = _convert_gps_to_degrees(gps_ifd[2])
+                lon = _convert_gps_to_degrees(gps_ifd[4])
+                lat_ref = gps_ifd.get(1, "N")
+                lon_ref = gps_ifd.get(3, "E")
+                if lat is not None and lon is not None:
+                    if str(lat_ref).strip().upper() != "N":
+                        lat = -lat
+                    if str(lon_ref).strip().upper() != "E":
+                        lon = -lon
+                    return round(lat, 6), round(lon, 6)
+    except Exception:
+        pass
+
+    # 2. Concatenated / Embedded JPEG scan (search for \xff\xd8\xff markers after offset 0)
+    pos = 0
+    while True:
+        pos = buf.find(b"\xff\xd8\xff", pos + 2)
+        if pos == -1:
+            break
+        try:
+            sub_img = Image.open(io.BytesIO(buf[pos:]))
+            sub_exif = sub_img.getexif()
+            if sub_exif:
+                gps_ifd = sub_exif.get_ifd(ExifTags.IFD.GPSInfo)
+                if gps_ifd and 2 in gps_ifd and 4 in gps_ifd:
+                    lat = _convert_gps_to_degrees(gps_ifd[2])
+                    lon = _convert_gps_to_degrees(gps_ifd[4])
+                    lat_ref = gps_ifd.get(1, "N")
+                    lon_ref = gps_ifd.get(3, "E")
+                    if lat is not None and lon is not None:
+                        if str(lat_ref).strip().upper() != "N":
+                            lat = -lat
+                        if str(lon_ref).strip().upper() != "E":
+                            lon = -lon
+                        return round(lat, 6), round(lon, 6)
+        except Exception:
+            pass
+    return None
+
+def extract_exif(image: Image.Image, file_path: Optional[str] = None) -> Dict[str, Any]:
     metadata = {
         "captured_at": None,
         "camera_make": None,
@@ -38,35 +121,83 @@ def extract_exif(image: Image.Image) -> Dict[str, Any]:
         "focal_length": None,
         "exposure_time": None,
         "latitude": None,
-        "longitude": None
+        "longitude": None,
+        "location_name": None
     }
     
     try:
-        exif_raw = image.getexif()
-        if not exif_raw:
-            return metadata
-            
-        named_exif = {}
-        for tag_id, val in exif_raw.items():
-            tag_name = ExifTags.TAGS.get(tag_id, tag_id)
-            named_exif[tag_name] = val
-            
-        metadata["camera_make"] = str(named_exif.get("Make", "")).strip() or None
-        metadata["camera_model"] = str(named_exif.get("Model", "")).strip() or None
-        
-        # DateTimeOriginal
-        date_str = named_exif.get("DateTimeOriginal") or named_exif.get("DateTime")
-        if date_str and isinstance(date_str, str):
+        # Check both _getexif() and getexif() IFDs for complete tag coverage
+        legacy_exif = image._getexif() or {}
+        raw_exif = image.getexif()
+        exif_ifd = {}
+        gps_ifd = {}
+        if raw_exif:
             try:
-                metadata["captured_at"] = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                exif_ifd = raw_exif.get_ifd(ExifTags.IFD.Exif) or {}
             except Exception:
                 pass
+            try:
+                gps_ifd = raw_exif.get_ifd(ExifTags.IFD.GPSInfo) or {}
+            except Exception:
+                pass
+
+        # Merge tag dictionaries
+        all_tags = {}
+        for k, v in legacy_exif.items():
+            name = ExifTags.TAGS.get(k, k)
+            all_tags[name] = v
+        for k, v in exif_ifd.items():
+            name = ExifTags.TAGS.get(k, k)
+            all_tags[name] = v
+
+        metadata["camera_make"] = str(all_tags.get("Make", "")).strip() or None
+        metadata["camera_model"] = str(all_tags.get("Model", "")).strip() or None
+
+        # Clean model name if vendor provides friendly tag (e.g. tag 39424 for Xiaomi)
+        if all_tags.get(39424):
+            metadata["camera_model"] = str(all_tags.get(39424)).strip()
+        
+        # DateTimeOriginal
+        date_str = all_tags.get("DateTimeOriginal") or all_tags.get("DateTimeDigitized") or all_tags.get("DateTime")
+        if date_str and isinstance(date_str, str):
+            try:
+                metadata["captured_at"] = datetime.strptime(date_str[:19], "%Y:%m:%d %H:%M:%S")
+            except Exception:
+                pass
+
+        # ISO
+        iso_val = all_tags.get("ISOSpeedRatings") or all_tags.get("PhotographicSensitivity")
+        if iso_val:
+            try:
+                metadata["iso"] = int(iso_val)
+            except Exception:
+                pass
+
+        # Focal Length
+        fl = all_tags.get("FocalLength")
+        if fl is not None:
+            try:
+                metadata["focal_length"] = round(float(fl), 1)
+            except Exception:
+                pass
+
+        # Exposure Time
+        exp = all_tags.get("ExposureTime")
+        if exp is not None:
+            try:
+                exp_f = float(exp)
+                if 0 < exp_f < 1:
+                    metadata["exposure_time"] = f"1/{int(round(1.0 / exp_f))}s"
+                else:
+                    metadata["exposure_time"] = f"{round(exp_f, 2)}s"
+            except Exception:
+                metadata["exposure_time"] = str(exp)
                 
-        # GPS Info
-        gps_info = exif_raw.get_ifd(ExifTags.IFD.GPSInfo)
-        if gps_info:
+        # GPS Info from GPSInfo IFD or legacy tag 34853
+        gps_data = all_tags.get("GPSInfo") or gps_ifd or legacy_exif.get(34853)
+        if gps_data and isinstance(gps_data, dict):
             gps_tags = {}
-            for k, v in gps_info.items():
+            for k, v in gps_data.items():
                 tag_name = ExifTags.GPSTAGS.get(k, k)
                 gps_tags[tag_name] = v
                 
@@ -79,13 +210,29 @@ def extract_exif(image: Image.Image) -> Dict[str, Any]:
                 lat = _convert_gps_to_degrees(lat_val)
                 lon = _convert_gps_to_degrees(lon_val)
                 if lat is not None and lon is not None:
-                    if lat_ref != "N":
+                    if str(lat_ref).strip().upper() != "N":
                         lat = -lat
-                    if lon_ref != "E":
+                    if str(lon_ref).strip().upper() != "E":
                         lon = -lon
-                    metadata["latitude"] = lat
-                    metadata["longitude"] = lon
-    except Exception:
+                    metadata["latitude"] = round(lat, 6)
+                    metadata["longitude"] = round(lon, 6)
+
+        # If GPS not found in direct EXIF, check file buffer for embedded/multi-picture JPEGs
+        if metadata["latitude"] is None and file_path and os.path.isfile(file_path):
+            try:
+                with open(file_path, "rb") as fp:
+                    embedded_coords = extract_gps_from_bytes(fp.read())
+                    if embedded_coords:
+                        metadata["latitude"] = embedded_coords[0]
+                        metadata["longitude"] = embedded_coords[1]
+            except Exception:
+                pass
+
+        # Auto-resolve reverse geocode location name
+        if metadata["latitude"] is not None and metadata["longitude"] is not None:
+            metadata["location_name"] = reverse_geocode(metadata["latitude"], metadata["longitude"])
+
+    except Exception as e:
         pass
         
     return metadata
@@ -118,7 +265,7 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     # Open image to inspect & extract EXIF
     try:
         with Image.open(file_path) as img:
-            exif = extract_exif(img)
+            exif = extract_exif(img, file_path=file_path)
             if exif["captured_at"]:
                 captured_at = exif["captured_at"]
                 
@@ -151,8 +298,12 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         expires_at=expires_at,
         camera_make=exif["camera_make"],
         camera_model=exif["camera_model"],
+        iso=exif["iso"],
+        focal_length=exif["focal_length"],
+        exposure_time=exif["exposure_time"],
         latitude=exif["latitude"],
         longitude=exif["longitude"],
+        location_name=exif.get("location_name"),
         source_type=source_type,
         source_id=source_id
     )

@@ -11,7 +11,9 @@ import {
   Tag, 
   Plus, 
   Loader2,
-  Check
+  Check,
+  MapPin,
+  Sparkles
 } from 'lucide-react';
 
 interface AlbumOption {
@@ -27,6 +29,7 @@ interface BulkActionBarProps {
   onBatchDelete: () => void;
   onBatchCategoryUpdated?: () => void;
   onAlbumAdded?: () => void;
+  onBatchLocationUpdated?: () => void;
 }
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
@@ -41,6 +44,10 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [customLocName, setCustomLocName] = useState('');
+  const [customLat, setCustomLat] = useState('');
+  const [customLon, setCustomLon] = useState('');
   const [showNewAlbumInput, setShowNewAlbumInput] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -53,6 +60,54 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         .catch((e) => console.error(e));
     }
   }, [selectedIds.length, apiUrl]);
+
+  const handleBatchLocation = async (locName: string, lat?: number, lon?: number) => {
+    try {
+      setLoadingAction('location');
+      const res = await fetch(`${apiUrl}/api/v1/media/batch-location`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          media_ids: selectedIds,
+          location_name: locName || null,
+          latitude: lat ?? null,
+          longitude: lon ?? null,
+        }),
+      });
+      if (res.ok) {
+        setShowLocationModal(false);
+        setCustomLocName('');
+        setCustomLat('');
+        setCustomLon('');
+        onClearSelection();
+        if (onBatchLocationUpdated) onBatchLocationUpdated();
+      }
+    } catch (e) {
+      console.error('Error updating locations:', e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handlePropagateLocations = async () => {
+    try {
+      setLoadingAction('propagate');
+      const res = await fetch(`${apiUrl}/api/v1/media/propagate-locations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_gap_hours: 4.0 }),
+      });
+      if (res.ok) {
+        setShowLocationModal(false);
+        onClearSelection();
+        if (onBatchLocationUpdated) onBatchLocationUpdated();
+      }
+    } catch (e) {
+      console.error('Error propagating locations:', e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
   if (selectedIds.length === 0) return null;
 
@@ -289,6 +344,116 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
               >
                 <span>💬</span> <span>Memes / Clutter</span>
               </button>
+            </div>
+          )}
+        </div>
+
+        {/* Location & Places Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowLocationModal(!showLocationModal);
+              setShowCategoryMenu(false);
+              setShowAlbumMenu(false);
+            }}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
+            title="Bulk assign location or propagate geotags"
+          >
+            <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Location</span>
+            <ChevronUp className={`w-3 h-3 transition-transform ${showLocationModal ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showLocationModal && (
+            <div className="absolute bottom-full mb-2 left-0 w-72 bg-slate-800 border border-slate-700 rounded-xl p-3 shadow-2xl space-y-3 z-50">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase font-bold text-slate-400">
+                  Assign Location ({selectedIds.length} photos)
+                </p>
+                <button
+                  onClick={() => setShowLocationModal(false)}
+                  className="text-slate-400 hover:text-white p-0.5"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Quick Trip Place Presets */}
+              <div className="space-y-1">
+                <p className="text-[10px] text-slate-400">Trip & Outing Presets:</p>
+                <button
+                  type="button"
+                  onClick={() => handleBatchLocation('Pottalkulam, Tamil Nadu, India', 8.077913, 77.551231)}
+                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-emerald-300 font-medium flex items-center justify-between"
+                >
+                  <span>📍 Kanyakumari / Pottalkulam</span>
+                  <span className="text-[9px] text-slate-400">Sunrise</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBatchLocation('Bengaluru, Karnataka, India', 12.931643, 77.545616)}
+                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-indigo-300 font-medium flex items-center justify-between"
+                >
+                  <span>📍 Bengaluru, Karnataka</span>
+                  <span className="text-[9px] text-slate-400">Sept 22</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBatchLocation('Thalaiyuthu, Tamil Nadu, India', 8.727996, 77.686714)}
+                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-amber-300 font-medium flex items-center justify-between"
+                >
+                  <span>📍 Thalaiyuthu / Tirunelveli</span>
+                  <span className="text-[9px] text-slate-400">Oct 24</span>
+                </button>
+              </div>
+
+              {/* Custom Place Input */}
+              <div className="space-y-1.5 pt-1 border-t border-slate-700/60">
+                <input
+                  type="text"
+                  placeholder="Custom city or place name..."
+                  value={customLocName}
+                  onChange={(e) => setCustomLocName(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500"
+                />
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Lat (opt)"
+                    value={customLat}
+                    onChange={(e) => setCustomLat(e.target.value)}
+                    className="w-1/2 px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500 font-mono text-[10px]"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Lon (opt)"
+                    value={customLon}
+                    onChange={(e) => setCustomLon(e.target.value)}
+                    className="w-1/2 px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500 font-mono text-[10px]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleBatchLocation(customLocName, customLat ? parseFloat(customLat) : undefined, customLon ? parseFloat(customLon) : undefined)}
+                  disabled={!customLocName.trim() && (!customLat || !customLon)}
+                  className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold transition"
+                >
+                  Apply Custom Location
+                </button>
+              </div>
+
+              {/* 1-Click Outing Propagation */}
+              <div className="pt-1 border-t border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={handlePropagateLocations}
+                  className="w-full py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded text-[11px] font-medium flex items-center justify-center gap-1.5 transition"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Auto-Link Outing Geotags</span>
+                </button>
+              </div>
             </div>
           )}
         </div>

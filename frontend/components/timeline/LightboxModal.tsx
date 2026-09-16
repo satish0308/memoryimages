@@ -70,6 +70,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [knownPeople, setKnownPeople] = useState<{ id: number; name: string }[]>([]);
   const [isAddingFace, setIsAddingFace] = useState(false);
   const [currentCategory, setCurrentCategory] = useState(photo?.category || 'memory');
+  const [isEditingLocation, setIsEditingLocation] = useState(false);
+  const [locName, setLocName] = useState(photo?.location_name || '');
+  const [locLat, setLocLat] = useState<string>(photo?.latitude != null ? photo.latitude.toString() : '');
+  const [locLon, setLocLon] = useState<string>(photo?.longitude != null ? photo.longitude.toString() : '');
+  const [savingLoc, setSavingLoc] = useState(false);
 
   const dragStart = useRef({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
@@ -89,6 +94,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setIsHighResLoaded(false);
     setEditingFaceId(null);
     setIsAddingFace(false);
+    setIsEditingLocation(false);
+    setLocName(photo?.location_name || '');
+    setLocLat(photo?.latitude != null ? photo.latitude.toString() : '');
+    setLocLon(photo?.longitude != null ? photo.longitude.toString() : '');
 
     if (photo?.id) {
       // Progressively preload the uncompressed original image for pixel-perfect zoom
@@ -101,6 +110,40 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       fetchKnownPeople();
     }
   }, [photo?.id, apiUrl]);
+
+  const handleSaveLocation = async (customName?: string, customLat?: number, customLon?: number) => {
+    if (!photo?.id) return;
+    setSavingLoc(true);
+    try {
+      const latVal = customLat !== undefined ? customLat : (locLat.trim() ? parseFloat(locLat) : null);
+      const lonVal = customLon !== undefined ? customLon : (locLon.trim() ? parseFloat(locLon) : null);
+      const nameVal = customName !== undefined ? customName : (locName.trim() || null);
+
+      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/location`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latitude: latVal,
+          longitude: lonVal,
+          location_name: nameVal
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        photo.latitude = data.latitude;
+        photo.longitude = data.longitude;
+        photo.location_name = data.location_name;
+        setLocLat(data.latitude != null ? data.latitude.toString() : '');
+        setLocLon(data.longitude != null ? data.longitude.toString() : '');
+        setLocName(data.location_name || '');
+        setIsEditingLocation(false);
+      }
+    } catch (e) {
+      console.error('Failed to save location:', e);
+    } finally {
+      setSavingLoc(false);
+    }
+  };
 
   const fetchFaces = async (photoId: number) => {
     try {
@@ -616,7 +659,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 )}
 
                 {/* Geotag & Interactive Mini Map Card */}
-                {photo.latitude !== null && photo.latitude !== undefined && photo.longitude !== null && photo.longitude !== undefined && (
+                {photo.latitude !== null && photo.latitude !== undefined && photo.longitude !== null && photo.longitude !== undefined ? (
                   <div className="bg-slate-800/60 rounded-xl p-3 space-y-2.5 border border-slate-800">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 text-slate-200 font-medium">
@@ -625,42 +668,174 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                           {photo.location_name || 'Geotagged Location'}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {photo.latitude.toFixed(3)}, {photo.longitude.toFixed(3)}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {photo.latitude.toFixed(3)}, {photo.longitude.toFixed(3)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingLocation(!isEditingLocation)}
+                          className="p-1 hover:bg-slate-700 text-slate-400 hover:text-emerald-300 rounded transition"
+                          title="Edit Location"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Interactive OpenStreetMap Embed */}
-                    <div className="rounded-lg overflow-hidden border border-slate-700 bg-slate-950 aspect-[16/9]">
-                      <iframe
-                        title="Photo Location Map"
-                        src={`https://www.openstreetmap.org/export/embed.html?bbox=${photo.longitude - 0.008}%2C${photo.latitude - 0.008}%2C${photo.longitude + 0.008}%2C${photo.latitude + 0.008}&layer=mapnik&marker=${photo.latitude}%2C${photo.longitude}`}
-                        className="w-full h-full border-0 pointer-events-none"
-                        loading="lazy"
-                      />
+                    {isEditingLocation ? (
+                      <div className="bg-slate-900/80 rounded-lg p-2.5 space-y-2 border border-slate-700/60">
+                        <p className="text-[10px] uppercase font-bold text-slate-400">Edit Photo Location</p>
+                        <input
+                          type="text"
+                          placeholder="Place name (e.g. Kanyakumari, Tamil Nadu)..."
+                          value={locName}
+                          onChange={(e) => setLocName(e.target.value)}
+                          className="w-full px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500"
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Latitude"
+                            value={locLat}
+                            onChange={(e) => setLocLat(e.target.value)}
+                            className="w-1/2 px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-white focus:outline-none font-mono text-[10px]"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Longitude"
+                            value={locLon}
+                            onChange={(e) => setLocLon(e.target.value)}
+                            className="w-1/2 px-2 py-1 text-xs bg-slate-800 border border-slate-700 rounded text-white focus:outline-none font-mono text-[10px]"
+                          />
+                        </div>
+                        <div className="flex gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSaveLocation()}
+                            disabled={savingLoc}
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold transition"
+                          >
+                            {savingLoc ? 'Saving...' : 'Save Location'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveLocation('', null as any, null as any)}
+                            disabled={savingLoc}
+                            className="px-2.5 py-1.5 bg-red-900/40 hover:bg-red-900/70 text-red-300 rounded text-[11px] transition"
+                            title="Remove Geotag"
+                          >
+                            Remove
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setIsEditingLocation(false)}
+                            className="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[11px] transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Interactive OpenStreetMap Embed */}
+                        <div className="rounded-lg overflow-hidden border border-slate-700 bg-slate-950 aspect-[16/9]">
+                          <iframe
+                            title="Photo Location Map"
+                            src={`https://www.openstreetmap.org/export/embed.html?bbox=${photo.longitude - 0.008}%2C${photo.latitude - 0.008}%2C${photo.longitude + 0.008}%2C${photo.latitude + 0.008}&layer=mapnik&marker=${photo.latitude}%2C${photo.longitude}`}
+                            className="w-full h-full border-0 pointer-events-none"
+                            loading="lazy"
+                          />
+                        </div>
+
+                        {/* Direct External Map Links */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <a
+                            href={`https://www.google.com/maps?q=${photo.latitude},${photo.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Google Maps
+                          </a>
+                          <a
+                            href={`https://maps.apple.com/?ll=${photo.latitude},${photo.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Apple Maps
+                          </a>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  /* No Location Card - Quick Presets & Add Location */
+                  <div className="bg-slate-800/40 rounded-xl p-3 space-y-2 border border-dashed border-slate-700/80">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-slate-300 text-xs font-medium">
+                        <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                        <span>No Location Assigned</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingLocation(!isEditingLocation)}
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium"
+                      >
+                        {isEditingLocation ? 'Cancel' : '+ Add Location'}
+                      </button>
                     </div>
 
-                    {/* Direct External Map Links */}
-                    <div className="flex items-center gap-2 pt-1">
-                      <a
-                        href={`https://www.google.com/maps?q=${photo.latitude},${photo.longitude}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Google Maps
-                      </a>
-                      <a
-                        href={`https://maps.apple.com/?ll=${photo.latitude},${photo.longitude}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Apple Maps
-                      </a>
-                    </div>
+                    {isEditingLocation ? (
+                      <div className="pt-2 space-y-2">
+                        <p className="text-[10px] text-slate-400">Quick Outing Presets:</p>
+                        <div className="grid grid-cols-1 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSaveLocation('Pottalkulam, Tamil Nadu, India', 8.077913, 77.551231)}
+                            className="text-left px-2 py-1 bg-slate-900/80 hover:bg-slate-700 rounded text-[10px] text-emerald-300 truncate"
+                          >
+                            📍 Kanyakumari / Pottalkulam (Sunrise)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveLocation('Bengaluru, Karnataka, India', 12.931643, 77.545616)}
+                            className="text-left px-2 py-1 bg-slate-900/80 hover:bg-slate-700 rounded text-[10px] text-indigo-300 truncate"
+                          >
+                            📍 Bengaluru, Karnataka (Sept 22)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveLocation('Thalaiyuthu, Tamil Nadu, India', 8.727996, 77.686714)}
+                            className="text-left px-2 py-1 bg-slate-900/80 hover:bg-slate-700 rounded text-[10px] text-amber-300 truncate"
+                          >
+                            📍 Thalaiyuthu / Tirunelveli (Oct 24)
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Or type custom city/place..."
+                          value={locName}
+                          onChange={(e) => setLocName(e.target.value)}
+                          className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleSaveLocation()}
+                          disabled={!locName.trim() || savingLoc}
+                          className="w-full py-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold"
+                        >
+                          {savingLoc ? 'Saving...' : 'Set Location'}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-500">
+                        Tag this photo with its outing or city so it appears on the interactive map explorer.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -12,7 +12,7 @@ from sqlalchemy import func, desc
 
 from app.database import get_db
 from app.models.media import Media, MediaCategory, SourceType
-from app.services.scanner import scan_file
+from app.services.scanner import scan_file, extract_exif, reverse_geocode
 from app.config import settings
 
 router = APIRouter()
@@ -421,3 +421,159 @@ def bulk_download(req: BulkDownloadRequest, db: Session = Depends(get_db)):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+class LocationUpdateRequest(BaseModel):
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_name: Optional[str] = None
+
+@router.patch("/{media_id}/location")
+def update_media_location(media_id: int, req: LocationUpdateRequest, db: Session = Depends(get_db)):
+    """Update location coordinates and/or place name for a single photo."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+        
+    media.latitude = req.latitude
+    media.longitude = req.longitude
+    
+    if req.location_name:
+        media.location_name = req.location_name
+    elif req.latitude is not None and req.longitude is not None:
+        media.location_name = reverse_geocode(req.latitude, req.longitude)
+    else:
+        media.location_name = None
+        
+    db.commit()
+    db.refresh(media)
+    return {
+        "id": media.id,
+        "latitude": media.latitude,
+        "longitude": media.longitude,
+        "location_name": media.location_name
+    }
+
+class BatchLocationRequest(BaseModel):
+    media_ids: List[int]
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_name: Optional[str] = None
+
+@router.patch("/batch-location")
+def batch_update_location(req: BatchLocationRequest, db: Session = Depends(get_db)):
+    """Bulk assigns location coordinates and/or place name to selected photos."""
+    loc_name = req.location_name
+    if not loc_name and req.latitude is not None and req.longitude is not None:
+        loc_name = reverse_geocode(req.latitude, req.longitude)
+        
+    updated = db.query(Media).filter(
+        Media.id.in_(req.media_ids)
+    ).update({
+        "latitude": req.latitude,
+        "longitude": req.longitude,
+        "location_name": loc_name
+    }, synchronize_session=False)
+    db.commit()
+    return {
+        "status": "success",
+        "count": updated,
+        "latitude": req.latitude,
+        "longitude": req.longitude,
+        "location_name": loc_name
+    }
+
+class PropagateLocationsRequest(BaseModel):
+    max_gap_hours: float = 4.0
+
+@router.post("/propagate-locations")
+def propagate_cluster_locations(req: PropagateLocationsRequest = PropagateLocationsRequest(), db: Session = Depends(get_db)):
+    """
+    Intelligently propagates location from GPS anchor photos to nearby non-geotagged photos
+    taken within max_gap_hours of the same outing or event.
+    """
+    anchors = db.query(Media).filter(
+        Media.latitude != None,
+        Media.longitude != None,
+        Media.captured_at != None,
+        Media.is_deleted == False
+    ).all()
+    
+    if not anchors:
+        return {"status": "skipped", "message": "No geotagged anchor photos found in library", "updated_count": 0}
+        
+    non_geo = db.query(Media).filter(
+        Media.latitude == None,
+        Media.captured_at != None,
+        Media.is_deleted == False
+    ).all()
+    
+    updated_count = 0
+    for item in non_geo:
+        best_anchor = None
+        min_gap_seconds = req.max_gap_hours * 3600.0
+        for anc in anchors:
+            gap = abs((item.captured_at - anc.captured_at).total_seconds())
+            if gap <= min_gap_seconds:
+                min_gap_seconds = gap
+                best_anchor = anc
+                
+        if best_anchor:
+            item.latitude = best_anchor.latitude
+            item.longitude = best_anchor.longitude
+            item.location_name = best_anchor.location_name
+            updated_count += 1
+            
+    db.commit()
+    return {
+        "status": "success",
+        "updated_count": updated_count,
+        "anchor_count": len(anchors)
+    }
+
+@router.post("/rescan-geotags")
+def rescan_all_geotags(db: Session = Depends(get_db)):
+    """
+    Deep-scans all photos in library for embedded/concatenated JPEGs with GPS EXIF,
+    re-extracting coordinates and place names.
+    """
+    from PIL import Image
+    photos = db.query(Media).filter(Media.is_deleted == False).all()
+    updated_photos = []
+    
+    for p in photos:
+        if not p.original_path or not os.path.isfile(p.original_path):
+            continue
+        try:
+            with Image.open(p.original_path) as img:
+                exif = extract_exif(img, file_path=p.original_path)
+                if exif.get("latitude") is not None and exif.get("longitude") is not None:
+                    p.latitude = exif["latitude"]
+                    p.longitude = exif["longitude"]
+                    p.location_name = exif.get("location_name")
+                if exif.get("camera_make"):
+                    p.camera_make = exif["camera_make"]
+                if exif.get("camera_model"):
+                    p.camera_model = exif["camera_model"]
+                if exif.get("iso"):
+                    p.iso = exif["iso"]
+                if exif.get("focal_length"):
+                    p.focal_length = exif["focal_length"]
+                if exif.get("exposure_time"):
+                    p.exposure_time = exif["exposure_time"]
+                updated_photos.append({
+                    "id": p.id,
+                    "filename": p.filename,
+                    "latitude": p.latitude,
+                    "longitude": p.longitude,
+                    "location_name": p.location_name
+                })
+        except Exception:
+            pass
+            
+    db.commit()
+    return {
+        "status": "success",
+        "total_scanned": len(photos),
+        "geotagged_found": len([p for p in updated_photos if p["latitude"] is not None]),
+        "items": [p for p in updated_photos if p["latitude"] is not None]
+    }

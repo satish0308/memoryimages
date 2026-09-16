@@ -580,6 +580,10 @@ export default function PhotosPage() {
         onAlbumAdded={() => {
           clearSelection();
         }}
+        onBatchLocationUpdated={() => {
+          fetchTimeline();
+          clearSelection();
+        }}
       />
 
       {/* Moment & Outing Story Detail Modal */}
