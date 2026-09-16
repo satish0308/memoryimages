@@ -166,3 +166,5 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Smart Filters Drawer | Filter by date presets/custom range, camera brand, orientation, favorites, and sharpness | `[Completed]` |
 | 2026-09-16 | Ambient Cinematic Slideshow | Fullscreen Ken Burns motion playback, speed selector (3s-12s), auto-hiding controls, and metadata HUD | `[Completed]` |
 | 2026-09-16 | JWT Authentication & Multi-User | Added User model, bcrypt hashing, PyJWT tokens, /auth endpoints, UserNavMenu, and /login page | `[Completed]` |
+| 2026-09-16 | In-Memory & Google Drive Cache | In-memory temp processing, direct Drive CDN caching (9drive pattern), storage approval gate, and /settings UI | `[Completed]` |
+| 2026-09-16 | Clustered Geo Map Explorer | Full-screen interactive Leaflet map, proximity clustering, squircle pins with photo counts, and slide-up drawer | `[Completed]` |
