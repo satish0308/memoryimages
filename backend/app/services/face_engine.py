@@ -191,32 +191,52 @@ def get_face_crop_image(db: Session, face: FaceDetection) -> Optional[bytes]:
     """Generates a high-quality square WebP headshot crop for a face detection."""
     import io
     from PIL import Image
+    from app.services.drive_cache import download_drive_file_to_memory
     Image.MAX_IMAGE_PIXELS = None
 
     media = db.query(Media).filter(Media.id == face.media_id).first()
     if not media:
         return None
 
-    img_path = media.original_path if (media.original_path and os.path.exists(media.original_path)) else media.thumbnail_1080_path
-    if not img_path or not os.path.exists(img_path):
+    img = None
+    if media.original_path and os.path.exists(media.original_path):
+        try:
+            img = Image.open(media.original_path)
+        except Exception:
+            pass
+    elif media.thumbnail_1080_path and os.path.exists(media.thumbnail_1080_path):
+        try:
+            img = Image.open(media.thumbnail_1080_path)
+        except Exception:
+            pass
+
+    # If local file is missing (in-memory mode), fetch from Google Drive directly into RAM
+    if img is None and media.source_id:
+        try:
+            buf = download_drive_file_to_memory(media.source_id, db)
+            if buf:
+                img = Image.open(buf)
+        except Exception as e:
+            logger.warning(f"In-memory download for face crop failed: {e}")
+
+    if img is None:
         return None
 
     try:
-        with Image.open(img_path) as img:
-            img_rgb = img.convert('RGB')
-            W, H = img_rgb.size
-            cx = int((face.box_x + face.box_w / 2.0) * W)
-            cy = int((face.box_y + face.box_h / 2.0) * H)
-            half = int(max(face.box_w * W, face.box_h * H) * 0.65)
-            crop_x1 = max(0, cx - half)
-            crop_y1 = max(0, cy - half)
-            crop_x2 = min(W, cx + half)
-            crop_y2 = min(H, cy + half)
+        img_rgb = img.convert('RGB')
+        W, H = img_rgb.size
+        cx = int((face.box_x + face.box_w / 2.0) * W)
+        cy = int((face.box_y + face.box_h / 2.0) * H)
+        half = int(max(face.box_w * W, face.box_h * H) * 0.65)
+        crop_x1 = max(0, cx - half)
+        crop_y1 = max(0, cy - half)
+        crop_x2 = min(W, cx + half)
+        crop_y2 = min(H, cy + half)
 
-            cropped = img_rgb.crop((crop_x1, crop_y1, crop_x2, crop_y2)).resize((180, 180), Image.Resampling.LANCZOS)
-            buf = io.BytesIO()
-            cropped.save(buf, format="WEBP", quality=90)
-            return buf.getvalue()
+        cropped = img_rgb.crop((crop_x1, crop_y1, crop_x2, crop_y2)).resize((180, 180), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        cropped.save(buf, format="WEBP", quality=90)
+        return buf.getvalue()
     except Exception as e:
         logger.error(f"Failed to generate face crop: {e}")
         return None
@@ -228,6 +248,7 @@ def auto_cluster_faces(db: Session, similarity_threshold: float = 0.80) -> Dict[
     """
     from PIL import Image
     from fastembed import ImageEmbedding
+    from app.services.drive_cache import download_drive_file_to_memory
     Image.MAX_IMAGE_PIXELS = None
 
     faces = db.query(FaceDetection).all()
@@ -241,19 +262,35 @@ def auto_cluster_faces(db: Session, similarity_threshold: float = 0.80) -> Dict[
         m = db.query(Media).filter(Media.id == f.media_id).first()
         if not m:
             continue
-        img_path = m.original_path if (m.original_path and os.path.exists(m.original_path)) else m.thumbnail_1080_path
-        if not img_path or not os.path.exists(img_path):
+        img = None
+        if m.original_path and os.path.exists(m.original_path):
+            try:
+                img = Image.open(m.original_path)
+            except Exception:
+                pass
+        elif m.thumbnail_1080_path and os.path.exists(m.thumbnail_1080_path):
+            try:
+                img = Image.open(m.thumbnail_1080_path)
+            except Exception:
+                pass
+        if img is None and m.source_id:
+            try:
+                buf = download_drive_file_to_memory(m.source_id, db)
+                if buf:
+                    img = Image.open(buf)
+            except Exception:
+                pass
+        if img is None:
             continue
         try:
-            with Image.open(img_path) as img:
-                img_rgb = img.convert('RGB')
-                W, H = img_rgb.size
-                cx = int((f.box_x + f.box_w / 2.0) * W)
-                cy = int((f.box_y + f.box_h / 2.0) * H)
-                half = int(max(f.box_w * W, f.box_h * H) * 0.6)
-                crop = img_rgb.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half))).resize((160, 160))
-                crops.append(crop)
-                valid_faces.append(f)
+            img_rgb = img.convert('RGB')
+            W, H = img_rgb.size
+            cx = int((f.box_x + f.box_w / 2.0) * W)
+            cy = int((f.box_y + f.box_h / 2.0) * H)
+            half = int(max(f.box_w * W, f.box_h * H) * 0.6)
+            crop = img_rgb.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half))).resize((160, 160))
+            crops.append(crop)
+            valid_faces.append(f)
         except Exception as e:
             logger.warning(f"Could not crop face {f.id}: {e}")
 

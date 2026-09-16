@@ -460,16 +460,23 @@ def bulk_download(req: BulkDownloadRequest, db: Session = Depends(get_db)):
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         seen_filenames = set()
         for item in items:
+            base_name = item.filename or (os.path.basename(item.original_path) if item.original_path else f"photo_{item.id}.jpg")
+            arc_name = base_name
+            counter = 1
+            while arc_name in seen_filenames:
+                name_part, ext_part = os.path.splitext(base_name)
+                arc_name = f"{name_part}_{counter}{ext_part}"
+                counter += 1
+            seen_filenames.add(arc_name)
+
             if item.original_path and os.path.isfile(item.original_path):
-                base_name = os.path.basename(item.original_path)
-                arc_name = base_name
-                counter = 1
-                while arc_name in seen_filenames:
-                    name_part, ext_part = os.path.splitext(base_name)
-                    arc_name = f"{name_part}_{counter}{ext_part}"
-                    counter += 1
-                seen_filenames.add(arc_name)
                 zip_file.write(item.original_path, arcname=arc_name)
+            elif item.source_type == SourceType.GOOGLE_DRIVE and item.source_id:
+                try:
+                    content = b"".join(stream_google_drive_file(item.source_id, db))
+                    zip_file.writestr(arc_name, content)
+                except Exception as e:
+                    logger.error(f"Error streaming {item.id} into zip: {e}")
                 
     zip_buffer.seek(0)
     filename = f"mymemorypics_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
