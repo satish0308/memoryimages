@@ -172,3 +172,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Comprehensive Smart Triage | 6 dedicated trays (Screenshots, Bills, Duplicates, Blurry, Large Files, Junk) with 1-click batch resolvers | `[Completed]` |
 | 2026-09-16 | Travel Routes & Geo Heatmap | Chronological journey paths with total distance/duration, stop waypoints, and multi-tier density heatmap | `[Completed]` |
 | 2026-09-16 | Local Disk Storage Purge | Cleared 191MB of cached originals/thumbnails, enabled zero-disk in-memory fallback for avatars/streaming/ZIP | `[Completed]` |
+| 2026-09-16 | Albums & Smart Collections Hub | Built Smart Collections API (/collections/smart), 1-click auto-curation, interactive Photo Picker modal, and full collection viewer | `[Completed]` |
