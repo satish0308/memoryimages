@@ -75,6 +75,21 @@ Modern smartphone cameras generate thousands of files: family vacations, burst s
 - **Cinematic Ambient Slideshow**: Fullscreen presentation mode with gentle Ken Burns motion transitions and metadata HUD.
 - **1-Click Streaming ZIP Export**: Download any album or custom selection as a compressed ZIP file generated in RAM on-the-fly.
 
+### 🪣 Self-Hosted S3 / MinIO Object Storage Engine
+- **100% Self-Hosted & Private**: Local Docker-based MinIO service (S3 API on port `9002`, Web Console on port `9001`) with zero public cloud dependencies.
+- **Zero-Disk In-Memory Streaming**: Originals and WebP thumbnails stream directly through memory buffers without writing cached copies to `/data/originals`.
+- **Direct S3 Ingestion**: Ingest photos directly into the `mymemorypics` S3 bucket with on-the-fly metadata extraction and thumbnail generation.
+- **Presigned URLs**: Secure, time-limited S3v4 presigned URL generation for sharing or private authenticated access.
+- **Integrated Dashboards**: Dedicated telemetry cards, bucket object explorer, and upload actions in both `/settings` and `/sync`.
+
+### 🛡️ Automated WAL Backups & Point-in-Time Disaster Recovery
+- **Zero-Downtime Online Snapshots**: Uses SQLite's native `sqlite3.backup` API to safely snapshot active databases in WAL mode without locking or downtime.
+- **High-Ratio Gzip Compression**: Compresses database archives by over 70% with SHA-256 integrity verification.
+- **Point-in-Time Restoration with Safety Rollback**: 1-click database restore with automatic pre-restore safety snapshot creation to guarantee zero data loss.
+- **Direct S3 Backup Export**: 1-click or automated streaming export of database snapshots directly into `s3://mymemorypics/backups/`.
+- **Automated Scheduling & Rolling Retention**: Configurable Daily or Weekly backup schedules with automatic pruning of old snapshots (keep last 7, 14, or 30).
+- **Offsite Downloads & Upload Restore**: Download `.db.gz` archives for offsite disaster recovery or upload existing backup files to restore.
+
 ### 🔒 JWT Authentication & Multi-User Switcher
 - **Stateless JWT Auth**: Secure password hashing with bcrypt and tokenized session management.
 - **Family Account Switcher**: Instant user profile switching directly from the navigation bar.
@@ -193,6 +208,18 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/albums/available-photos` | Lists library photos for the interactive photo picker |
 | `POST` | `/api/v1/albums/{id}/photos` | Adds selected photo IDs to an album |
 | `DELETE`| `/api/v1/albums/{id}/photos/{pid}`| Removes a photo from an album without deleting the photo |
+| `GET` | `/api/v1/storage/s3/status` | Live MinIO S3 connectivity, bucket stats, and console URLs |
+| `GET` | `/api/v1/storage/s3/objects` | Real-time object listing across photos, thumbnails, backups |
+| `POST` | `/api/v1/storage/s3/upload` | Direct multipart ingestion of photos into MinIO bucket |
+| `POST` | `/api/v1/storage/s3/backup-database` | Exports compressed SQLite WAL snapshot directly into S3 |
+| `GET` | `/api/v1/storage/s3/presigned/{key}`| Generates secure 1-hour S3v4 presigned URL for any object |
+| `GET` | `/api/v1/system/backups` | Lists point-in-time database WAL snapshots |
+| `POST` | `/api/v1/system/backups` | Creates instant zero-downtime compressed WAL backup |
+| `GET` | `/api/v1/system/backups/schedule` | Gets automated backup schedule and retention settings |
+| `POST` | `/api/v1/system/backups/schedule` | Updates automated backup preferences (Daily/Weekly) |
+| `POST` | `/api/v1/system/backups/{file}/restore`| Restores database snapshot with pre-restore safety backup |
+| `GET` | `/api/v1/system/backups/{file}/download`| Downloads `.db.gz` compressed database backup archive |
+| `POST` | `/api/v1/system/backups/upload` | Uploads and restores external `.db.gz` backup file |
 | `GET` | `/api/v1/settings` | Gets storage mode and processing settings |
 | `POST` | `/api/v1/auth/login` | JWT user login |
 
@@ -204,8 +231,8 @@ MyMemoryPics implements the **9drive In-Memory Architecture**:
 
 | Feature | `in_memory` (Default) | `disk_mount` |
 | :--- | :--- | :--- |
-| **Originals Location** | Google Drive Cloud (Authoritative) | Local Disk Mount (`/data/originals`) |
-| **Thumbnails** | Direct Google Drive CDN (`=s256`, `=s1080`) | Local WebP Cache (`/data/thumbnails`) |
+| **Originals Location** | Google Drive Cloud / MinIO S3 | Local Disk Mount (`/data/originals`) |
+| **Thumbnails** | Direct Google Drive CDN / In-Memory S3 WebP | Local WebP Cache (`/data/thumbnails`) |
 | **Face Crop Avatars** | Rendered on-the-fly in RAM | Saved to Disk |
 | **Local Disk Usage** | **~0 MB** (Reclaims 100% host disk space) | Full size of photo collection |
 | **Approval Gate** | Required in `/settings` before any disk writes | Unrestricted local filesystem writes |
@@ -218,26 +245,27 @@ MyMemoryPics implements the **9drive In-Memory Architecture**:
 mymemorypics/
 ├── backend/
 │   ├── app/
-│   │   ├── api/             # FastAPI REST routers (media, search, people, albums, sync, auth)
+│   │   ├── api/             # FastAPI REST routers (media, search, people, albums, sync, auth, s3_storage, backups)
 │   │   ├── models/          # SQLAlchemy database models (media, person, album, user)
-│   │   ├── services/        # AI & Core services (scanner, clip_engine, face_engine, drive_cache)
+│   │   ├── services/        # AI & Core services (scanner, clip_engine, face_engine, s3_storage, backup_service)
 │   │   ├── config.py        # Environment configuration
 │   │   ├── database.py      # SQLite / SQLAlchemy connection
 │   │   └── main.py          # FastAPI application entrypoint
 │   ├── Dockerfile           # Backend container definition
-│   └── requirements.txt     # Python dependencies (FastAPI, ONNX, FastEmbed, Pillow, PyJWT)
+│   └── requirements.txt     # Python dependencies (FastAPI, ONNX, FastEmbed, Pillow, PyJWT, boto3)
 ├── frontend/
-│   ├── app/                 # Next.js App Router pages (/albums, /map, /people, /triage, /sync)
+│   ├── app/                 # Next.js App Router pages (/albums, /map, /people, /triage, /sync, /settings)
 │   ├── components/          # Reusable UI modules (Timeline, Lightbox, Map, BulkBar, Slideshow)
 │   ├── Dockerfile           # Multi-stage production Next.js container definition
 │   └── package.json         # Frontend dependencies (React, Tailwind, Lucide, Leaflet)
 ├── data/                    # Persistent volume mounts (ignored by git)
 │   ├── db/                  # SQLite database file
+│   ├── backups/             # Local compressed WAL database snapshots
 │   ├── originals/           # Local originals (when disk_mount mode enabled)
 │   └── thumbnails/          # Local thumbnails cache
 ├── docker-compose.yml       # Production container orchestration
 ├── project.md               # Master technical plan & feature roadmap
-└── README.md                # Project documentation
+└── README.md                # Comprehensive project documentation
 ```
 
 ---
@@ -246,12 +274,15 @@ mymemorypics/
 
 The following major features are specified and scheduled for future milestones:
 
+- [x] **☁️ S3 / MinIO Object Storage Engine**: Self-hosted S3-compatible engine (MinIO) for zero-cloud private photo storage, RAM streaming, and disaster recovery archives.
+- [x] **🛡️ Automated WAL Backups & Disaster Recovery**: Zero-downtime online SQLite backups, safety rollback, offsite exports, and rolling retention pruning.
 - [ ] **🎨 Non-Destructive Web Editing Studio**: In-browser canvas adjustments (exposure, contrast, saturation, sharpness, 90° rotate, flip, crop presets 1:1, 16:9, 4:3, and aesthetic filters) saving parametric JSON recipes without touching originals.
 - [ ] **🔗 Public Shareable Album Links & Guest Gallery**: Tokenized public sharing URLs (`/share/[token]`) with optional PIN protection and auto-expiration for friends and family with 1-click ZIP export.
 - [ ] **👥 Multi-User Private Libraries & Family Shared Spaces**: Multi-tenant data segregation with private personal photo vaults and collaborative shared family pools.
 - [ ] **🎞️ Apple Live Photos & Short Video Motion**: Auto-pairing of `.heic` + `.mov` clips with hover-motion playback on timeline thumbnails and inline silent video player.
 - [ ] **📱 PWA & Chunked Multi-File Uploader**: Mobile home-screen installation, service worker offline caching, and drag-and-drop resume-enabled chunked uploader.
-- [ ] **☁️ S3 / MinIO Object Storage Connector**: Cloud-native backend allowing originals and backups to be stored on AWS S3, Cloudflare R2, or MinIO.
+- [ ] **🐘 PostgreSQL + pgvector Dual-Database Engine**: Dynamic database driver supporting SQLite for personal libraries and PostgreSQL + pgvector for 100k+ photo enterprise scale.
+- [ ] **⚡ Asynchronous Background Task Queue (Redis + Celery)**: Offload heavy AI jobs with real-time UI progress bars.
 
 ---
 
