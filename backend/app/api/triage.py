@@ -251,3 +251,111 @@ def batch_delete(req: BatchActionRequest, db: Session = Depends(get_db)):
     ).update({"is_deleted": True}, synchronize_session=False)
     db.commit()
     return {"status": "deleted", "count": updated}
+
+@router.get("/memes")
+def get_memes_and_graphics(db: Session = Depends(get_db)):
+    """Lists all detected memes and social media junk."""
+    items = db.query(Media).filter(
+        Media.category == MediaCategory.MEME_JUNK,
+        Media.is_deleted == False
+    ).order_by(desc(Media.captured_at)).all()
+    
+    return [{
+        "id": item.id,
+        "filename": item.filename,
+        "captured_at": item.captured_at,
+        "file_size": item.file_size,
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+    } for item in items]
+
+@router.get("/large-files")
+def get_large_storage_files(min_mb: float = 3.0, limit: int = 50, db: Session = Depends(get_db)):
+    """Lists the largest files in the library to identify storage hogs."""
+    min_bytes = int(min_mb * 1024 * 1024)
+    items = db.query(Media).filter(
+        Media.file_size >= min_bytes,
+        Media.is_deleted == False
+    ).order_by(desc(Media.file_size)).limit(limit).all()
+    
+    return [{
+        "id": item.id,
+        "filename": item.filename,
+        "category": item.category.value if hasattr(item.category, 'value') else str(item.category),
+        "file_size": item.file_size,
+        "file_size_mb": round(item.file_size / (1024 * 1024), 2),
+        "width": item.width,
+        "height": item.height,
+        "captured_at": item.captured_at,
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+    } for item in items]
+
+@router.post("/move-to-memories")
+def move_to_memories(req: BatchActionRequest, db: Session = Depends(get_db)):
+    """Reclassifies selected items as permanent memories, removing them from triage trays."""
+    updated = db.query(Media).filter(
+        Media.id.in_(req.media_ids)
+    ).update({
+        "category": MediaCategory.MEMORY,
+        "expires_at": None
+    }, synchronize_session=False)
+    db.commit()
+    return {"status": "moved_to_memories", "count": updated}
+
+@router.post("/mark-sharp")
+def mark_as_sharp(req: BatchActionRequest, db: Session = Depends(get_db)):
+    """Marks selected photos as not blurry (dismisses blur flag)."""
+    updated = db.query(Media).filter(
+        Media.id.in_(req.media_ids)
+    ).update({"is_blurry": False}, synchronize_session=False)
+    db.commit()
+    return {"status": "marked_sharp", "count": updated}
+
+@router.post("/resolve-all-duplicates")
+def resolve_all_duplicates(db: Session = Depends(get_db)):
+    """
+    Auto-resolves all duplicate clusters by keeping the highest resolution/sharpness image
+    in each cluster and soft-deleting redundant copies.
+    """
+    duplicate_hashes = db.query(Media.perceptual_hash).filter(
+        Media.perceptual_hash != None,
+        Media.is_deleted == False
+    ).group_by(Media.perceptual_hash).having(func.count(Media.id) > 1).all()
+
+    total_deleted = 0
+    resolved_clusters = 0
+
+    for (h,) in duplicate_hashes:
+        items = db.query(Media).filter(
+            Media.perceptual_hash == h,
+            Media.is_deleted == False
+        ).all()
+
+        if len(items) <= 1:
+            continue
+
+        # Score items: higher resolution (w*h) + file_size + blurriness_score
+        def item_quality(m):
+            res = (m.width or 1000) * (m.height or 1000)
+            size = m.file_size or 0
+            sharpness = m.blurriness_score or 0
+            return (res, size, sharpness)
+
+        sorted_items = sorted(items, key=item_quality, reverse=True)
+        best_item = sorted_items[0]
+        redundant_items = sorted_items[1:]
+
+        redundant_ids = [m.id for m in redundant_items]
+        deleted_count = db.query(Media).filter(
+            Media.id.in_(redundant_ids)
+        ).update({"is_deleted": True}, synchronize_session=False)
+
+        total_deleted += deleted_count
+        resolved_clusters += 1
+
+    db.commit()
+    return {
+        "status": "all_resolved",
+        "clusters_resolved": resolved_clusters,
+        "deleted_duplicates": total_deleted
+    }
+
