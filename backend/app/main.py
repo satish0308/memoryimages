@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 
 from app.config import settings
 from app.database import engine, Base
-from app.models import media, person, sync
+from app.models import media, person, sync, album, user
 from app.api.router import api_router
 
 app = FastAPI(

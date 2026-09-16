@@ -2,6 +2,7 @@ from app.models.media import Media, MediaCategory, SourceType
 from app.models.person import Person, FaceDetection
 from app.models.sync import SyncSource, SyncStatus, SyncType
 from app.models.album import Album, album_media
+from app.models.user import User
 
 __all__ = [
     "Media",
@@ -14,4 +15,5 @@ __all__ = [
     "SyncType",
     "Album",
     "album_media",
+    "User",
 ]

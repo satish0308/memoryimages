@@ -13,6 +13,8 @@ import {
   BookOpen,
   Globe
 } from 'lucide-react';
+import { Providers } from '@/components/layout/Providers';
+import { AppHeader } from '@/components/layout/AppHeader';
 
 export const metadata: Metadata = {
   title: 'MyMemoryPics - World-Class AI Photo Manager',
@@ -27,7 +29,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="flex h-screen overflow-hidden bg-slate-50 text-slate-900 antialiased">
-        {/* Left Sidebar */}
+        <Providers>
+          {/* Left Sidebar */}
         <aside className="w-64 border-r border-slate-200 bg-white flex flex-col justify-between p-4 flex-shrink-0">
           <div>
             {/* Logo */}
@@ -109,42 +112,15 @@ export default function RootLayout({
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Top Header */}
-          <header className="h-16 border-b border-slate-200 bg-white px-6 flex items-center justify-between gap-4 flex-shrink-0">
-            {/* Search bar */}
-            <div className="flex-1 max-w-xl relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search photos, receipts, or people..."
-                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-100 border border-transparent rounded-full focus:bg-white focus:border-indigo-500 focus:outline-none transition-all"
-              />
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-3">
-              <label
-                htmlFor="photo-upload-input"
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 cursor-pointer shadow-sm transition"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                Upload Photo
-              </label>
-              <input
-                id="photo-upload-input"
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-              />
-            </div>
-          </header>
+          {/* Top Dynamic Header with UserNavMenu & AuthModal */}
+          <AppHeader />
 
           {/* Page View Body */}
           <main className="flex-1 overflow-y-auto p-6">
             {children}
           </main>
         </div>
+        </Providers>
       </body>
     </html>
   );

@@ -1,8 +1,9 @@
 from fastapi import APIRouter
-from app.api import media, triage, people, sync, search, albums
+from app.api import media, triage, people, sync, search, albums, auth
 
 api_router = APIRouter()
 
+api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(media.router, prefix="/media", tags=["Media"])
 api_router.include_router(triage.router, prefix="/triage", tags=["Smart Triage & Cleanup"])
 api_router.include_router(people.router, prefix="/people", tags=["People & Faces"])

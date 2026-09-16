@@ -119,7 +119,8 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [x] **Image Quality Degradation Resolution**: Upgraded to 512px High-DPI thumbnails, 2560px WebP previews, Display P3 ICC profile preservation, and uncompressed progressive original loading in Lightbox. `[Completed]`
 
 ### Phase 11: Multi-User Authentication, Private Vaults & Shareable Public Links
-- [ ] **JWT User Authentication & Password Hashing**: Secure login/registration system (`/login`, `/register`) using bcrypt and stateless JWT authentication tokens (modeled on 9drive auth architecture). `[Planned]`
+- [x] **JWT User Authentication & Password Hashing**: Secure login/registration system (`/login`, `/register`) using bcrypt and stateless JWT authentication tokens (modeled on 9drive auth architecture). `[Completed]`
+- [x] **Multi-User Account Switcher & Profiles**: UserNavMenu avatar dropdown, instant family member account switching, and profile updating (`PATCH /api/v1/auth/me`). `[Completed]`
 - [ ] **Multi-User Private Libraries**: Multi-tenant data segregation where users have private photo libraries, private favorites, and role-based permissions (`admin` / `user`). `[Planned]`
 - [ ] **Family Shared Spaces & Shared Albums**: Shared family vaults where family members can pool memories and contribute photos to shared collections. `[Planned]`
 - [ ] **Public Shareable Album Links (Read-Only)**: Generate tokenized public sharing URLs (e.g. `/share/{token}`) for albums with optional PIN/password protection and expiration dates (7 days, 30 days, forever). `[Planned]`
@@ -164,3 +165,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Interactive Face Tagging | UltraFace ONNX model (84 faces detected), interactive bounding box overlays, and inline name editor | `[Completed]` |
 | 2026-09-16 | Smart Filters Drawer | Filter by date presets/custom range, camera brand, orientation, favorites, and sharpness | `[Completed]` |
 | 2026-09-16 | Ambient Cinematic Slideshow | Fullscreen Ken Burns motion playback, speed selector (3s-12s), auto-hiding controls, and metadata HUD | `[Completed]` |
+| 2026-09-16 | JWT Authentication & Multi-User | Added User model, bcrypt hashing, PyJWT tokens, /auth endpoints, UserNavMenu, and /login page | `[Completed]` |
