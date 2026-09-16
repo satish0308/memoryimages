@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Providers } from '@/components/layout/Providers';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { MainContentWrapper } from '@/components/layout/MainContentWrapper';
 
 export const metadata: Metadata = {
   title: 'MyMemoryPics - World-Class AI Photo Manager',
@@ -124,9 +125,9 @@ export default function RootLayout({
           <AppHeader />
 
           {/* Page View Body */}
-          <main className="flex-1 overflow-y-auto p-6">
+          <MainContentWrapper>
             {children}
-          </main>
+          </MainContentWrapper>
         </div>
         </Providers>
       </body>
