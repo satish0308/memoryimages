@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   FolderSync, 
   HardDrive, 
@@ -11,7 +11,9 @@ import {
   RefreshCw,
   Copy,
   Check,
-  Play
+  Play,
+  Server,
+  UploadCloud
 } from 'lucide-react';
 
 interface SyncSourceItem {
@@ -24,6 +26,16 @@ interface SyncSourceItem {
   last_synced_at: string | null;
 }
 
+interface S3StorageStatus {
+  connected: boolean;
+  endpoint_url: string;
+  public_url: string;
+  console_url: string;
+  bucket_name: string;
+  object_count: number;
+  total_size_mb: number;
+}
+
 export default function SyncPage() {
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
@@ -33,6 +45,11 @@ export default function SyncPage() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [sources, setSources] = useState<SyncSourceItem[]>([]);
   const [syncingGoogle, setSyncingGoogle] = useState(false);
+
+  // S3 / MinIO State
+  const [s3Status, setS3Status] = useState<S3StorageStatus | null>(null);
+  const [uploadingS3, setUploadingS3] = useState(false);
+  const s3InputRef = useRef<HTMLInputElement | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
@@ -46,6 +63,48 @@ export default function SyncPage() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const fetchS3Status = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setS3Status(data);
+      }
+    } catch (e) {
+      console.error('Failed to load S3 status:', e);
+    }
+  };
+
+  const handleUploadS3 = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploadingS3(true);
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncStatus(`Successfully uploaded & ingested ${data.uploaded_count} photos to MinIO S3!`);
+        fetchS3Status();
+        fetchSources();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'S3 upload failed');
+      }
+    } catch (e) {
+      alert('Error uploading to S3');
+    } finally {
+      setUploadingS3(false);
+      if (s3InputRef.current) s3InputRef.current.value = '';
     }
   };
 
@@ -101,6 +160,7 @@ export default function SyncPage() {
   useEffect(() => {
     fetchGoogleAuthUrl();
     fetchSources();
+    fetchS3Status();
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       if (params.get('status') === 'connected') {
@@ -110,6 +170,7 @@ export default function SyncPage() {
           : 'Google Drive connected successfully!'
         );
         fetchSources();
+        fetchS3Status();
       } else if (params.get('code')) {
         const code = params.get('code');
         const state = params.get('state');
@@ -118,6 +179,7 @@ export default function SyncPage() {
             if (res.ok) {
               setSyncStatus('Google Drive connected successfully! Ingesting photos...');
               fetchSources();
+              fetchS3Status();
             }
           })
           .catch(e => console.error(e));
@@ -134,14 +196,14 @@ export default function SyncPage() {
   const googleSource = sources.find(s => s.sync_type === 'google_drive');
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <div>
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
           <FolderSync className="w-5 h-5 text-indigo-600" />
           Sync & Storage Sources
         </h2>
         <p className="text-xs text-slate-500 mt-1">
-          Configure where MyMemoryPics discovers photos. Both local directories and Google Drive are supported.
+          Configure where MyMemoryPics discovers and stores photos. Local directory mounts, Google Drive, and self-hosted MinIO S3 object storage are supported.
         </p>
       </div>
 
@@ -152,7 +214,7 @@ export default function SyncPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Local Directory Source */}
         <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
           <div className="flex items-center gap-3">
@@ -293,6 +355,88 @@ export default function SyncPage() {
                 Google OAuth Pending Configuration
               </button>
             )}
+          </div>
+        </div>
+
+        {/* MinIO S3 Object Storage Source */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm flex flex-col justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-cyan-50 text-cyan-600 rounded-xl">
+                <Server className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-slate-800">MinIO S3 Storage</h3>
+                <p className="text-xs text-slate-400">
+                  {s3Status?.bucket_name ? `s3://${s3Status.bucket_name}` : 'Self-hosted S3'}
+                </p>
+              </div>
+            </div>
+
+            {s3Status?.connected ? (
+              <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Online • MinIO Engine
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-700">
+                    {s3Status.object_count} objects ({s3Status.total_size_mb} MB)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono truncate" title={s3Status.public_url}>
+                  Endpoint: {s3Status.public_url}
+                </p>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
+                <p>MinIO S3 storage is currently offline or unreachable.</p>
+              </div>
+            )}
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Store originals and stream WebP thumbnails directly from self-hosted MinIO object storage without local disk dependency.
+            </p>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+              <p className="text-[11px] font-semibold text-slate-600">MinIO Web Console:</p>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {s3Status?.console_url || 'http://localhost:9001'}
+              </p>
+              <p className="text-[10px] text-slate-400">
+                User: <code className="text-slate-700 font-semibold">minioadmin / minioadmin123</code>
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-2 space-y-2">
+            <input
+              type="file"
+              ref={s3InputRef}
+              onChange={handleUploadS3}
+              multiple
+              accept="image/*"
+              className="hidden"
+            />
+            <button
+              onClick={() => s3InputRef.current?.click()}
+              disabled={uploadingS3 || !s3Status?.connected}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            >
+              <UploadCloud className={`w-3.5 h-3.5 ${uploadingS3 ? 'animate-bounce' : ''}`} />
+              {uploadingS3 ? 'Ingesting to S3...' : 'Upload Photos to S3'}
+            </button>
+
+            <a
+              href={s3Status?.console_url || 'http://localhost:9001'}
+              target="_blank"
+              rel="noreferrer"
+              className="w-full flex items-center justify-center gap-2 py-2 px-4 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+              Open MinIO Console
+            </a>
           </div>
         </div>
       </div>

@@ -24,7 +24,10 @@ import {
   Clock,
   FileArchive,
   CheckCircle2,
-  X
+  X,
+  Server,
+  Eye,
+  Link as LinkIcon
 } from 'lucide-react';
 
 interface StorageMetrics {
@@ -74,6 +77,28 @@ interface BackupSchedule {
   last_backup_at: string | null;
 }
 
+interface S3Status {
+  connected: boolean;
+  endpoint_url: string;
+  public_url: string;
+  console_url: string;
+  bucket_name: string;
+  all_buckets: string[];
+  object_count: number;
+  total_size_bytes: number;
+  total_size_mb: number;
+  region: string;
+  error?: string;
+}
+
+interface S3ObjectItem {
+  key: string;
+  size_bytes: number;
+  size_kb: number;
+  last_modified: string;
+  etag: string;
+}
+
 export default function AppSettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,6 +127,15 @@ export default function AppSettingsPage() {
   const [restoring, setRestoring] = useState(false);
   const [uploadingBackup, setUploadingBackup] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  // S3 / MinIO Object Storage state
+  const [s3Status, setS3Status] = useState<S3Status | null>(null);
+  const [s3Objects, setS3Objects] = useState<S3ObjectItem[]>([]);
+  const [loadingS3, setLoadingS3] = useState(false);
+  const [uploadingS3, setUploadingS3] = useState(false);
+  const [backingUpS3, setBackingUpS3] = useState(false);
+  const [s3Filter, setS3Filter] = useState<'all' | 'photos' | 'thumbnails' | 'backups'>('all');
+  const s3UploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -143,9 +177,30 @@ export default function AppSettingsPage() {
     }
   };
 
+  const fetchS3StatusAndObjects = async () => {
+    setLoadingS3(true);
+    try {
+      const [statusRes, objectsRes] = await Promise.all([
+        fetch(`${API_URL}/api/v1/storage/s3/status`),
+        fetch(`${API_URL}/api/v1/storage/s3/objects`)
+      ]);
+      if (statusRes.ok) {
+        setS3Status(await statusRes.json());
+      }
+      if (objectsRes.ok) {
+        setS3Objects(await objectsRes.json());
+      }
+    } catch (e) {
+      console.error('Failed to load S3 status:', e);
+    } finally {
+      setLoadingS3(false);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
     fetchBackupsAndSchedule();
+    fetchS3StatusAndObjects();
   }, [API_URL]);
 
   const handleSaveSettings = async () => {
@@ -374,6 +429,84 @@ export default function AppSettingsPage() {
       }
     } catch (e) {
       console.error('Failed to delete backup:', e);
+    }
+  };
+
+  // S3 / MinIO Handlers
+  const handleUploadS3Photos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadingS3(true);
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessage({
+          type: 'success',
+          text: `Successfully ingested ${data.uploaded_count} photos directly to S3 / MinIO storage!`
+        });
+        setTimeout(() => setMessage(null), 5000);
+        fetchS3StatusAndObjects();
+        fetchSettings();
+      } else {
+        const err = await res.json();
+        setMessage({ type: 'error', text: err.detail || 'Failed to upload photos to S3.' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Error uploading to MinIO S3 storage.' });
+    } finally {
+      setUploadingS3(false);
+      if (s3UploadInputRef.current) s3UploadInputRef.current.value = '';
+    }
+  };
+
+  const handleBackupDatabaseToS3 = async () => {
+    setBackingUpS3(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/backup-database`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessage({
+          type: 'success',
+          text: `Zero-downtime WAL backup exported to MinIO S3: ${data.s3_key}`
+        });
+        setTimeout(() => setMessage(null), 5000);
+        fetchS3StatusAndObjects();
+      } else {
+        const err = await res.json();
+        setMessage({ type: 'error', text: err.detail || 'S3 database backup failed.' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Error exporting database to MinIO S3.' });
+    } finally {
+      setBackingUpS3(false);
+    }
+  };
+
+  const handleOpenPresignedUrl = async (key: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/presigned/${encodeURIComponent(key)}?expires_in=3600`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.presigned_url) {
+          window.open(data.presigned_url, '_blank');
+        }
+      } else {
+        alert('Could not generate presigned URL for this object.');
+      }
+    } catch (e) {
+      console.error('Presigned URL error:', e);
     }
   };
 
@@ -846,6 +979,248 @@ export default function AppSettingsPage() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* S3 / MinIO OBJECT STORAGE ENGINE SECTION */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Server className="w-4 h-4 text-cyan-600" />
+                S3 / MinIO Object Storage Engine
+              </h3>
+              {s3Status?.connected ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  MinIO Online • Self-Hosted
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                  Offline / Connecting...
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Self-hosted S3-compatible object storage for zero-cloud private photo storage, RAM streaming, and disaster recovery
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="file"
+              ref={s3UploadInputRef}
+              onChange={handleUploadS3Photos}
+              multiple
+              accept="image/*"
+              className="hidden"
+            />
+            <button
+              onClick={() => s3UploadInputRef.current?.click()}
+              disabled={uploadingS3 || !s3Status?.connected}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+              title="Upload photos directly to MinIO S3 bucket"
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>{uploadingS3 ? 'Ingesting to S3...' : 'Upload Photos to S3'}</span>
+            </button>
+
+            <button
+              onClick={handleBackupDatabaseToS3}
+              disabled={backingUpS3 || !s3Status?.connected}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+              title="Export database WAL backup directly to S3 bucket"
+            >
+              <FileArchive className="w-3.5 h-3.5 text-cyan-600" />
+              <span>{backingUpS3 ? 'Exporting...' : 'Backup DB to S3'}</span>
+            </button>
+
+            <a
+              href={s3Status?.console_url || 'http://localhost:9001'}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition"
+              title="Open MinIO Web Console (minioadmin / minioadmin123)"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>MinIO Console</span>
+            </a>
+
+            <button
+              onClick={fetchS3StatusAndObjects}
+              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition"
+              title="Refresh S3 status and objects"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingS3 ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Telemetry Tiles */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60">
+            <p className="text-[11px] text-slate-500">S3 Endpoint</p>
+            <p className="text-xs font-bold text-slate-900 mt-1 font-mono truncate" title={s3Status?.public_url || 'http://localhost:9002'}>
+              {s3Status?.public_url || 'http://localhost:9002'}
+            </p>
+            <p className="text-[10px] text-cyan-600 mt-0.5">Port 9002 (API) • 9001 (UI)</p>
+          </div>
+
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60">
+            <p className="text-[11px] text-slate-500">Active Bucket</p>
+            <p className="text-xs font-bold text-slate-900 mt-1 font-mono">
+              {s3Status?.bucket_name || 'mymemorypics'}
+            </p>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              Region: {s3Status?.region || 'us-east-1'}
+            </p>
+          </div>
+
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60">
+            <p className="text-[11px] text-slate-500">Objects Stored</p>
+            <p className="text-xs font-bold text-slate-900 mt-1 font-mono">
+              {s3Status?.object_count ?? s3Objects.length} objects
+            </p>
+            <p className="text-[10px] text-emerald-600 mt-0.5">
+              Zero-disk RAM streamed
+            </p>
+          </div>
+
+          <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60">
+            <p className="text-[11px] text-slate-500">S3 Total Size</p>
+            <p className="text-xs font-bold text-slate-900 mt-1 font-mono">
+              {s3Status?.total_size_mb || 0} MB
+            </p>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              {s3Status?.total_size_bytes ? `${Math.round(s3Status.total_size_bytes / 1024)} KB` : '0 KB'}
+            </p>
+          </div>
+        </div>
+
+        {/* Object Explorer */}
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Bucket Object Explorer ({s3Objects.length})
+              </h4>
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                {(['all', 'photos', 'thumbnails', 'backups'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setS3Filter(filter)}
+                    className={`px-2 py-0.5 rounded-md font-semibold capitalize transition ${
+                      s3Filter === filter
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    {filter}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              Console Credentials: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-700">minioadmin / minioadmin123</code>
+            </p>
+          </div>
+
+          {s3Objects.length === 0 && !loadingS3 ? (
+            <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl space-y-2">
+              <Server className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-xs font-semibold text-slate-600">No objects in MinIO S3 bucket</p>
+              <p className="text-[11px] text-slate-400">
+                Upload photos or back up your database to populate the self-hosted S3 storage bucket.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 text-[11px]">
+                  <tr>
+                    <th className="py-2.5 px-3 font-bold">Object Key</th>
+                    <th className="py-2.5 px-3 font-bold">Category</th>
+                    <th className="py-2.5 px-3 font-bold">Size</th>
+                    <th className="py-2.5 px-3 font-bold">Last Modified</th>
+                    <th className="py-2.5 px-3 font-bold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {s3Objects
+                    .filter((obj) => {
+                      if (s3Filter === 'photos') return obj.key.startsWith('photos/');
+                      if (s3Filter === 'thumbnails') return obj.key.startsWith('thumbnails/');
+                      if (s3Filter === 'backups') return obj.key.startsWith('backups/');
+                      return true;
+                    })
+                    .map((obj) => {
+                      const isPhoto = obj.key.startsWith('photos/');
+                      const isThumb = obj.key.startsWith('thumbnails/');
+                      const isBackup = obj.key.startsWith('backups/');
+                      return (
+                        <tr key={obj.key} className="hover:bg-slate-50/60 transition">
+                          <td className="py-2.5 px-3 font-mono text-[11px] font-semibold text-slate-800">
+                            <div className="flex items-center gap-1.5">
+                              {isBackup ? (
+                                <FileArchive className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                              ) : isThumb ? (
+                                <Layers className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                              ) : (
+                                <Server className="w-3.5 h-3.5 text-cyan-600 flex-shrink-0" />
+                              )}
+                              <span className="truncate max-w-[280px]" title={obj.key}>
+                                {obj.key}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 text-[11px]">
+                            {isPhoto ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-50 text-cyan-700">
+                                Original Photo
+                              </span>
+                            ) : isThumb ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700">
+                                WebP Thumbnail
+                              </span>
+                            ) : isBackup ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700">
+                                DB WAL Backup
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                                General
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap font-mono text-[11px]">
+                            {obj.size_kb < 1024
+                              ? `${obj.size_kb} KB`
+                              : `${(obj.size_kb / 1024).toFixed(1)} MB`}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap text-[11px]">
+                            {obj.last_modified
+                              ? new Date(obj.last_modified).toLocaleString()
+                              : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                            <button
+                              onClick={() => handleOpenPresignedUrl(obj.key)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 rounded-lg transition"
+                              title="Generate temporary presigned URL & open"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Open URL</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>

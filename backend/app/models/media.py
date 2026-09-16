@@ -16,6 +16,7 @@ class SourceType(str, enum.Enum):
     LOCAL = "local"
     GOOGLE_DRIVE = "google_drive"
     MANUAL_UPLOAD = "manual_upload"
+    S3_MINIO = "s3_minio"
 
 class Media(Base):
     __tablename__ = "media"

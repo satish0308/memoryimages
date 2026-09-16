@@ -233,6 +233,18 @@ def get_thumbnail(
             )
         except Exception:
             pass
+
+    # 4. In-memory stream from MinIO / S3 Object Storage
+    if media.source_type == SourceType.S3_MINIO and media.thumbnail_256_path:
+        try:
+            from app.services.s3_storage import stream_s3_file
+            target_key = media.source_id if size == "original" else media.thumbnail_256_path
+            return StreamingResponse(
+                stream_s3_file(target_key),
+                media_type="image/jpeg" if size == "original" else "image/webp"
+            )
+        except Exception:
+            pass
         
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on disk")
 
@@ -255,6 +267,18 @@ def view_original(media_id: int, db: Session = Depends(get_db)):
             )
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"In-memory stream error: {e}")
+
+    # Streaming from MinIO / S3 Object Storage
+    if media.source_type == SourceType.S3_MINIO and media.source_id:
+        try:
+            from app.services.s3_storage import stream_s3_file
+            return StreamingResponse(
+                stream_s3_file(media.source_id),
+                media_type=media.mime_type or "image/jpeg",
+                headers={"Content-Disposition": "inline"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"S3 stream error: {e}")
 
     if media.original_path and os.path.isfile(media.original_path):
         return FileResponse(
@@ -477,6 +501,13 @@ def bulk_download(req: BulkDownloadRequest, db: Session = Depends(get_db)):
                     zip_file.writestr(arc_name, content)
                 except Exception as e:
                     logger.error(f"Error streaming {item.id} into zip: {e}")
+            elif item.source_type == SourceType.S3_MINIO and item.source_id:
+                try:
+                    from app.services.s3_storage import get_s3_bytes
+                    content = get_s3_bytes(item.source_id)
+                    zip_file.writestr(arc_name, content)
+                except Exception as e:
+                    logger.error(f"Error reading S3 item {item.id} into zip: {e}")
                 
     zip_buffer.seek(0)
     filename = f"mymemorypics_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"

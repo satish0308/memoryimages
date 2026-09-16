@@ -157,9 +157,12 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
   - Real-time WebSocket progress reporting to the frontend UI with percentage meters and active task logs. `[Planned]`
 
 ### Phase 14: Multi-Cloud Object Storage & Universal Sync
-- [ ] **S3 / MinIO Object Storage Engine**:
-  - Connect directly to AWS S3, Cloudflare R2, Wasabi, or self-hosted MinIO buckets.
-  - Stateless streaming architecture allowing originals to remain purely in cloud buckets while MyMemoryPics streams on-the-fly with zero local disk footprint. `[Planned]`
+- [x] **S3 / MinIO Object Storage Engine (Self-Hosted MinIO)**:
+  - Fully self-hosted local Docker MinIO integration via S3 API (`boto3`) on port 9002 and Web Console on port 9001.
+  - S3 storage service & REST API endpoints (`/api/v1/storage/s3/...`) for bucket initialization, photo ingestion, direct in-memory streaming, and presigned URLs.
+  - Zero-downtime database backup export directly to `s3://mymemorypics/backups/`.
+  - In-memory on-the-fly streaming for thumbnails (`/thumbnail`), originals (`/view`), and bulk ZIP downloads (`/bulk-download`) with zero local disk footprint (`SourceType.S3_MINIO`).
+  - Interactive management UI in `/settings` (telemetry cards, bucket explorer, direct upload, presigned link generation) and `/sync` (MinIO S3 storage card). `[Completed]`
 - [ ] **Nextcloud & WebDAV Sync Connector**:
   - Bi-directional sync adapter for self-hosted instances running Nextcloud, ownCloud, or Synology/QNAP NAS over WebDAV. `[Planned]`
 - [ ] **Safe Read-Only External Drive Auto-Scanner**:
@@ -223,3 +226,5 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Local Disk Storage Purge | Cleared 191MB of cached originals/thumbnails, enabled zero-disk in-memory fallback for avatars/streaming/ZIP | `[Completed]` |
 | 2026-09-16 | Albums & Smart Collections Hub | Built Smart Collections API (/collections/smart), 1-click auto-curation, interactive Photo Picker modal, and full collection viewer | `[Completed]` |
 | 2026-09-16 | Automated WAL Backups & Disaster Recovery | Native sqlite3.backup online zero-downtime backups, gzip compression, point-in-time restore, safety rollback, and UI dashboard in /settings | `[Completed]` |
+| 2026-09-16 | S3 / MinIO Object Storage Engine | 100% self-hosted MinIO S3 integration, boto3 streaming engine, zero-disk photo ingestion/thumbnails, WAL backup exports, presigned URLs, and Settings/Sync UI dashboards | `[Completed]` |
+
