@@ -143,6 +143,44 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [x] **Interactive Travel Route & Geographic Heatmap**: Chronological journey visualization on the map connecting geotagged photos from vacations and road trips with distance and duration statistics, numbered waypoints, and multi-ring density heatmap layer. `[Completed]`
 - [ ] **PWA & Chunked Multi-File Uploader**: Progressive Web App manifest for home screen install, service worker offline caching of recent memories, and drag-and-drop resume-enabled chunked uploader. `[Planned]`
 
+### Phase 13: Database Scalability, Async Workers & Disaster Recovery
+- [x] **Automated WAL Backups & Disaster Recovery (Free, Local, Docker)**:
+  - Zero-downtime online SQLite backups using `sqlite3.backup` API with gzip compression.
+  - Point-in-time database restoration with automated pre-restore safety snapshot.
+  - Offsite backup downloads and direct `.db.gz` file upload restore.
+  - Configurable auto-backup scheduling (Daily/Weekly) and rolling retention pruning (keep last 7/14/30 snapshots). `[Completed]`
+- [ ] **PostgreSQL + `pgvector` Dual-Database Engine**:
+  - Dynamic database driver toggle via `DATABASE_URL` supporting SQLite for lightweight personal instances and PostgreSQL for enterprise family scale (100k+ photos).
+  - Native vector index support (`HNSW` / `IVFFlat`) for sub-10ms multimodal semantic CLIP vector similarity queries. `[Planned]`
+- [ ] **Asynchronous Background Task Queue (Redis + Celery/ARQ) & WebSockets**:
+  - Offload heavy AI jobs (face clustering, CLIP indexing, batch OCR, and thumbnail warming) to a dedicated worker container.
+  - Real-time WebSocket progress reporting to the frontend UI with percentage meters and active task logs. `[Planned]`
+
+### Phase 14: Multi-Cloud Object Storage & Universal Sync
+- [ ] **S3 / MinIO Object Storage Engine**:
+  - Connect directly to AWS S3, Cloudflare R2, Wasabi, or self-hosted MinIO buckets.
+  - Stateless streaming architecture allowing originals to remain purely in cloud buckets while MyMemoryPics streams on-the-fly with zero local disk footprint. `[Planned]`
+- [ ] **Nextcloud & WebDAV Sync Connector**:
+  - Bi-directional sync adapter for self-hosted instances running Nextcloud, ownCloud, or Synology/QNAP NAS over WebDAV. `[Planned]`
+- [ ] **Safe Read-Only External Drive Auto-Scanner**:
+  - Auto-detection and indexing of mounted USB flash drives, external hard drives, and camera SD cards in strictly read-only mode without file alteration. `[Planned]`
+
+### Phase 15: Progressive Web App, Mobile Experience & Ingestion
+- [ ] **PWA Manifest & Offline Service Worker**:
+  - Installable Progressive Web App for iOS and Android home-screens with standalone fullscreen experience.
+  - Service worker offline cache preserving recently viewed memories and album metadata. `[Planned]`
+- [ ] **Mobile Touch Gestures**:
+  - Fluid pinch-to-zoom gestures scaling the timeline grid between Day, Month, and Year zoom levels.
+  - Swipe-down-to-dismiss gesture on the Lightbox image viewer matching native mobile gallery apps. `[Planned]`
+- [ ] **Mobile Background Camera Auto-Upload**:
+  - Resume-enabled chunked uploader syncing camera photos in the background over Wi-Fi. `[Planned]`
+
+### Phase 16: AI Nostalgia, Story Highlights & Best Shot Selection
+- [ ] **Automated Memory Highlight Reels ("Moments in Motion")**:
+  - Auto-generated weekly and monthly flashback stories (e.g. *"Weekend Outing in Pottalkulam"*, *"Best of Autumn"*) with Ken Burns pan transitions. `[Planned]`
+- [ ] **Burst Best-Shot Auto-Picker**:
+  - Automatic detection of burst sequences with multi-factor scoring (sharpness, facial expression, composition) to spotlight the best photo and collapse redundant shots. `[Planned]`
+
 ---
 
 ## 4. Changelog & Progress History
@@ -184,3 +222,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Travel Routes & Geo Heatmap | Chronological journey paths with total distance/duration, stop waypoints, and multi-tier density heatmap | `[Completed]` |
 | 2026-09-16 | Local Disk Storage Purge | Cleared 191MB of cached originals/thumbnails, enabled zero-disk in-memory fallback for avatars/streaming/ZIP | `[Completed]` |
 | 2026-09-16 | Albums & Smart Collections Hub | Built Smart Collections API (/collections/smart), 1-click auto-curation, interactive Photo Picker modal, and full collection viewer | `[Completed]` |
+| 2026-09-16 | Automated WAL Backups & Disaster Recovery | Native sqlite3.backup online zero-downtime backups, gzip compression, point-in-time restore, safety rollback, and UI dashboard in /settings | `[Completed]` |

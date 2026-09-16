@@ -35,6 +35,14 @@ def on_startup():
     except Exception as e:
         print(f"Directory watcher startup warning: {e}")
 
+    try:
+        from app.database import SessionLocal
+        from app.services.backup_service import check_and_run_scheduled_backup
+        with SessionLocal() as db:
+            check_and_run_scheduled_backup(db)
+    except Exception as e:
+        print(f"Backup scheduler warning: {e}")
+
 @app.on_event("shutdown")
 def on_shutdown():
     """Cleanly stops background watchers."""

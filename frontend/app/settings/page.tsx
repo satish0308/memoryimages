@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sliders, 
   Cpu, 
@@ -17,7 +17,14 @@ import {
   Info,
   Layers,
   Lock,
-  ExternalLink
+  ExternalLink,
+  Download,
+  UploadCloud,
+  RotateCcw,
+  Clock,
+  FileArchive,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 
 interface StorageMetrics {
@@ -40,6 +47,33 @@ interface AppSettings {
   metrics: StorageMetrics;
 }
 
+interface BackupStats {
+  photos_count: number;
+  people_count: number;
+  faces_count: number;
+  albums_count: number;
+  users_count: number;
+}
+
+interface BackupItem {
+  filename: string;
+  created_at: string;
+  size_bytes: number;
+  uncompressed_bytes: number;
+  compression_ratio: string;
+  sha256: string;
+  label: string;
+  stats: BackupStats;
+  status: string;
+}
+
+interface BackupSchedule {
+  auto_backup_enabled: boolean;
+  frequency: string;
+  retention_count: number;
+  last_backup_at: string | null;
+}
+
 export default function AppSettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,6 +92,16 @@ export default function AppSettingsPage() {
 
   // Clear cache action state
   const [clearingCache, setClearingCache] = useState(false);
+
+  // Backups & Disaster Recovery state
+  const [backups, setBackups] = useState<BackupItem[]>([]);
+  const [backupSchedule, setBackupSchedule] = useState<BackupSchedule | null>(null);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoreConfirmModal, setRestoreConfirmModal] = useState<BackupItem | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [uploadingBackup, setUploadingBackup] = useState(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -79,8 +123,29 @@ export default function AppSettingsPage() {
     }
   };
 
+  const fetchBackupsAndSchedule = async () => {
+    setLoadingBackups(true);
+    try {
+      const [bRes, sRes] = await Promise.all([
+        fetch(`${API_URL}/api/v1/system/backups`),
+        fetch(`${API_URL}/api/v1/system/backups/schedule`)
+      ]);
+      if (bRes.ok) {
+        setBackups(await bRes.json());
+      }
+      if (sRes.ok) {
+        setBackupSchedule(await sRes.json());
+      }
+    } catch (e) {
+      console.error('Failed to load backups:', e);
+    } finally {
+      setLoadingBackups(false);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
+    fetchBackupsAndSchedule();
   }, [API_URL]);
 
   const handleSaveSettings = async () => {
@@ -190,6 +255,128 @@ export default function AppSettingsPage() {
     }
   };
 
+  // Backups Handlers
+  const handleCreateBackup = async () => {
+    setCreatingBackup(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/backups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'manual' })
+      });
+      if (res.ok) {
+        setMessage({ type: 'success', text: 'Zero-downtime WAL backup created and verified successfully!' });
+        setTimeout(() => setMessage(null), 5000);
+        fetchBackupsAndSchedule();
+      } else {
+        const err = await res.json();
+        setMessage({ type: 'error', text: err.detail || 'Backup failed.' });
+      }
+    } catch (e) {
+      setMessage({ type: 'error', text: 'Error connecting to backup service.' });
+    } finally {
+      setCreatingBackup(false);
+    }
+  };
+
+  const handleUpdateSchedule = async (updates: Partial<BackupSchedule>) => {
+    if (!backupSchedule) return;
+    const newConfig = { ...backupSchedule, ...updates };
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/backups/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newConfig)
+      });
+      if (res.ok) {
+        setBackupSchedule(await res.json());
+        setMessage({ type: 'success', text: 'Backup schedule preferences updated.' });
+        setTimeout(() => setMessage(null), 4000);
+      }
+    } catch (e) {
+      console.error('Failed to update schedule:', e);
+    }
+  };
+
+  const handleExecuteRestore = async () => {
+    if (!restoreConfirmModal) return;
+    setRestoring(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/backups/${restoreConfirmModal.filename}/restore`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setRestoreConfirmModal(null);
+        setMessage({ 
+          type: 'success', 
+          text: `Database successfully restored! Pre-restore safety backup: ${result.safety_backup}` 
+        });
+        fetchBackupsAndSchedule();
+        fetchSettings();
+      } else {
+        const err = await res.json();
+        alert(`Restore failed: ${err.detail}`);
+      }
+    } catch (e) {
+      alert('Network error during database restore.');
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const handleUploadBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!confirm(`Upload "${file.name}" and execute point-in-time disaster recovery restore? A safety backup will be created first.`)) {
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+      return;
+    }
+
+    setUploadingBackup(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/backups/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setMessage({ 
+          type: 'success', 
+          text: `Uploaded backup successfully restored! Safety backup: ${result.safety_backup}` 
+        });
+        fetchBackupsAndSchedule();
+        fetchSettings();
+      } else {
+        const err = await res.json();
+        alert(`Upload restore failed: ${err.detail}`);
+      }
+    } catch (e) {
+      alert('Error uploading backup file.');
+    } finally {
+      setUploadingBackup(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteBackup = async (filename: string) => {
+    if (!confirm(`Permanently delete backup snapshot "${filename}"?`)) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/backups/${filename}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchBackupsAndSchedule();
+      }
+    } catch (e) {
+      console.error('Failed to delete backup:', e);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -204,7 +391,7 @@ export default function AppSettingsPage() {
   const isApproved = settings?.local_storage_approved ?? false;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-12">
+    <div className="max-w-5xl mx-auto space-y-8 pb-16">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-5">
         <div>
@@ -457,6 +644,215 @@ export default function AppSettingsPage() {
         </div>
       </div>
 
+      {/* BACKUPS & DISASTER RECOVERY SECTION */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-600" />
+              Automated WAL Backups & Disaster Recovery
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Zero-downtime online SQLite WAL snapshots, point-in-time restore, automated schedules, and offsite downloads
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input 
+              type="file" 
+              ref={uploadInputRef} 
+              onChange={handleUploadBackupFile} 
+              accept=".db,.gz" 
+              className="hidden" 
+            />
+            <button
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={uploadingBackup}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+              title="Upload an existing .db or .db.gz backup file to restore"
+            >
+              <UploadCloud className="w-3.5 h-3.5 text-slate-500" />
+              <span>{uploadingBackup ? 'Restoring Upload...' : 'Upload & Restore'}</span>
+            </button>
+
+            <button
+              onClick={handleCreateBackup}
+              disabled={creatingBackup}
+              className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            >
+              <FileArchive className="w-3.5 h-3.5" />
+              <span>{creatingBackup ? 'Creating Snapshot...' : 'Create Backup Now'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Schedule & Retention Policy Card */}
+        {backupSchedule && (
+          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Clock className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-800">Automated Daily / Weekly Schedule</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Last automated backup:{' '}
+                  <span className="font-semibold text-slate-700">
+                    {backupSchedule.last_backup_at
+                      ? new Date(backupSchedule.last_backup_at).toLocaleString()
+                      : 'None recorded yet'}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Enable toggle */}
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={backupSchedule.auto_backup_enabled}
+                  onChange={(e) => handleUpdateSchedule({ auto_backup_enabled: e.target.checked })}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                />
+                <span>Auto-Backup</span>
+              </label>
+
+              {/* Frequency */}
+              <select
+                value={backupSchedule.frequency}
+                onChange={(e) => handleUpdateSchedule({ frequency: e.target.value })}
+                className="text-xs font-medium bg-white border border-slate-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
+
+              {/* Retention limit */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                <span className="text-[11px]">Keep last:</span>
+                <select
+                  value={backupSchedule.retention_count}
+                  onChange={(e) => handleUpdateSchedule({ retention_count: Number(e.target.value) })}
+                  className="text-xs font-medium bg-white border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value={7}>7 snapshots</option>
+                  <option value={14}>14 snapshots</option>
+                  <option value={30}>30 snapshots</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Snapshots Table */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+              Available Snapshots ({backups.length})
+            </h4>
+            <button
+              onClick={fetchBackupsAndSchedule}
+              className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingBackups ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {backups.length === 0 && !loadingBackups ? (
+            <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl space-y-2">
+              <Database className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="text-xs font-semibold text-slate-600">No database snapshots found</p>
+              <p className="text-[11px] text-slate-400">
+                Click &ldquo;Create Backup Now&rdquo; to generate a zero-downtime compressed WAL backup of your library.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 text-[11px]">
+                  <tr>
+                    <th className="py-2.5 px-3 font-bold">Snapshot Filename</th>
+                    <th className="py-2.5 px-3 font-bold">Created At</th>
+                    <th className="py-2.5 px-3 font-bold">Size</th>
+                    <th className="py-2.5 px-3 font-bold">Stats</th>
+                    <th className="py-2.5 px-3 font-bold">SHA-256 Checksum</th>
+                    <th className="py-2.5 px-3 font-bold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {backups.map((item) => (
+                    <tr key={item.filename} className="hover:bg-slate-50/60 transition">
+                      <td className="py-2.5 px-3 font-mono text-[11px] font-semibold text-slate-800">
+                        <div className="flex items-center gap-1.5">
+                          <FileArchive className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                          <span className="truncate max-w-[200px]" title={item.filename}>
+                            {item.filename}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap text-[11px]">
+                        {new Date(item.created_at).toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap font-mono text-[11px]">
+                        {Math.round(item.size_bytes / 1024)} KB{' '}
+                        <span className="text-[10px] text-emerald-600 font-sans">
+                          ({item.compression_ratio})
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap text-[11px]">
+                        {item.stats ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px]">
+                            {item.stats.photos_count} photos • {item.stats.albums_count} albums
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-[10px] text-slate-400">
+                        <span className="truncate max-w-[120px] block" title={item.sha256}>
+                          {item.sha256 ? `${item.sha256.slice(0, 12)}...` : 'Verified'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Download */}
+                          <a
+                            href={`${API_URL}/api/v1/system/backups/${item.filename}/download`}
+                            download={item.filename}
+                            className="p-1 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded transition"
+                            title="Download backup archive (.db.gz)"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+
+                          {/* Restore */}
+                          <button
+                            onClick={() => setRestoreConfirmModal(item)}
+                            className="p-1 text-slate-600 hover:text-amber-600 hover:bg-amber-50 rounded transition"
+                            title="Point-in-time Disaster Recovery Restore"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Delete */}
+                          <button
+                            onClick={() => handleDeleteBackup(item.filename)}
+                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                            title="Delete Snapshot"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Live Storage Metrics & Telemetry Dashboard */}
       {settings?.metrics && (
         <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -554,6 +950,65 @@ export default function AppSettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* Point-in-Time Restore Confirmation Modal */}
+      {restoreConfirmModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">Restore Database Snapshot</h3>
+                <p className="text-xs text-slate-500">Point-in-Time Disaster Recovery</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to restore the database to snapshot{' '}
+              <code className="bg-slate-100 px-1 py-0.5 rounded font-mono font-bold text-slate-800">
+                {restoreConfirmModal.filename}
+              </code>
+              ?
+            </p>
+
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
+              <p className="text-slate-700 font-semibold">Snapshot Details:</p>
+              <p className="text-slate-500 text-[11px]">
+                Captured: {new Date(restoreConfirmModal.created_at).toLocaleString()}
+              </p>
+              {restoreConfirmModal.stats && (
+                <p className="text-slate-500 text-[11px]">
+                  Contents: {restoreConfirmModal.stats.photos_count} photos, {restoreConfirmModal.stats.albums_count} albums, {restoreConfirmModal.stats.people_count} people
+                </p>
+              )}
+              <p className="text-emerald-700 font-medium text-[11px] pt-1">
+                🛡️ A safety backup of your current database will automatically be saved before restoring.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRestoreConfirmModal(null)}
+                disabled={restoring}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteRestore}
+                disabled={restoring}
+                className="px-5 py-2 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-sm transition disabled:opacity-50"
+              >
+                {restoring ? 'Restoring Database...' : 'Confirm & Restore'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Local Storage Approval Modal */}
       {showApprovalModal && (
