@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = os.getenv("SECRET_KEY", "memorypics_secret_dev_key_12345")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:////data/db/memorypics.db")
+    POSTGRES_URL: str = os.getenv("POSTGRES_URL", "postgresql://memorypics:memorypics_password_123@db:5432/memorypics")
     
     MEDIA_DIR: str = os.getenv("MEDIA_DIR", "/data/originals")
     THUMBNAIL_DIR: str = os.getenv("THUMBNAIL_DIR", "/data/thumbnails")

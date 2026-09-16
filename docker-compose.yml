@@ -8,7 +8,8 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=sqlite:////data/db/memorypics.db
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////data/db/memorypics.db}
+      - POSTGRES_URL=${POSTGRES_URL:-postgresql://memorypics:memorypics_password_123@db:5432/memorypics}
       - MEDIA_DIR=/data/originals
       - THUMBNAIL_DIR=/data/thumbnails
       - SECRET_KEY=${SECRET_KEY:-memorypics_secret_dev_key_12345}
@@ -38,6 +39,25 @@ services:
       retries: 3
       start_period: 10s
 
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: memorypics-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-memorypics}
+      - POSTGRES_USER=${POSTGRES_USER:-memorypics}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-memorypics_password_123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-memorypics} -d $${POSTGRES_DB:-memorypics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   frontend:
     build:
       context: ./frontend
@@ -54,5 +74,6 @@ services:
 
 volumes:
   db_data:
+  postgres_data:
   originals_data:
   thumbnails_data:

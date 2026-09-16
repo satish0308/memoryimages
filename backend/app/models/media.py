@@ -74,13 +74,25 @@ class Media(Base):
     faces = relationship("FaceDetection", back_populates="media", cascade="all, delete-orphan")
     embedding = relationship("MediaEmbedding", back_populates="media", uselist=False, cascade="all, delete-orphan")
 
+try:
+    from pgvector.sqlalchemy import Vector
+    EmbeddingVectorType = Vector(512)
+except Exception:
+    from sqlalchemy.types import UserDefinedType
+    class FallbackVector(UserDefinedType):
+        def get_col_spec(self, **kw):
+            return "vector(512)"
+    EmbeddingVectorType = FallbackVector()
+
 class MediaEmbedding(Base):
     __tablename__ = "media_embeddings"
 
     id = Column(Integer, primary_key=True, index=True)
     media_id = Column(Integer, ForeignKey("media.id", ondelete="CASCADE"), unique=True, index=True)
-    vector = Column(LargeBinary, nullable=False) # 512 float32 = 2048 bytes
+    vector = Column(LargeBinary, nullable=True)  # 512 float32 = 2048 bytes
+    embedding = Column(EmbeddingVectorType, nullable=True)  # Native pgvector 512-dim vector for HNSW queries
     created_at = Column(DateTime, default=datetime.utcnow)
 
     media = relationship("Media", back_populates="embedding")
+
 

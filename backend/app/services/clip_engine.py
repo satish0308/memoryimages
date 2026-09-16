@@ -78,8 +78,9 @@ def index_media(db: Session, media: Media) -> bool:
     existing = db.query(MediaEmbedding).filter(MediaEmbedding.media_id == media.id).first()
     if existing:
         existing.vector = vec.tobytes()
+        existing.embedding = vec.tolist()
     else:
-        new_emb = MediaEmbedding(media_id=media.id, vector=vec.tobytes())
+        new_emb = MediaEmbedding(media_id=media.id, vector=vec.tobytes(), embedding=vec.tolist())
         db.add(new_emb)
 
     db.commit()
@@ -118,7 +119,7 @@ def index_all_unindexed(db: Session, limit: int = 500) -> int:
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec = vec / norm
-            emb_entry = MediaEmbedding(media_id=m.id, vector=vec.tobytes())
+            emb_entry = MediaEmbedding(media_id=m.id, vector=vec.tobytes(), embedding=vec.tolist())
             db.add(emb_entry)
             indexed_count += 1
 
@@ -136,33 +137,55 @@ def semantic_search(
 ) -> List[Dict[str, Any]]:
     """
     Performs vector cosine similarity search across all indexed photos.
-    Returns matched media items with similarity percentage.
+    Uses native PostgreSQL pgvector HNSW index when available, with
+    graceful fallback to NumPy in-memory dot product (SQLite).
     """
     q_vec = embed_text(query)
     if q_vec is None:
         return []
 
-    # Fetch all stored embeddings
-    rows = db.query(MediaEmbedding.media_id, MediaEmbedding.vector).all()
-    if not rows:
-        return []
+    from app.database import is_postgres
+    top_results = None
 
-    media_ids = [r[0] for r in rows]
-    vectors = [np.frombuffer(r[1], dtype=np.float32) for r in rows]
+    if is_postgres:
+        try:
+            from sqlalchemy import text
+            max_dist = max(0.0, 1.0 - min_similarity)
+            vec_str = "[" + ",".join(f"{x:.6f}" for x in q_vec) + "]"
+            sql = text("""
+                SELECT media_id, (1.0 - (embedding <=> :q_vec::vector)) AS score
+                FROM media_embeddings
+                WHERE embedding IS NOT NULL AND (embedding <=> :q_vec::vector) <= :max_dist
+                ORDER BY embedding <=> :q_vec::vector ASC
+                LIMIT :top_k;
+            """)
+            rows = db.execute(sql, {"q_vec": vec_str, "max_dist": max_dist, "top_k": top_k}).fetchall()
+            if rows is not None and len(rows) > 0:
+                top_results = [(r[0], float(r[1])) for r in rows]
+        except Exception as e:
+            logger.warning(f"Native PostgreSQL pgvector search failed, falling back to in-memory matrix: {e}")
+            top_results = None
 
-    matrix = np.vstack(vectors)
-    # Vectors are already unit normalized, so cosine similarity is matrix @ q_vec
-    scores = matrix @ q_vec
+    if top_results is None:
+        # Fallback to in-memory numpy matrix multiplication (SQLite / unindexed vector column)
+        rows = db.query(MediaEmbedding.media_id, MediaEmbedding.vector).filter(MediaEmbedding.vector.isnot(None)).all()
+        if not rows:
+            return []
 
-    # Filter and rank
-    results = []
-    for mid, score in zip(media_ids, scores):
-        val = float(score)
-        if val >= min_similarity:
-            results.append((mid, val))
+        media_ids = [r[0] for r in rows]
+        vectors = [np.frombuffer(r[1], dtype=np.float32) for r in rows]
 
-    results.sort(key=lambda x: x[1], reverse=True)
-    top_results = results[:top_k]
+        matrix = np.vstack(vectors)
+        scores = matrix @ q_vec
+
+        results = []
+        for mid, score in zip(media_ids, scores):
+            val = float(score)
+            if val >= min_similarity:
+                results.append((mid, val))
+
+        results.sort(key=lambda x: x[1], reverse=True)
+        top_results = results[:top_k]
 
     if not top_results:
         return []

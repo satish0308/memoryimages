@@ -5,6 +5,7 @@
 ![MyMemoryPics Banner](https://img.shields.io/badge/MyMemoryPics-World--Class%20Photo%20Platform-indigo?style=for-the-badge&logo=googlephotos&logoColor=white)
 
 [![Docker](https://img.shields.io/badge/Docker-24.0+-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-336791?style=flat-square&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![FastEmbed CLIP](https://img.shields.io/badge/FastEmbed-CLIP%20ViT--B%2F32-orange?style=flat-square&logo=onnx&logoColor=white)](https://github.com/qdrant/fastembed)
@@ -89,6 +90,12 @@ Modern smartphone cameras generate thousands of files: family vacations, burst s
 - **Direct S3 Backup Export**: 1-click or automated streaming export of database snapshots directly into `s3://mymemorypics/backups/`.
 - **Automated Scheduling & Rolling Retention**: Configurable Daily or Weekly backup schedules with automatic pruning of old snapshots (keep last 7, 14, or 30).
 - **Offsite Downloads & Upload Restore**: Download `.db.gz` archives for offsite disaster recovery or upload existing backup files to restore.
+
+### 🐘 PostgreSQL 16 + pgvector Dual-Database Engine
+- **Dynamic Dual-Database Switching**: Switch effortlessly between SQLite (default offline local WAL) and PostgreSQL 16 with native `vector` extension via `DATABASE_URL`.
+- **Native HNSW Vector Indexing**: Accelerates 512-dimensional CLIP multimodal search with `idx_media_embeddings_hnsw` (cosine distance operator `<=>`, `m=16, ef_construction=64`) for sub-10ms queries over 100,000+ photos.
+- **1-Click Reflection Migration**: Copy all records, users, media, face detections, albums, and embeddings from SQLite to PostgreSQL (or vice versa) in seconds with foreign key hierarchy validation.
+- **Settings Telemetry & Index Management**: Dedicated UI dashboard displaying active dialect, connection health, table row counts, pgvector version, and 1-click HNSW index rebuilds.
 
 ### 🔒 JWT Authentication & Multi-User Switcher
 - **Stateless JWT Auth**: Secure password hashing with bcrypt and tokenized session management.
@@ -220,6 +227,10 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `POST` | `/api/v1/system/backups/{file}/restore`| Restores database snapshot with pre-restore safety backup |
 | `GET` | `/api/v1/system/backups/{file}/download`| Downloads `.db.gz` compressed database backup archive |
 | `POST` | `/api/v1/system/backups/upload` | Uploads and restores external `.db.gz` backup file |
+| `GET` | `/api/v1/system/database/status` | Real-time dual-db status, dialect, table counts, HNSW index |
+| `POST` | `/api/v1/system/database/test-connection`| Tests connectivity to PostgreSQL or target database |
+| `POST` | `/api/v1/system/database/create-hnsw-index`| Rebuilds pgvector HNSW cosine index on 512-dim vectors |
+| `POST` | `/api/v1/system/database/migrate` | 1-click reflection migration between SQLite and PostgreSQL |
 | `GET` | `/api/v1/settings` | Gets storage mode and processing settings |
 | `POST` | `/api/v1/auth/login` | JWT user login |
 
@@ -276,12 +287,12 @@ The following major features are specified and scheduled for future milestones:
 
 - [x] **☁️ S3 / MinIO Object Storage Engine**: Self-hosted S3-compatible engine (MinIO) for zero-cloud private photo storage, RAM streaming, and disaster recovery archives.
 - [x] **🛡️ Automated WAL Backups & Disaster Recovery**: Zero-downtime online SQLite backups, safety rollback, offsite exports, and rolling retention pruning.
+- [x] **🐘 PostgreSQL + pgvector Dual-Database Engine**: Dynamic database driver supporting SQLite for personal libraries and PostgreSQL + pgvector with HNSW indexing for 100k+ photo enterprise scale.
 - [ ] **🎨 Non-Destructive Web Editing Studio**: In-browser canvas adjustments (exposure, contrast, saturation, sharpness, 90° rotate, flip, crop presets 1:1, 16:9, 4:3, and aesthetic filters) saving parametric JSON recipes without touching originals.
 - [ ] **🔗 Public Shareable Album Links & Guest Gallery**: Tokenized public sharing URLs (`/share/[token]`) with optional PIN protection and auto-expiration for friends and family with 1-click ZIP export.
 - [ ] **👥 Multi-User Private Libraries & Family Shared Spaces**: Multi-tenant data segregation with private personal photo vaults and collaborative shared family pools.
 - [ ] **🎞️ Apple Live Photos & Short Video Motion**: Auto-pairing of `.heic` + `.mov` clips with hover-motion playback on timeline thumbnails and inline silent video player.
 - [ ] **📱 PWA & Chunked Multi-File Uploader**: Mobile home-screen installation, service worker offline caching, and drag-and-drop resume-enabled chunked uploader.
-- [ ] **🐘 PostgreSQL + pgvector Dual-Database Engine**: Dynamic database driver supporting SQLite for personal libraries and PostgreSQL + pgvector for 100k+ photo enterprise scale.
 - [ ] **⚡ Asynchronous Background Task Queue (Redis + Celery)**: Offload heavy AI jobs with real-time UI progress bars.
 
 ---

@@ -1,32 +1,52 @@
 import os
-from sqlalchemy import create_engine, event
+import logging
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 
-# Ensure data directory exists
-if settings.DATABASE_URL.startswith("sqlite"):
+logger = logging.getLogger(__name__)
+
+is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+is_postgres = settings.DATABASE_URL.startswith("postgresql")
+
+# Ensure data directory exists for SQLite
+if is_sqlite:
     db_path = settings.DATABASE_URL.replace("sqlite:////", "/")
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+engine_kwargs = {"pool_pre_ping": True}
+
+if is_sqlite:
     connect_args = {"check_same_thread": False}
+elif is_postgres:
+    engine_kwargs.update({"pool_size": 10, "max_overflow": 20})
 
 engine = create_engine(
     settings.DATABASE_URL,
     connect_args=connect_args,
-    pool_pre_ping=True
+    **engine_kwargs
 )
 
 # Enable WAL mode for SQLite to support concurrent reads and writes
-if settings.DATABASE_URL.startswith("sqlite"):
+if is_sqlite:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.close()
+
+# Auto-initialize pgvector extension if PostgreSQL is active
+if is_postgres:
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            conn.commit()
+            logger.info("PostgreSQL pgvector extension verified.")
+    except Exception as e:
+        logger.warning(f"Unable to auto-enable pgvector extension on startup: {e}")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -38,3 +58,48 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def get_db_dialect() -> str:
+    """Returns 'postgresql' or 'sqlite' depending on the active DATABASE_URL."""
+    return "postgresql" if is_postgres else "sqlite"
+
+def check_pgvector_active(db_session=None) -> bool:
+    """Checks if pgvector extension is installed and active in the database."""
+    if not is_postgres:
+        return False
+    close_after = False
+    if db_session is None:
+        db_session = SessionLocal()
+        close_after = True
+    try:
+        res = db_session.execute(text("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';")).fetchone()
+        return res is not None
+    except Exception:
+        return False
+    finally:
+        if close_after:
+            db_session.close()
+
+def check_postgres_availability(url: str = None) -> dict:
+    """Tests connection to PostgreSQL and checks pgvector support."""
+    target_url = url or settings.POSTGRES_URL
+    try:
+        test_engine = create_engine(target_url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
+        with test_engine.connect() as conn:
+            ver = conn.execute(text("SELECT version();")).scalar()
+            vec_res = conn.execute(text("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';")).fetchone()
+            has_pgvector = vec_res is not None
+            vec_version = vec_res[1] if vec_res else None
+            return {
+                "available": True,
+                "version": ver.split()[1] if ver else "Unknown",
+                "pgvector_installed": has_pgvector,
+                "pgvector_version": vec_version,
+                "target_url": target_url.split("@")[-1] if "@" in target_url else target_url
+            }
+    except Exception as e:
+        return {
+            "available": False,
+            "error": str(e),
+            "target_url": target_url.split("@")[-1] if "@" in target_url else target_url
+        }

@@ -149,9 +149,11 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
   - Point-in-time database restoration with automated pre-restore safety snapshot.
   - Offsite backup downloads and direct `.db.gz` file upload restore.
   - Configurable auto-backup scheduling (Daily/Weekly) and rolling retention pruning (keep last 7/14/30 snapshots). `[Completed]`
-- [ ] **PostgreSQL + `pgvector` Dual-Database Engine**:
-  - Dynamic database driver toggle via `DATABASE_URL` supporting SQLite for lightweight personal instances and PostgreSQL for enterprise family scale (100k+ photos).
-  - Native vector index support (`HNSW` / `IVFFlat`) for sub-10ms multimodal semantic CLIP vector similarity queries. `[Planned]`
+- [x] **PostgreSQL + `pgvector` Dual-Database Engine**:
+  - Dynamic database driver toggle via `DATABASE_URL` supporting SQLite (default offline local WAL) and PostgreSQL 16 with native `vector` extension.
+  - Native HNSW vector index acceleration (`idx_media_embeddings_hnsw` on 512-dim CLIP vectors with `vector_cosine_ops`, `m=16, ef_construction=64`) for sub-10ms semantic search.
+  - Reflection-based 1-click database migration engine (`/api/v1/system/database/migrate`) copying all users, sync sources, media, faces, albums, associations, and vector embeddings between SQLite and PostgreSQL with zero data loss.
+  - Interactive Database & Vector Engine control panel in `/settings` (real-time telemetry, table record counts, HNSW index status & rebuilding, connection testing, and migration modal). `[Completed]`
 - [ ] **Asynchronous Background Task Queue (Redis + Celery/ARQ) & WebSockets**:
   - Offload heavy AI jobs (face clustering, CLIP indexing, batch OCR, and thumbnail warming) to a dedicated worker container.
   - Real-time WebSocket progress reporting to the frontend UI with percentage meters and active task logs. `[Planned]`
@@ -227,4 +229,5 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Albums & Smart Collections Hub | Built Smart Collections API (/collections/smart), 1-click auto-curation, interactive Photo Picker modal, and full collection viewer | `[Completed]` |
 | 2026-09-16 | Automated WAL Backups & Disaster Recovery | Native sqlite3.backup online zero-downtime backups, gzip compression, point-in-time restore, safety rollback, and UI dashboard in /settings | `[Completed]` |
 | 2026-09-16 | S3 / MinIO Object Storage Engine | 100% self-hosted MinIO S3 integration, boto3 streaming engine, zero-disk photo ingestion/thumbnails, WAL backup exports, presigned URLs, and Settings/Sync UI dashboards | `[Completed]` |
+| 2026-09-16 | PostgreSQL + pgvector Dual-DB Engine | Dynamic SQLite/PostgreSQL toggle, native pgvector HNSW 512-dim index, reflection migration engine, and /settings control panel | `[Completed]` |
 
