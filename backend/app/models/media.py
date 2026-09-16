@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum, ForeignKey, Text, LargeBinary
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -71,3 +71,15 @@ class Media(Base):
 
     # Relationships
     faces = relationship("FaceDetection", back_populates="media", cascade="all, delete-orphan")
+    embedding = relationship("MediaEmbedding", back_populates="media", uselist=False, cascade="all, delete-orphan")
+
+class MediaEmbedding(Base):
+    __tablename__ = "media_embeddings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    media_id = Column(Integer, ForeignKey("media.id", ondelete="CASCADE"), unique=True, index=True)
+    vector = Column(LargeBinary, nullable=False) # 512 float32 = 2048 bytes
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    media = relationship("Media", back_populates="embedding")
+

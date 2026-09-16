@@ -158,12 +158,80 @@ def get_duplicate_clusters(db: Session = Depends(get_db)):
                 "id": m.id,
                 "filename": m.filename,
                 "file_size": m.file_size,
+                "width": m.width,
+                "height": m.height,
+                "blurriness_score": m.blurriness_score,
+                "is_blurry": m.is_blurry,
                 "captured_at": m.captured_at,
                 "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
             } for m in items]
         })
         
     return clusters
+
+class ResolveDuplicatesRequest(BaseModel):
+    keep_media_id: int
+    delete_media_ids: List[int]
+
+@router.post("/resolve-duplicates")
+def resolve_duplicates(req: ResolveDuplicatesRequest, db: Session = Depends(get_db)):
+    """
+    Keeps the selected best shot and soft-deletes the redundant duplicate photos.
+    Adheres strictly to the safe zero auto-deletion policy with manual confirmation.
+    """
+    if not req.delete_media_ids:
+        return {"status": "no_op", "count": 0}
+
+    deleted_count = db.query(Media).filter(
+        Media.id.in_(req.delete_media_ids)
+    ).update({"is_deleted": True}, synchronize_session=False)
+    db.commit()
+
+    return {
+        "status": "resolved",
+        "kept_media_id": req.keep_media_id,
+        "deleted_count": deleted_count
+    }
+
+@router.get("/bills/{media_id}/inspect")
+def inspect_bill_document(media_id: int, db: Session = Depends(get_db)):
+    """
+    Detailed inspection for a bill/receipt document:
+    Extracts detected amounts, date, merchant title, and itemized text.
+    """
+    import re
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    text = media.extracted_text or ""
+    
+    # Parse total amounts: e.g. $42.50, 150.00, EUR 99.90, etc.
+    amount_matches = re.findall(r'(?:total|amount|sum|usd|\$|€|£|₹)\s*[:=]?\s*([0-9]+[.,][0-9]{2})', text, re.IGNORECASE)
+    if not amount_matches:
+        amount_matches = re.findall(r'[$€£₹]\s*([0-9]+[.,][0-9]{2})', text)
+    
+    # Parse dates: e.g. 10/25/2024, 2024-10-25, Oct 25, 2024
+    date_matches = re.findall(r'\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4})\b', text, re.IGNORECASE)
+
+    # First non-empty lines as potential merchant/header
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    merchant_name = lines[0] if lines else "Scanned Document"
+
+    return {
+        "id": media.id,
+        "filename": media.filename,
+        "captured_at": media.captured_at,
+        "file_size": media.file_size,
+        "width": media.width,
+        "height": media.height,
+        "merchant_name": merchant_name,
+        "detected_amounts": amount_matches,
+        "detected_dates": date_matches,
+        "extracted_text": text,
+        "lines_count": len(lines),
+        "thumbnail_url": f"/api/v1/media/{media.id}/thumbnail?size=1080"
+    }
 
 @router.post("/snooze")
 def snooze_screenshots(req: SnoozeRequest, db: Session = Depends(get_db)):

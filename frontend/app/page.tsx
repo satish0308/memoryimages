@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Search, X, FolderOpen, CheckSquare } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal } from 'lucide-react';
 
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
@@ -12,6 +12,8 @@ import { ScaleSelector, TimelineScale, GridDensity } from '@/components/timeline
 import { BulkActionBar } from '@/components/timeline/BulkActionBar';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { OnThisDaySection } from '@/components/flashbacks/OnThisDaySection';
+import { SmartFilterDrawer, SmartFilters, DEFAULT_SMART_FILTERS } from '@/components/timeline/SmartFilterDrawer';
+import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 
 export default function PhotosPage() {
   const [timeline, setTimeline] = useState<TimelineGroup[]>([]);
@@ -25,6 +27,13 @@ export default function PhotosPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MediaItem[] | null>(null);
+  const [isSemanticSearch, setIsSemanticSearch] = useState(true);
+  const [isSemanticResult, setIsSemanticResult] = useState(false);
+
+  // Smart Filters & Ambient Slideshow state
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
+  const [smartFilters, setSmartFilters] = useState<SmartFilters>(DEFAULT_SMART_FILTERS);
+  const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -57,13 +66,17 @@ export default function PhotosPage() {
   const executeSearch = async (query: string) => {
     if (!query.trim()) {
       setSearchResults(null);
+      setIsSemanticResult(false);
       return;
     }
     try {
-      const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(query.trim())}`);
+      const res = await fetch(
+        `${API_URL}/api/v1/search?q=${encodeURIComponent(query.trim())}&semantic=${isSemanticSearch}`
+      );
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data.results || []);
+        setIsSemanticResult(Boolean(data.is_semantic));
       }
     } catch (e) {
       console.error('Search error:', e);
@@ -73,6 +86,7 @@ export default function PhotosPage() {
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults(null);
+      setIsSemanticResult(false);
       fetchTimeline();
       fetchEvents();
     } else {
@@ -81,7 +95,7 @@ export default function PhotosPage() {
       }, 300);
       return () => clearTimeout(timeout);
     }
-  }, [activeCategory, scale, searchQuery]);
+  }, [activeCategory, scale, searchQuery, isSemanticSearch]);
 
   // Selection handlers
   const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {
@@ -141,16 +155,14 @@ export default function PhotosPage() {
       const res = await fetch(`${API_URL}/api/v1/media/batch-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media_ids: selectedIds, permanent: false }),
+        body: JSON.stringify({ media_ids: selectedIds }),
       });
       if (res.ok) {
         setTimeline((prev) =>
-          prev
-            .map((group) => ({
-              ...group,
-              items: group.items.filter((item) => !selectedIds.includes(item.id)),
-            }))
-            .filter((group) => group.items.length > 0)
+          prev.map((group) => ({
+            ...group,
+            items: group.items.filter((item) => !selectedIds.includes(item.id)),
+          })).filter((group) => group.items.length > 0)
         );
         clearSelection();
       }
@@ -164,75 +176,153 @@ export default function PhotosPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/media/${id}/favorite`, { method: 'PATCH' });
       if (res.ok) {
+        const updated = await res.json();
         setTimeline((prev) =>
           prev.map((group) => ({
             ...group,
             items: group.items.map((item) =>
-              item.id === id ? { ...item, is_favorite: !item.is_favorite } : item
+              item.id === id ? { ...item, is_favorite: updated.is_favorite } : item
             ),
           }))
         );
         if (selectedPhoto && selectedPhoto.id === id) {
-          setSelectedPhoto((prev) => (prev ? { ...prev, is_favorite: !prev.is_favorite } : null));
+          setSelectedPhoto({ ...selectedPhoto, is_favorite: updated.is_favorite });
         }
-        if (selectedEvent) {
-          setSelectedEvent((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  items: prev.items?.map((item) =>
-                    item.id === id ? { ...item, is_favorite: !item.is_favorite } : item
-                  ),
-                }
-              : null
+        if (searchResults) {
+          setSearchResults((prev) =>
+            prev ? prev.map((p) => (p.id === id ? { ...p, is_favorite: updated.is_favorite } : p)) : null
           );
         }
       }
     } catch (err) {
-      console.error('Error toggling favorite:', err);
+      console.error('Failed to toggle favorite:', err);
     }
   };
 
   const deletePhoto = async (id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!confirm('Move photo to trash? (Zero auto-deletion policy: photos remain until explicitly deleted)')) return;
+    if (!confirm('Are you sure you want to move this photo to trash? (Zero auto-deletion policy: stays safe until you confirm)')) return;
+
     try {
       const res = await fetch(`${API_URL}/api/v1/media/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setTimeline((prev) =>
-          prev
-            .map((group) => ({
-              ...group,
-              items: group.items.filter((item) => item.id !== id),
-            }))
-            .filter((group) => group.items.length > 0)
+          prev.map((group) => ({
+            ...group,
+            items: group.items.filter((item) => item.id !== id),
+          })).filter((group) => group.items.length > 0)
         );
-        if (searchResults) {
-          setSearchResults((prev) => (prev ? prev.filter((i) => i.id !== id) : null));
-        }
         if (selectedPhoto && selectedPhoto.id === id) {
           setSelectedPhoto(null);
         }
-        if (selectedEvent) {
-          setSelectedEvent((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  items: prev.items?.filter((i) => i.id !== id),
-                  photo_count: Math.max(0, prev.photo_count - 1),
-                }
-              : null
-          );
+        if (searchResults) {
+          setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
         }
       }
     } catch (err) {
-      console.error('Error deleting photo:', err);
+      console.error('Failed to delete photo:', err);
     }
   };
 
+  // Dynamically collect available cameras from library photos
+  const allPhotos = useMemo(() => {
+    return timeline.flatMap((group) => group.items);
+  }, [timeline]);
+
+  const availableCameras = useMemo(() => {
+    const cameras = new Set<string>();
+    allPhotos.forEach((p) => {
+      const name = [p.camera_make, p.camera_model].filter(Boolean).join(' ').trim();
+      if (name) cameras.add(name);
+    });
+    return Array.from(cameras).sort();
+  }, [allPhotos]);
+
+  // Apply Smart Filters
+  const filteredTimeline = useMemo(() => {
+    const isFiltered = 
+      smartFilters.datePreset !== 'all' ||
+      smartFilters.camera !== 'all' ||
+      smartFilters.orientation !== 'all' ||
+      smartFilters.favoritesOnly ||
+      smartFilters.geotaggedOnly ||
+      smartFilters.sharpOnly ||
+      Boolean(smartFilters.startDate) ||
+      Boolean(smartFilters.endDate);
+
+    if (!isFiltered) return timeline;
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startOfThisYear = new Date(now.getFullYear(), 0, 1);
+    const startOfLastYear = new Date(now.getFullYear() - 1, 0, 1);
+    const endOfLastYear = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59);
+
+    return timeline.map((group) => {
+      const filteredItems = group.items.filter((item) => {
+        const itemDate = new Date(item.captured_at);
+
+        // Date Presets
+        if (smartFilters.datePreset === '7d' && itemDate < sevenDaysAgo) return false;
+        if (smartFilters.datePreset === '30d' && itemDate < thirtyDaysAgo) return false;
+        if (smartFilters.datePreset === 'this_year' && itemDate < startOfThisYear) return false;
+        if (smartFilters.datePreset === 'last_year' && (itemDate < startOfLastYear || itemDate > endOfLastYear)) return false;
+        if (smartFilters.datePreset === 'custom') {
+          if (smartFilters.startDate && itemDate < new Date(smartFilters.startDate)) return false;
+          if (smartFilters.endDate) {
+            const end = new Date(smartFilters.endDate);
+            end.setHours(23, 59, 59);
+            if (itemDate > end) return false;
+          }
+        }
+
+        // Camera Filter
+        if (smartFilters.camera !== 'all') {
+          const cam = [item.camera_make, item.camera_model].filter(Boolean).join(' ').trim();
+          if (cam !== smartFilters.camera) return false;
+        }
+
+        // Orientation Filter
+        if (smartFilters.orientation === 'landscape' && item.width <= item.height) return false;
+        if (smartFilters.orientation === 'portrait' && item.height <= item.width) return false;
+        if (smartFilters.orientation === 'square' && Math.abs(item.width - item.height) > 20) return false;
+
+        // Attributes
+        if (smartFilters.favoritesOnly && !item.is_favorite) return false;
+        if (smartFilters.geotaggedOnly && (item.latitude === null || item.latitude === undefined)) return false;
+        if (smartFilters.sharpOnly && item.is_blurry) return false;
+
+        return true;
+      });
+
+      return {
+        ...group,
+        items: filteredItems,
+        count: filteredItems.length,
+      };
+    }).filter((group) => group.items.length > 0);
+  }, [timeline, smartFilters]);
+
+  const allFilteredPhotos = useMemo(() => {
+    return filteredTimeline.flatMap((group) => group.items);
+  }, [filteredTimeline]);
+
+  // Active filter count for badge
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (smartFilters.datePreset !== 'all' || smartFilters.startDate || smartFilters.endDate) count++;
+    if (smartFilters.camera !== 'all') count++;
+    if (smartFilters.orientation !== 'all') count++;
+    if (smartFilters.favoritesOnly) count++;
+    if (smartFilters.geotaggedOnly) count++;
+    if (smartFilters.sharpOnly) count++;
+    return count;
+  }, [smartFilters]);
+
   // Lightbox flat list & navigation
   const allFlatPhotos: MediaItem[] =
-    searchResults !== null ? searchResults : timeline.flatMap((g) => g.items);
+    searchResults !== null ? searchResults : allFilteredPhotos;
   const currentPhotoIndex = selectedPhoto
     ? allFlatPhotos.findIndex((p) => p.id === selectedPhoto.id)
     : -1;
@@ -248,24 +338,49 @@ export default function PhotosPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20">
-      {/* Search Bar */}
-      <div className="relative max-w-xl">
-        <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by keywords, receipts text, camera model, or location..."
-          className="w-full pl-10 pr-4 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:outline-none shadow-sm transition"
-        />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
+      {/* Search Bar with AI Semantic Toggle */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-2xl">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={
+              isSemanticSearch
+                ? "✨ AI Semantic Search: Describe visual concepts (e.g. 'sunset at beach', 'green nature', 'car')..."
+                : "Search by exact keywords, receipts text, camera model, or location..."
+            }
+            className={`w-full pl-10 pr-9 py-2.5 text-xs bg-white border rounded-xl shadow-sm transition focus:outline-none ${
+              isSemanticSearch
+                ? 'border-indigo-300 focus:border-indigo-600 ring-1 ring-indigo-500/10'
+                : 'border-slate-200 focus:border-indigo-500'
+            }`}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* AI Semantic Search Toggle Button */}
+        <button
+          type="button"
+          onClick={() => setIsSemanticSearch(!isSemanticSearch)}
+          className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition border shadow-sm flex-shrink-0 ${
+            isSemanticSearch
+              ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white border-indigo-600 shadow-indigo-200'
+              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+          }`}
+          title="Toggle between AI Semantic Concept Search and Keyword Search"
+        >
+          <Sparkles className={`w-3.5 h-3.5 ${isSemanticSearch ? 'text-amber-300' : 'text-slate-400'}`} />
+          <span>{isSemanticSearch ? 'AI Semantic ON' : 'AI Semantic OFF'}</span>
+        </button>
       </div>
 
       {/* Nostalgia Flashbacks: "On This Day" */}
@@ -282,14 +397,47 @@ export default function PhotosPage() {
         />
       )}
 
-      {/* Timeline Controls Bar: Scale Switcher (Days/Months/Years) & Grid Density */}
+      {/* Timeline Controls Bar: Scale Switcher, Slideshow & Smart Filters */}
       {!searchResults && (
-        <ScaleSelector
-          scale={scale}
-          onChangeScale={setScale}
-          density={density}
-          onChangeDensity={setDensity}
-        />
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <ScaleSelector
+            scale={scale}
+            onChangeScale={setScale}
+            density={density}
+            onChangeDensity={setDensity}
+          />
+
+          <div className="flex items-center gap-2">
+            {/* Ambient Slideshow Launcher */}
+            <button
+              onClick={() => setIsSlideshowOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition shadow-sm"
+              title="Play Ambient Slideshow"
+            >
+              <Play className="w-3.5 h-3.5 fill-indigo-600 text-indigo-600 dark:fill-indigo-400 dark:text-indigo-400" />
+              <span>Slideshow</span>
+            </button>
+
+            {/* Smart Filters Drawer Trigger */}
+            <button
+              onClick={() => setIsFilterDrawerOpen(true)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
+                activeFilterCount > 0
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-100'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+              title="Filter by date, camera, orientation, favorites"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filters</span>
+              {activeFilterCount > 0 && (
+                <span className="bg-white text-indigo-600 text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Category Filter Pills */}
@@ -302,13 +450,39 @@ export default function PhotosPage() {
         />
       )}
 
+      {/* Active Filters Summary Pill when filtered */}
+      {!searchResults && activeFilterCount > 0 && (
+        <div className="flex items-center justify-between bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-4 py-2 rounded-xl text-xs text-indigo-900 dark:text-indigo-200">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>
+              Showing <strong>{allFilteredPhotos.length}</strong> matching photos (out of {allPhotos.length} total)
+            </span>
+          </div>
+          <button
+            onClick={() => setSmartFilters(DEFAULT_SMART_FILTERS)}
+            className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+          >
+            Clear Filters
+          </button>
+        </div>
+      )}
+
       {/* Search Results Display */}
       {searchResults !== null && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800">
-              Search Results ({searchResults.length} matching)
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-slate-800">
+                Search Results ({searchResults.length} matching)
+              </h2>
+              {isSemanticResult && (
+                <span className="flex items-center gap-1 bg-indigo-100 text-indigo-700 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                  <Sparkles className="w-3 h-3 text-indigo-600" />
+                  <span>CLIP Vector AI Match</span>
+                </span>
+              )}
+            </div>
             <button
               onClick={() => setSearchQuery('')}
               className="text-xs text-indigo-600 hover:underline"
@@ -317,9 +491,18 @@ export default function PhotosPage() {
             </button>
           </div>
 
+          {isSemanticResult && (
+            <div className="flex items-center gap-2 bg-gradient-to-r from-indigo-50 via-purple-50 to-transparent p-3 rounded-xl border border-indigo-100 text-xs text-indigo-950">
+              <Sparkles className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+              <span>
+                <strong>AI Semantic Search:</strong> Matched photos using 512-dimensional CLIP neural embeddings running 100% offline.
+              </span>
+            </div>
+          )}
+
           {searchResults.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-slate-400 text-xs">
-              No photos found matching "{searchQuery}".
+              No photos found matching &quot;{searchQuery}&quot;.
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -341,17 +524,24 @@ export default function PhotosPage() {
       )}
 
       {/* Empty State */}
-      {!loading && !searchResults && timeline.length === 0 && (
+      {!loading && !searchResults && filteredTimeline.length === 0 && (
         <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center max-w-lg mx-auto space-y-4">
           <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
             <FolderOpen className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="font-semibold text-slate-800 text-base">No Photos Found</h3>
+            <h3 className="font-semibold text-slate-800 text-base">No Photos Match Your Filters</h3>
             <p className="text-xs text-slate-500 mt-1">
-              Place photos into <code className="bg-slate-100 px-1 py-0.5 rounded">./data/originals</code>{' '}
-              or connect Google Drive in the Sync tab.
+              Try adjusting or clearing the active filters in the filter drawer.
             </p>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={() => setSmartFilters(DEFAULT_SMART_FILTERS)}
+                className="mt-3 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-500 transition"
+              >
+                Reset Filters
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -359,7 +549,7 @@ export default function PhotosPage() {
       {/* Main Chronological Timeline Grouped by Day, Month, or Year */}
       {!searchResults && (
         <div className="space-y-8">
-          {timeline.map((group) => (
+          {filteredTimeline.map((group) => (
             <DaySection
               key={group.key || group.date}
               group={group}
@@ -408,7 +598,7 @@ export default function PhotosPage() {
         onDelete={deletePhoto}
       />
 
-      {/* Full-Screen Lightbox Modal with Pan & Zoom & Navigation */}
+      {/* Full-Screen Lightbox Modal with Pan & Zoom, EXIF & Map Drawer, and Face Tagging */}
       <LightboxModal
         photo={selectedPhoto}
         apiUrl={API_URL}
@@ -419,6 +609,25 @@ export default function PhotosPage() {
         onNavigateNext={navigateNext}
         hasPrev={hasPrev}
         hasNext={hasNext}
+      />
+
+      {/* Smart Filters Slide-Out Drawer */}
+      <SmartFilterDrawer
+        isOpen={isFilterDrawerOpen}
+        onClose={() => setIsFilterDrawerOpen(false)}
+        filters={smartFilters}
+        onFiltersChange={setSmartFilters}
+        availableCameras={availableCameras}
+        matchingCount={allFilteredPhotos.length}
+        totalCount={allPhotos.length}
+      />
+
+      {/* Ambient Cinematic Slideshow */}
+      <AmbientSlideshowModal
+        photos={allFilteredPhotos}
+        apiUrl={API_URL}
+        isOpen={isSlideshowOpen}
+        onClose={() => setIsSlideshowOpen(false)}
       />
     </div>
   );

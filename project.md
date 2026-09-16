@@ -108,14 +108,15 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [x] **Bulk Category Reorganization**: Mass recategorize selected media into Memories, Screenshots, Bills/Docs, or Memes (`PATCH /api/v1/media/batch-category`). `[Completed]`
 - [x] **Floating Bulk Action Bar**: Floating dock with Add to Album, Export ZIP, Favorite, Change Category, Delete Selected, and Clear Selection. `[Completed]`
 
-### Phase 10: Remaining & Planned World-Class Features
-- [ ] **Receipt & Document Text Inspector (OCR)**: Live slide-out drawer displaying extracted OCR text, merchant/vendor, invoice date, and total amount for scanned receipts. `[Planned]`
-- [ ] **Duplicate Resolver & Best-Shot Picker**: Side-by-side visual comparison for pHash duplicate clusters displaying image resolution, file size, and Laplacian sharpness score to pick and keep the best shot while moving redundant duplicates to trash. `[Planned]`
-- [ ] **EXIF & Geotag Details Drawer in Lightbox**: Collapsible inspector in Lightbox showing camera body, lens, focal length, ISO, aperture, shutter speed, and an interactive mini-map pin. `[Planned]`
-- [ ] **Interactive Face Tagging Overlay**: Bounding box overlays on detected faces in lightbox with manual name tagging and face clustering review. `[Planned]`
-- [ ] **Advanced Smart Filter & Date Range Drawer**: Multi-parameter filter panel to filter by date range, camera make/model, orientation (portrait/landscape), and favorited status. `[Planned]`
-- [ ] **Ambient Slideshow Mode**: Fullscreen memory playback with gentle Ken Burns motion transitions for selected albums and chronological memories. `[Planned]`
-- [ ] **Offline ONNX Semantic CLIP Search**: Multimodal embedding search enabling natural language queries like *"sunset at beach"*, *"dog playing with ball"*. `[Planned]`
+### Phase 10: World-Class Intelligence & Interactive Explorations
+- [x] **Receipt & Document Text Inspector (OCR)**: Live slide-out drawer displaying extracted OCR text, merchant/vendor, invoice date, monetary totals, 1-click text copy, and reclassification. `[Completed]`
+- [x] **Duplicate Resolver & Best-Shot Picker**: Side-by-side visual comparison modal for pHash duplicate clusters displaying image resolution, file size, Laplacian sharpness score, "Recommended Best Shot" badge, and 1-click "Keep Best & Trash Duplicates". `[Completed]`
+- [x] **EXIF & Geotag Details Drawer in Lightbox**: Collapsible inspector in Lightbox showing camera body, lens, focal length, ISO, aperture, shutter speed, resolution, format, and an interactive OpenStreetMap card with direct links to Google & Apple Maps. `[Completed]`
+- [x] **Interactive Face Tagging Overlay & UltraFace ONNX**: Bounding box overlays on detected faces with hover labels, inline "Who is this?" naming/reassignment, manual face tagging, and library-wide offline ONNX face detector. `[Completed]`
+- [x] **Advanced Smart Filter & Date Range Drawer**: Multi-parameter filter panel to filter by date range presets/custom dates, camera make/model, orientation (portrait/landscape/square), favorites, geotagged, and blur status. `[Completed]`
+- [x] **Ambient Cinematic Slideshow Mode**: Fullscreen memory playback with gentle Ken Burns motion transitions, autoplay timers (3s, 5s, 8s, 12s), auto-hiding playback controls, and metadata HUD. `[Completed]`
+- [x] **Offline ONNX Semantic CLIP Search**: Multimodal embedding search enabling natural language queries like *"sunset at beach"*, *"dog playing with ball"* running 100% offline with FastEmbed CLIP ViT-B/32. `[Completed]`
+- [x] **Image Quality Degradation Resolution**: Upgraded to 512px High-DPI thumbnails, 2560px WebP previews, Display P3 ICC profile preservation, and uncompressed progressive original loading in Lightbox. `[Completed]`
 
 ---
 
@@ -143,3 +144,10 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-15 | Timeline Scale & Density Zoom | Added Year/Month/Day scaling, grid thumbnail density controls (Compact/Normal/Large), and group select | `[Completed]` |
 | 2026-09-15 | Bulk Actions & ZIP Export | Built BulkActionBar, streaming ZIP download endpoint, batch category updates, and safe batch deletion | `[Completed]` |
 | 2026-09-15 | Moments & Outings Story Modal | Implemented interactive click-to-view modal with event photo grid, 1-click ZIP export, and select all | `[Completed]` |
+| 2026-09-16 | Image Quality Resolution | 512px Retina thumbnails @ Q90, 2560px previews @ Q92, ICC color profile preservation, uncompressed originals | `[Completed]` |
+| 2026-09-16 | Offline ONNX Semantic CLIP | FastEmbed ViT-B/32 multimodal vectors, cosine similarity matrix engine, natural language search toggle | `[Completed]` |
+| 2026-09-16 | Duplicate Resolver & Bill OCR | Side-by-side sharpness/resolution comparison, 1-click best shot picker, extracted receipt text inspector | `[Completed]` |
+| 2026-09-16 | EXIF & OpenStreetMap Drawer | Integrated camera body/lens specs, exposure badges, OpenStreetMap embed, and external maps links | `[Completed]` |
+| 2026-09-16 | Interactive Face Tagging | UltraFace ONNX model (84 faces detected), interactive bounding box overlays, and inline name editor | `[Completed]` |
+| 2026-09-16 | Smart Filters Drawer | Filter by date presets/custom range, camera brand, orientation, favorites, and sharpness | `[Completed]` |
+| 2026-09-16 | Ambient Cinematic Slideshow | Fullscreen Ken Burns motion playback, speed selector (3s-12s), auto-hiding controls, and metadata HUD | `[Completed]` |

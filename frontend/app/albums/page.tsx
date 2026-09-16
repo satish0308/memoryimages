@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FolderPlus, BookOpen, Trash2, ArrowLeft, Image as ImageIcon, Plus } from 'lucide-react';
+import { FolderPlus, BookOpen, Trash2, ArrowLeft, Image as ImageIcon, Plus, Play } from 'lucide-react';
 import { PhotoCard, MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 
 interface AlbumItem {
   id: number;
@@ -26,6 +27,7 @@ export default function AlbumsPage() {
   const [newAlbumDesc, setNewAlbumDesc] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -117,7 +119,17 @@ export default function AlbumsPage() {
           </div>
         </div>
 
-        {!selectedAlbum && (
+        {selectedAlbum ? (
+          selectedAlbum.photos.length > 0 && (
+            <button
+              onClick={() => setIsSlideshowOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+            >
+              <Play className="w-3.5 h-3.5 fill-white" />
+              <span>Play Slideshow</span>
+            </button>
+          )
+        ) : (
           <button
             onClick={() => setShowCreateModal(true)}
             className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
@@ -272,6 +284,14 @@ export default function AlbumsPage() {
         onClose={() => setSelectedPhoto(null)}
         onToggleFavorite={() => {}}
         onDelete={() => {}}
+      />
+
+      {/* Ambient Slideshow Modal */}
+      <AmbientSlideshowModal
+        photos={selectedAlbum?.photos || []}
+        apiUrl={API_URL}
+        isOpen={isSlideshowOpen}
+        onClose={() => setIsSlideshowOpen(false)}
       />
     </div>
   );

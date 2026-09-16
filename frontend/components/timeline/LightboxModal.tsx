@@ -11,9 +11,29 @@ import {
   RotateCcw, 
   Maximize2,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Info,
+  Users,
+  MapPin,
+  Camera,
+  ExternalLink,
+  Plus,
+  Check,
+  Edit2
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
+
+interface FaceData {
+  id: number;
+  media_id: number;
+  person_id: number | null;
+  person_name: string;
+  box_x: number;
+  box_y: number;
+  box_w: number;
+  box_h: number;
+  confidence: number;
+}
 
 interface LightboxModalProps {
   photo: MediaItem | null;
@@ -42,26 +62,172 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
+  const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
+  const [showFaceBoxes, setShowFaceBoxes] = useState(true);
+  const [faces, setFaces] = useState<FaceData[]>([]);
+  const [editingFaceId, setEditingFaceId] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [knownPeople, setKnownPeople] = useState<{ id: number; name: string }[]>([]);
+  const [isAddingFace, setIsAddingFace] = useState(false);
+  const [currentCategory, setCurrentCategory] = useState(photo?.category || 'memory');
+
   const dragStart = useRef({ x: 0, y: 0 });
+  const imageRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Sync category state when photo changes
+  useEffect(() => {
+    if (photo) {
+      setCurrentCategory(photo.category);
+    }
+  }, [photo?.id, photo?.category]);
 
   // Reset zoom, pan, and high-res state whenever a new photo is opened
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsHighResLoaded(false);
+    setEditingFaceId(null);
+    setIsAddingFace(false);
 
     if (photo?.id) {
       // Progressively preload the uncompressed original image for pixel-perfect zoom
       const img = new window.Image();
       img.src = `${apiUrl}/api/v1/media/${photo.id}/view`;
       img.onload = () => setIsHighResLoaded(true);
+
+      // Fetch detected faces for this photo
+      fetchFaces(photo.id);
+      fetchKnownPeople();
     }
   }, [photo?.id, apiUrl]);
+
+  const fetchFaces = async (photoId: number) => {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/people/media/${photoId}/faces`);
+      if (res.ok) {
+        const data = await res.json();
+        setFaces(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch faces:', e);
+    }
+  };
+
+  const fetchKnownPeople = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/people`);
+      if (res.ok) {
+        const data = await res.json();
+        setKnownPeople(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch known people:', e);
+    }
+  };
+
+  const handleUpdateFaceTag = async (faceId: number, name: string) => {
+    if (!name.trim()) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/people/faces/${faceId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_name: name.trim() }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setFaces((prev) =>
+          prev.map((f) =>
+            f.id === faceId ? { ...f, person_id: updated.person_id, person_name: updated.person_name } : f
+          )
+        );
+        setEditingFaceId(null);
+        fetchKnownPeople();
+      }
+    } catch (e) {
+      console.error('Failed to update face tag:', e);
+    }
+  };
+
+  const handleDeleteFace = async (faceId: number) => {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/people/faces/${faceId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setFaces((prev) => prev.filter((f) => f.id !== faceId));
+        if (editingFaceId === faceId) setEditingFaceId(null);
+      }
+    } catch (e) {
+      console.error('Failed to delete face tag:', e);
+    }
+  };
+
+  const handleImageClick = async (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!isAddingFace || !photo || !imageRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    const clickX = (e.clientX - rect.left) / rect.width;
+    const clickY = (e.clientY - rect.top) / rect.height;
+
+    // Approximate face bounding box centered on click: 15% width, 18% height
+    const box_w = 0.15;
+    const box_h = 0.18;
+    const box_x = Math.max(0, Math.min(clickX - box_w / 2, 1 - box_w));
+    const box_y = Math.max(0, Math.min(clickY - box_h / 2, 1 - box_h));
+
+    const personName = prompt('Enter the name of the person:');
+    if (!personName || !personName.trim()) {
+      setIsAddingFace(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/people/media/${photo.id}/faces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          box_x: Math.round(box_x * 1000) / 1000,
+          box_y: Math.round(box_y * 1000) / 1000,
+          box_w: Math.round(box_w * 1000) / 1000,
+          box_h: Math.round(box_h * 1000) / 1000,
+          person_name: personName.trim(),
+        }),
+      });
+      if (res.ok) {
+        const newFace = await res.json();
+        setFaces((prev) => [...prev, newFace]);
+        fetchKnownPeople();
+      }
+    } catch (err) {
+      console.error('Error adding face tag:', err);
+    } finally {
+      setIsAddingFace(false);
+    }
+  };
+
+  const handleCategoryChange = async (newCategory: string) => {
+    if (!photo) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/category`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: newCategory }),
+      });
+      if (res.ok) {
+        setCurrentCategory(newCategory);
+        photo.category = newCategory;
+      }
+    } catch (e) {
+      console.error('Failed to change category:', e);
+    }
+  };
 
   // Keyboard navigation & zoom shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!photo) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
       if (e.key === 'Escape') {
         onClose();
       } else if (e.key === 'ArrowLeft' && onNavigatePrev && hasPrev) {
@@ -74,6 +240,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         handleZoomOut();
       } else if (e.key === '0') {
         handleResetZoom();
+      } else if (e.key.toLowerCase() === 'f') {
+        setShowFaceBoxes((prev) => !prev);
+      } else if (e.key.toLowerCase() === 'i') {
+        setActiveTab((prev) => (prev === 'info' ? 'faces' : 'info'));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -105,7 +275,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (zoom > 1) {
+    if (zoom > 1 && !isAddingFace) {
       setIsDragging(true);
       dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
     }
@@ -122,34 +292,47 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // Formatting helpers
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes || bytes === 0) return null;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const megapixels = photo.width && photo.height 
+    ? ((photo.width * photo.height) / 1000000).toFixed(1) 
+    : null;
+
   return (
     <div 
-      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn"
+      className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-3 md:p-6 backdrop-blur-md animate-fadeIn"
       onMouseUp={handleMouseUp}
     >
-      <div className="relative max-w-6xl max-h-[92vh] w-full flex flex-col md:flex-row bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
+      <div className="relative max-w-7xl max-h-[95vh] w-full h-full flex flex-col md:flex-row bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
+        
         {/* Top Controls: Close */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-30 p-2 bg-black/50 text-white rounded-full hover:bg-black/80 transition"
+          className="absolute top-4 right-4 z-40 p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
           title="Close (Esc)"
         >
           <X className="w-5 h-5" />
         </button>
 
-        {/* Photo Interactive Viewport with Pan & Zoom */}
+        {/* Photo Interactive Viewport with Pan, Zoom & Face Tag Overlay */}
         <div 
-          className="relative flex-1 flex items-center justify-center bg-black overflow-hidden p-4 min-h-[400px] select-none"
+          ref={containerRef}
+          className="relative flex-1 flex items-center justify-center bg-black overflow-hidden select-none p-2"
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          style={{ cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+          style={{ cursor: isAddingFace ? 'crosshair' : zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         >
           {/* Previous Photo Button */}
           {hasPrev && onNavigatePrev && (
             <button
               onClick={onNavigatePrev}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-20 p-2 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-lg"
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-2.5 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-xl"
               title="Previous Photo (Left Arrow)"
             >
               <ChevronLeft className="w-5 h-5" />
@@ -160,29 +343,81 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           {hasNext && onNavigateNext && (
             <button
               onClick={onNavigateNext}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-20 p-2 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-lg"
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-2.5 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-xl"
               title="Next Photo (Right Arrow)"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
           )}
 
-          <img
-            src={
-              isHighResLoaded
-                ? `${apiUrl}/api/v1/media/${photo.id}/view`
-                : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
-            }
-            alt={photo.filename}
-            className="max-h-[82vh] max-w-full object-contain rounded transition-transform duration-75 origin-center"
+          {/* Interactive Photo Image with Face Tag Overlays */}
+          <div 
+            className="relative inline-block max-h-[85vh] max-w-full"
             style={{
               transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+              transformOrigin: 'center',
+              transition: isDragging ? 'none' : 'transform 75ms ease-out',
             }}
-            draggable={false}
-          />
+          >
+            <img
+              ref={imageRef}
+              src={
+                isHighResLoaded
+                  ? `${apiUrl}/api/v1/media/${photo.id}/view`
+                  : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
+              }
+              alt={photo.filename}
+              onClick={handleImageClick}
+              className="max-h-[85vh] max-w-full object-contain rounded-lg"
+              draggable={false}
+            />
 
-          {/* Floating Zoom Controls Bar */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 bg-slate-900/80 backdrop-blur-md border border-slate-700/80 px-3 py-1.5 rounded-full flex items-center gap-3 text-white shadow-xl">
+            {/* Interactive Face Bounding Boxes */}
+            {showFaceBoxes && zoom === 1 && faces.map((face) => (
+              <div
+                key={face.id}
+                style={{
+                  left: `${face.box_x * 100}%`,
+                  top: `${face.box_y * 100}%`,
+                  width: `${face.box_w * 100}%`,
+                  height: `${face.box_h * 100}%`,
+                }}
+                className={`absolute group cursor-pointer border-2 transition-all rounded-md ${
+                  face.person_name && face.person_name !== 'Unnamed'
+                    ? 'border-indigo-400/80 bg-indigo-500/10 hover:bg-indigo-500/20'
+                    : 'border-amber-400/80 bg-amber-500/10 hover:bg-amber-500/20'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveTab('faces');
+                  setEditingFaceId(face.id);
+                  setEditingName(face.person_name !== 'Unnamed' ? face.person_name : '');
+                }}
+              >
+                {/* Floating Face Name Tag Badge */}
+                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900/90 text-white shadow-lg border border-slate-700 pointer-events-none group-hover:scale-105 transition">
+                  {face.person_name || 'Unnamed'}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Adding Face Tag Hint */}
+          {isAddingFace && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-indigo-600 text-white text-xs px-4 py-1.5 rounded-full shadow-lg animate-pulse flex items-center gap-2">
+              <Plus className="w-3.5 h-3.5" />
+              <span>Click on a face in the photo to tag person</span>
+              <button 
+                onClick={() => setIsAddingFace(false)}
+                className="ml-2 hover:bg-indigo-700 rounded px-1.5 py-0.5 text-[10px]"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Floating Zoom & Overlays Toolbar */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 px-4 py-1.5 rounded-full flex items-center gap-3 text-white shadow-2xl">
             <button
               onClick={handleZoomOut}
               disabled={zoom <= 1}
@@ -192,7 +427,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <ZoomOut className="w-4 h-4" />
             </button>
 
-            <span className="text-xs font-mono font-semibold min-w-[45px] text-center">
+            <span className="text-xs font-mono font-semibold min-w-[42px] text-center">
               {Math.round(zoom * 100)}%
             </span>
 
@@ -215,6 +450,29 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               </button>
             )}
 
+            <div className="h-4 w-px bg-slate-700" />
+
+            {/* Face Bounding Box Toggle */}
+            <button
+              onClick={() => setShowFaceBoxes(!showFaceBoxes)}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium transition ${
+                showFaceBoxes 
+                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Toggle Face Boxes (F)"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Faces</span>
+              {faces.length > 0 && (
+                <span className="bg-indigo-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                  {faces.length}
+                </span>
+              )}
+            </button>
+
+            <div className="h-4 w-px bg-slate-700" />
+
             {/* Quality Indicator Badge */}
             <span
               className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border transition-all ${
@@ -233,48 +491,309 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </div>
         </div>
 
-        {/* Details & Controls Sidebar */}
-        <div className="w-full md:w-80 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 p-6 text-white flex flex-col justify-between flex-shrink-0">
-          <div className="space-y-4">
-            <div>
-              <h3 className="font-semibold text-base truncate" title={photo.filename}>
-                {photo.filename}
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                {new Date(photo.captured_at).toLocaleString()}
-              </p>
-            </div>
+        {/* Multi-Tab Sidebar: Info & EXIF / Faces & People */}
+        <div className="w-full md:w-88 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between flex-shrink-0 z-20">
+          
+          {/* Sidebar Tabs Header */}
+          <div className="flex border-b border-slate-800 px-4 pt-3">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition ${
+                activeTab === 'info'
+                  ? 'border-indigo-500 text-indigo-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>Info & EXIF</span>
+            </button>
 
-            <div className="space-y-2.5 pt-2 border-t border-slate-800 text-xs">
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-slate-500">Category</span>
-                <span className="capitalize font-medium text-indigo-400">
-                  {photo.category.replace('_', ' ')}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-slate-300">
-                <span className="text-slate-500">Dimensions</span>
-                <span>
-                  {photo.width} × {photo.height} px
-                </span>
-              </div>
-              {photo.is_blurry && (
-                <div className="flex items-center justify-between text-amber-400 font-medium">
-                  <span>Quality</span>
-                  <span>Flagged as Blurry</span>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Zoom Helper Hint */}
-            <div className="bg-slate-800/60 rounded-xl p-2.5 text-[11px] text-slate-400 flex items-center gap-2">
-              <Maximize2 className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-              <span>Tip: Use mouse wheel to zoom in/out, click & drag to pan.</span>
-            </div>
+            <button
+              onClick={() => setActiveTab('faces')}
+              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition ${
+                activeTab === 'faces'
+                  ? 'border-indigo-500 text-indigo-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>People & Faces ({faces.length})</span>
+            </button>
           </div>
 
-          {/* Action Buttons */}
-          <div className="pt-4 border-t border-slate-800 flex items-center gap-2">
+          {/* Tab Content Container */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-5 text-white">
+            {activeTab === 'info' ? (
+              <div className="space-y-4 text-xs">
+                {/* Photo Title & Capture Time */}
+                <div>
+                  <h3 className="font-semibold text-sm text-slate-100 truncate" title={photo.filename}>
+                    {photo.filename}
+                  </h3>
+                  <p className="text-slate-400 mt-1">
+                    {new Date(photo.captured_at).toLocaleDateString(undefined, {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+
+                {/* Technical Specifications Grid */}
+                <div className="bg-slate-800/60 rounded-xl p-3 space-y-2 border border-slate-800">
+                  <div className="flex items-center justify-between text-slate-300">
+                    <span className="text-slate-400">Resolution</span>
+                    <span className="font-mono">
+                      {photo.width} × {photo.height} {megapixels ? `(${megapixels} MP)` : ''}
+                    </span>
+                  </div>
+
+                  {photo.file_size && (
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="text-slate-400">File Size</span>
+                      <span className="font-mono">{formatFileSize(photo.file_size)}</span>
+                    </div>
+                  )}
+
+                  {/* Interactive Category Selector */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-700/50">
+                    <span className="text-slate-400">Category</span>
+                    <select
+                      value={currentCategory}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-indigo-400 text-xs rounded px-2 py-0.5 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="memory">Memory</option>
+                      <option value="screenshot">Screenshot</option>
+                      <option value="document_bill">Document / Bill</option>
+                      <option value="meme_junk">Meme / Graphic</option>
+                      <option value="uncategorized">Uncategorized</option>
+                    </select>
+                  </div>
+
+                  {photo.is_blurry && (
+                    <div className="flex items-center justify-between text-amber-400 font-medium pt-1 border-t border-slate-700/50">
+                      <span>Quality</span>
+                      <span>Flagged as Blurry</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Camera & Lens Technical EXIF */}
+                {(photo.camera_make || photo.camera_model || photo.iso || photo.exposure_time) && (
+                  <div className="bg-slate-800/60 rounded-xl p-3 space-y-2.5 border border-slate-800">
+                    <div className="flex items-center gap-2 text-slate-200 font-medium">
+                      <Camera className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>
+                        {[photo.camera_make, photo.camera_model].filter(Boolean).join(' ') || 'Camera Details'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      {photo.focal_length && (
+                        <div className="bg-slate-900/80 p-2 rounded text-center">
+                          <p className="text-[10px] text-slate-400">Focal</p>
+                          <p className="font-semibold mt-0.5">{photo.focal_length}mm</p>
+                        </div>
+                      )}
+                      {photo.exposure_time && (
+                        <div className="bg-slate-900/80 p-2 rounded text-center">
+                          <p className="text-[10px] text-slate-400">Shutter</p>
+                          <p className="font-semibold mt-0.5">{photo.exposure_time}</p>
+                        </div>
+                      )}
+                      {photo.iso && (
+                        <div className="bg-slate-900/80 p-2 rounded text-center">
+                          <p className="text-[10px] text-slate-400">ISO</p>
+                          <p className="font-semibold mt-0.5">{photo.iso}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Geotag & Interactive Mini Map Card */}
+                {photo.latitude !== null && photo.latitude !== undefined && photo.longitude !== null && photo.longitude !== undefined && (
+                  <div className="bg-slate-800/60 rounded-xl p-3 space-y-2.5 border border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-slate-200 font-medium">
+                        <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="truncate">
+                          {photo.location_name || 'Geotagged Location'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {photo.latitude.toFixed(3)}, {photo.longitude.toFixed(3)}
+                      </span>
+                    </div>
+
+                    {/* Interactive OpenStreetMap Embed */}
+                    <div className="rounded-lg overflow-hidden border border-slate-700 bg-slate-950 aspect-[16/9]">
+                      <iframe
+                        title="Photo Location Map"
+                        src={`https://www.openstreetmap.org/export/embed.html?bbox=${photo.longitude - 0.008}%2C${photo.latitude - 0.008}%2C${photo.longitude + 0.008}%2C${photo.latitude + 0.008}&layer=mapnik&marker=${photo.latitude}%2C${photo.longitude}`}
+                        className="w-full h-full border-0 pointer-events-none"
+                        loading="lazy"
+                      />
+                    </div>
+
+                    {/* Direct External Map Links */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <a
+                        href={`https://www.google.com/maps?q=${photo.latitude},${photo.longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        Google Maps
+                      </a>
+                      <a
+                        href={`https://maps.apple.com/?ll=${photo.latitude},${photo.longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-slate-900 hover:bg-slate-700 text-slate-300 rounded text-[11px] transition"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        Apple Maps
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* People & Faces Tagging Tab */
+              <div className="space-y-4 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-medium">Detected People ({faces.length})</span>
+                  <button
+                    onClick={() => setIsAddingFace(!isAddingFace)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                      isAddingFace 
+                        ? 'bg-indigo-600 text-white' 
+                        : 'bg-slate-800 hover:bg-slate-700 text-indigo-400'
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isAddingFace ? 'Cancel Tag' : 'Tag Face'}</span>
+                  </button>
+                </div>
+
+                {faces.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500 space-y-2">
+                    <Users className="w-8 h-8 mx-auto opacity-40" />
+                    <p>No faces detected on this photo.</p>
+                    <p className="text-[11px]">Click &quot;Tag Face&quot; above to manually label someone.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {faces.map((face) => (
+                      <div
+                        key={face.id}
+                        className="bg-slate-800/70 border border-slate-700/60 rounded-xl p-3 flex flex-col gap-2 transition hover:border-slate-600"
+                      >
+                        {editingFaceId === face.id ? (
+                          <div className="space-y-2">
+                            <label className="text-[11px] text-slate-400">Name this person:</label>
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                placeholder="Type name..."
+                                className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleUpdateFaceTag(face.id, editingName);
+                                  if (e.key === 'Escape') setEditingFaceId(null);
+                                }}
+                              />
+                              <button
+                                onClick={() => handleUpdateFaceTag(face.id, editingName)}
+                                className="p-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded"
+                                title="Save"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setEditingFaceId(null)}
+                                className="p-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded"
+                                title="Cancel"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Suggestions from known people */}
+                            {knownPeople.length > 0 && (
+                              <div className="pt-1">
+                                <span className="text-[10px] text-slate-500">Or pick existing:</span>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {knownPeople.slice(0, 5).map((p) => (
+                                    <button
+                                      key={p.id}
+                                      onClick={() => handleUpdateFaceTag(face.id, p.name)}
+                                      className="text-[10px] bg-slate-900 hover:bg-indigo-900/60 text-slate-300 hover:text-indigo-200 px-2 py-0.5 rounded border border-slate-700"
+                                    >
+                                      {p.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-300 font-bold text-xs uppercase">
+                                {face.person_name && face.person_name !== 'Unnamed' 
+                                  ? face.person_name[0] 
+                                  : '?'}
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-100">
+                                  {face.person_name || 'Unnamed Person'}
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  Confidence: {Math.round(face.confidence * 100)}%
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => {
+                                  setEditingFaceId(face.id);
+                                  setEditingName(face.person_name !== 'Unnamed' ? face.person_name : '');
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-indigo-400 hover:bg-slate-700/50 rounded"
+                                title="Rename / Tag"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteFace(face.id)}
+                                className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-700/50 rounded"
+                                title="Delete Face Tag"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Action Buttons Footer */}
+          <div className="p-4 border-t border-slate-800 flex items-center gap-2 bg-slate-900/90">
             <a
               href={`${apiUrl}/api/v1/media/${photo.id}/download`}
               download

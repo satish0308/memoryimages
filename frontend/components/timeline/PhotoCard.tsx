@@ -12,6 +12,16 @@ export interface MediaItem {
   captured_at: string;
   is_favorite: boolean;
   is_blurry: boolean;
+  blurriness_score?: number;
+  file_size?: number;
+  camera_make?: string | null;
+  camera_model?: string | null;
+  iso?: number | null;
+  focal_length?: number | null;
+  exposure_time?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_name?: string | null;
   expires_at?: string | null;
   thumbnail_url: string;
 }

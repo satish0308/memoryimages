@@ -100,6 +100,16 @@ def get_timeline(
             "captured_at": item.captured_at,
             "is_favorite": item.is_favorite,
             "is_blurry": item.is_blurry,
+            "blurriness_score": item.blurriness_score,
+            "file_size": item.file_size,
+            "camera_make": item.camera_make,
+            "camera_model": item.camera_model,
+            "iso": item.iso,
+            "focal_length": item.focal_length,
+            "exposure_time": item.exposure_time,
+            "latitude": item.latitude,
+            "longitude": item.longitude,
+            "location_name": item.location_name,
             "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
         })
         
@@ -290,6 +300,18 @@ def toggle_archive(media_id: int, db: Session = Depends(get_db)):
     media.is_archived = not media.is_archived
     db.commit()
     return {"id": media.id, "is_archived": media.is_archived}
+
+class SingleCategoryUpdate(BaseModel):
+    category: MediaCategory
+
+@router.patch("/{media_id}/category")
+def update_media_category(media_id: int, req: SingleCategoryUpdate, db: Session = Depends(get_db)):
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    media.category = req.category
+    db.commit()
+    return {"id": media.id, "category": media.category}
 
 @router.delete("/{media_id}")
 def delete_media(media_id: int, permanent: bool = False, db: Session = Depends(get_db)):
