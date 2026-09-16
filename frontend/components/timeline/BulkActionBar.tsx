@@ -40,6 +40,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onBatchDelete,
   onBatchCategoryUpdated,
   onAlbumAdded,
+  onBatchLocationUpdated,
 }) => {
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);

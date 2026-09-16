@@ -345,3 +345,134 @@ def scan_directory(db: Session, dir_path: str) -> Dict[str, Any]:
                     added += 1
                     
     return {"scanned": scanned, "added": added, "status": "success"}
+
+def scan_file_in_memory(
+    db: Session,
+    buffer: io.BytesIO,
+    filename: str,
+    source_type: SourceType = SourceType.GOOGLE_DRIVE,
+    source_id: Optional[str] = None,
+    thumbnail_link: Optional[str] = None
+) -> Optional[Media]:
+    """
+    Ingests a photo purely in-memory with zero local disk writes or volume storage consumption.
+    Extracts EXIF/GPS, runs categorization and face detection on RAM buffers.
+    """
+    data_bytes = buffer.getvalue()
+    if len(data_bytes) == 0:
+        return None
+
+    file_size = len(data_bytes)
+    file_hash = hashlib.sha256(data_bytes).hexdigest()
+
+    # Check for duplicate by source_id or file_hash
+    if source_id:
+        existing = db.query(Media).filter(
+            Media.source_type == source_type,
+            Media.source_id == source_id
+        ).first()
+        if existing:
+            return existing
+
+    duplicate = db.query(Media).filter(Media.file_hash == file_hash).first()
+    if duplicate:
+        return duplicate
+
+    try:
+        buffer.seek(0)
+        with Image.open(buffer) as img:
+            exif = extract_exif(img)
+            # Deep embedded scan on buffer bytes if GPS missing
+            if exif["latitude"] is None:
+                embedded = extract_gps_from_bytes(data_bytes)
+                if embedded:
+                    exif["latitude"] = embedded[0]
+                    exif["longitude"] = embedded[1]
+                    exif["location_name"] = reverse_geocode(embedded[0], embedded[1])
+
+            width, height = img.size
+            captured_at = exif["captured_at"] or datetime.utcnow()
+
+            # In-memory blurriness and perceptual hash
+            try:
+                import imagehash
+                from app.services.thumbnail import calculate_blurriness
+                img_rgb = img.convert("RGB")
+                blur_score = calculate_blurriness(img_rgb)
+                is_blurry = blur_score < 80.0
+                phash_val = str(imagehash.phash(img_rgb))
+            except Exception:
+                blur_score = 100.0
+                is_blurry = False
+                phash_val = None
+
+    except Exception as e:
+        return None
+
+    # Triage classification
+    category, confidence, expires_at = classify_media_item(
+        filename=filename,
+        width=width,
+        height=height,
+        camera_make=exif["camera_make"],
+        camera_model=exif["camera_model"],
+        captured_at=captured_at
+    )
+
+    # In-memory virtual path (zero local disk persistence)
+    virtual_path = f"gdrive://{source_id}/{filename}" if source_id else f"memory://{file_hash}/{filename}"
+
+    media = Media(
+        filename=filename,
+        original_path=virtual_path,
+        file_size=file_size,
+        file_hash=file_hash,
+        perceptual_hash=phash_val,
+        width=width,
+        height=height,
+        category=category,
+        triage_confidence=confidence,
+        blurriness_score=blur_score,
+        is_blurry=is_blurry,
+        captured_at=captured_at,
+        expires_at=expires_at,
+        camera_make=exif["camera_make"],
+        camera_model=exif["camera_model"],
+        iso=exif["iso"],
+        focal_length=exif["focal_length"],
+        exposure_time=exif["exposure_time"],
+        latitude=exif["latitude"],
+        longitude=exif["longitude"],
+        location_name=exif.get("location_name"),
+        thumbnail_256_path=f"gdrive_cdn://{source_id}" if thumbnail_link else None,
+        source_type=source_type,
+        source_id=source_id
+    )
+
+    db.add(media)
+    db.commit()
+    db.refresh(media)
+
+    # In-memory face detection
+    try:
+        from app.services.face_engine import detect_faces_in_image
+        buffer.seek(0)
+        with Image.open(buffer) as img_faces:
+            face_boxes = detect_faces_in_image(img_faces)
+            if face_boxes:
+                from app.models.person import FaceDetection
+                for b in face_boxes:
+                    fd = FaceDetection(
+                        media_id=media.id,
+                        box_x=b["box_x"],
+                        box_y=b["box_y"],
+                        box_w=b["box_w"],
+                        box_h=b["box_h"],
+                        confidence=b["confidence"]
+                    )
+                    db.add(fd)
+                db.commit()
+    except Exception:
+        pass
+
+    return media

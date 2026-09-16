@@ -6,13 +6,15 @@ from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.database import get_db
 from app.models.media import Media, MediaCategory, SourceType
 from app.services.scanner import scan_file, extract_exif, reverse_geocode
+from app.services.settings_service import get_storage_mode, get_setting
+from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file
 from app.config import settings
 
 router = APIRouter()
@@ -195,7 +197,18 @@ def get_thumbnail(
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
-        
+
+    storage_mode = get_storage_mode(db)
+    use_google_cdn = get_setting(db, "use_google_cdn_thumbnails", "true").lower() in ("true", "1", "yes")
+
+    # 1. Google Drive In-Memory / CDN Serving (9drive architecture: zero local disk usage)
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (use_google_cdn or storage_mode == "in_memory"):
+        size_int = 2048 if size == "original" else int(size)
+        cdn_url = get_google_drive_thumbnail_url(media.source_id, db, size_int)
+        if cdn_url:
+            return RedirectResponse(cdn_url, status_code=307)
+
+    # 2. Local Disk Thumbnail Serving (if cached/saved)
     if size == "original":
         if media.original_path and os.path.isfile(media.original_path):
             return FileResponse(
@@ -210,6 +223,16 @@ def get_thumbnail(
         
     if media.original_path and os.path.isfile(media.original_path):
         return FileResponse(media.original_path, media_type=media.mime_type or "image/jpeg")
+
+    # 3. In-memory stream fallback from Google Drive
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id:
+        try:
+            return StreamingResponse(
+                stream_google_drive_file(media.source_id, db),
+                media_type=media.mime_type or "image/jpeg"
+            )
+        except Exception:
+            pass
         
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on disk")
 
@@ -217,13 +240,30 @@ def get_thumbnail(
 def view_original(media_id: int, db: Session = Depends(get_db)):
     """Streams full uncompressed original photo directly for pixel-perfect zoom inspection."""
     media = db.query(Media).filter(Media.id == media_id).first()
-    if not media or not media.original_path or not os.path.isfile(media.original_path):
-        raise HTTPException(status_code=404, detail="Original image not found")
-    return FileResponse(
-        media.original_path,
-        media_type=media.mime_type or "image/jpeg",
-        headers={"Content-Disposition": "inline"}
-    )
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    storage_mode = get_storage_mode(db)
+
+    # In-memory streaming from Google Drive if in_memory mode or file not on disk
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
+        try:
+            return StreamingResponse(
+                stream_google_drive_file(media.source_id, db),
+                media_type=media.mime_type or "image/jpeg",
+                headers={"Content-Disposition": "inline"}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"In-memory stream error: {e}")
+
+    if media.original_path and os.path.isfile(media.original_path):
+        return FileResponse(
+            media.original_path,
+            media_type=media.mime_type or "image/jpeg",
+            headers={"Content-Disposition": "inline"}
+        )
+
+    raise HTTPException(status_code=404, detail="Original image not found")
 
 @router.post("/regenerate-thumbnails")
 def regenerate_all_thumbnails(db: Session = Depends(get_db)):
@@ -248,13 +288,30 @@ def regenerate_all_thumbnails(db: Session = Depends(get_db)):
 @router.get("/{media_id}/download")
 def download_original(media_id: int, db: Session = Depends(get_db)):
     media = db.query(Media).filter(Media.id == media_id).first()
-    if not media or not os.path.isfile(media.original_path):
-        raise HTTPException(status_code=404, detail="Original file not found")
-    return FileResponse(
-        media.original_path,
-        media_type=media.mime_type or "application/octet-stream",
-        filename=media.filename
-    )
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    storage_mode = get_storage_mode(db)
+
+    # In-memory streaming download from Google Drive if in_memory mode or file not on disk
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
+        try:
+            return StreamingResponse(
+                stream_google_drive_file(media.source_id, db),
+                media_type=media.mime_type or "application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{media.filename}"'}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"In-memory download error: {e}")
+
+    if media.original_path and os.path.isfile(media.original_path):
+        return FileResponse(
+            media.original_path,
+            media_type=media.mime_type or "application/octet-stream",
+            filename=media.filename
+        )
+
+    raise HTTPException(status_code=404, detail="Original file not found")
 
 @router.post("/upload")
 def upload_photo(

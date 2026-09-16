@@ -3,6 +3,7 @@ from app.models.person import Person, FaceDetection
 from app.models.sync import SyncSource, SyncStatus, SyncType
 from app.models.album import Album, album_media
 from app.models.user import User
+from app.models.setting import AppSetting
 
 __all__ = [
     "Media",
@@ -16,4 +17,5 @@ __all__ = [
     "Album",
     "album_media",
     "User",
+    "AppSetting",
 ]

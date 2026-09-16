@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { 
   User as UserIcon, 
   LogOut, 
@@ -8,7 +9,8 @@ import {
   ChevronDown, 
   UserPlus, 
   Users,
-  LogIn 
+  LogIn,
+  Settings
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -135,6 +137,15 @@ export const UserNavMenu: React.FC<UserNavMenuProps> = ({ onOpenAuthModal }) => 
               <UserPlus className="w-3.5 h-3.5 text-slate-400" />
               <span>Switch / Add Account</span>
             </button>
+
+            <Link
+              href="/settings"
+              onClick={() => setIsOpen(false)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 rounded-xl transition"
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-400" />
+              <span>App & Storage Settings</span>
+            </Link>
 
             <button
               onClick={() => {

@@ -68,22 +68,28 @@ def hard_nms(box_scores: np.ndarray, iou_threshold: float = 0.3, top_k: int = -1
         
     return box_scores[picked, :]
 
-def detect_faces_in_image(image_path: str, conf_threshold: float = 0.7) -> List[Dict[str, float]]:
+def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.7) -> List[Dict[str, float]]:
     """
-    Runs UltraFace ONNX model to detect faces in an image file.
+    Runs UltraFace ONNX model to detect faces in an image file or in-memory PIL Image.
     Returns list of normalized coordinates: box_x, box_y, box_w, box_h (0.0 - 1.0) and confidence.
     """
     sess = get_inference_session()
-    if sess is None or not os.path.exists(image_path):
+    if sess is None:
         return []
 
     try:
-        with Image.open(image_path) as img:
-            img_rgb = img.convert('RGB')
-            orig_w, orig_h = img_rgb.size
-            if orig_w == 0 or orig_h == 0:
-                return []
-            resized = img_rgb.resize((320, 240))
+        if isinstance(image_input, Image.Image):
+            img_rgb = image_input.convert('RGB')
+        elif isinstance(image_input, str) and os.path.exists(image_input):
+            with Image.open(image_input) as img:
+                img_rgb = img.convert('RGB')
+        else:
+            return []
+
+        orig_w, orig_h = img_rgb.size
+        if orig_w == 0 or orig_h == 0:
+            return []
+        resized = img_rgb.resize((320, 240))
 
         arr = np.array(resized).astype('float32')
         arr = (arr - 127.0) / 128.0

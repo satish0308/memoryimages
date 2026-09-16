@@ -16,7 +16,9 @@ from googleapiclient.http import MediaIoBaseDownload
 from app.config import settings
 from app.models.sync import SyncSource, SyncStatus, SyncType
 from app.models.media import Media, SourceType
-from app.services.scanner import scan_file
+from app.services.scanner import scan_file, scan_file_in_memory
+from app.services.settings_service import get_storage_mode, is_local_storage_approved
+from app.services.drive_cache import cache_drive_thumbnail_link
 
 logger = logging.getLogger(__name__)
 
@@ -162,15 +164,15 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
 
         service = build("drive", "v3", credentials=credentials)
         
-        dest_dir = os.path.join(settings.MEDIA_DIR, "google_drive")
-        os.makedirs(dest_dir, exist_ok=True)
-        
-        # Query for all non-trashed images in Google Drive
+        storage_mode = get_storage_mode(db)
+        local_approved = is_local_storage_approved(db)
+
+        # Query for all non-trashed images in Google Drive, requesting thumbnailLink
         query = "mimeType contains 'image/' and trashed = false"
         results = service.files().list(
             q=query,
             pageSize=100,
-            fields="files(id, name, mimeType, size)"
+            fields="files(id, name, mimeType, size, thumbnailLink)"
         ).execute()
         
         items = results.get("files", [])
@@ -179,6 +181,9 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
         for item in items:
             file_id = item["id"]
             name = item["name"]
+            thumb_link = item.get("thumbnailLink")
+            if thumb_link:
+                cache_drive_thumbnail_link(file_id, thumb_link)
             
             # Check if this Google Drive file ID has already been ingested
             existing = db.query(Media).filter(
@@ -187,22 +192,44 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
             ).first()
             if existing:
                 continue
-                
-            safe_name = f"{file_id}_{name}"
-            file_dest = os.path.join(dest_dir, safe_name)
-            
-            # Download file
+
             request = service.files().get_media(fileId=file_id)
-            with open(file_dest, "wb") as f:
-                downloader = MediaIoBaseDownload(f, request)
+
+            if storage_mode == "in_memory" or not local_approved:
+                # Strictly in-memory process: zero local disk writes or volume mount usage
+                mem_buf = io.BytesIO()
+                downloader = MediaIoBaseDownload(mem_buf, request, chunksize=1024 * 1024)
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
-                    
-            # Ingest downloaded photo through the Media pipeline
-            media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id)
-            if media:
-                synced_count += 1
+                mem_buf.seek(0)
+
+                media = scan_file_in_memory(
+                    db=db,
+                    buffer=mem_buf,
+                    filename=name,
+                    source_type=SourceType.GOOGLE_DRIVE,
+                    source_id=file_id,
+                    thumbnail_link=thumb_link
+                )
+                if media:
+                    synced_count += 1
+            else:
+                # Approved local storage: save to local directory and scan
+                dest_dir = os.path.join(settings.MEDIA_DIR, "google_drive")
+                os.makedirs(dest_dir, exist_ok=True)
+                safe_name = f"{file_id}_{name}"
+                file_dest = os.path.join(dest_dir, safe_name)
+
+                with open(file_dest, "wb") as f:
+                    downloader = MediaIoBaseDownload(f, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+
+                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id)
+                if media:
+                    synced_count += 1
                 
         source.status = SyncStatus.IDLE
         source.items_count = (source.items_count or 0) + synced_count

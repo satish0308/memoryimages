@@ -11,7 +11,8 @@ import {
   ShieldCheck,
   Clock,
   BookOpen,
-  Globe
+  Globe,
+  Settings
 } from 'lucide-react';
 import { Providers } from '@/components/layout/Providers';
 import { AppHeader } from '@/components/layout/AppHeader';
@@ -94,6 +95,13 @@ export default function RootLayout({
               >
                 <FolderSync className="w-4 h-4 text-slate-500" />
                 Sync & Sources
+              </Link>
+              <Link
+                href="/settings"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+              >
+                <Settings className="w-4 h-4 text-slate-500" />
+                App Settings
               </Link>
             </nav>
           </div>
