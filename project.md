@@ -129,7 +129,7 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 ### Phase 12: Creative Media Studio, Motion Live Photos & Travel Heatmaps
 - [ ] **Non-Destructive Web Editing Studio**: In-browser adjustments (auto-enhance exposure/contrast/saturation, rotate, crop to 1:1, 16:9, 4:3, and vintage black-and-white filters) while preserving untouched originals. `[Planned]`
 - [ ] **Apple Live Photos & Short Video Motion Support**: Support for paired `.heic` + `.mov` Live Photos with hover-motion playback and inline silent video player. `[Planned]`
-- [ ] **Interactive Travel Route & Geographic Heatmap**: Chronological journey visualization on the map connecting geotagged photos from vacations and road trips with distance and duration statistics. `[Planned]`
+- [x] **Interactive Travel Route & Geographic Heatmap**: Chronological journey visualization on the map connecting geotagged photos from vacations and road trips with distance and duration statistics, numbered waypoints, and multi-ring density heatmap layer. `[Completed]`
 - [ ] **PWA & Chunked Multi-File Uploader**: Progressive Web App manifest for home screen install, service worker offline caching of recent memories, and drag-and-drop resume-enabled chunked uploader. `[Planned]`
 
 ---
@@ -168,3 +168,7 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | JWT Authentication & Multi-User | Added User model, bcrypt hashing, PyJWT tokens, /auth endpoints, UserNavMenu, and /login page | `[Completed]` |
 | 2026-09-16 | In-Memory & Google Drive Cache | In-memory temp processing, direct Drive CDN caching (9drive pattern), storage approval gate, and /settings UI | `[Completed]` |
 | 2026-09-16 | Clustered Geo Map Explorer | Full-screen interactive Leaflet map, proximity clustering, squircle pins with photo counts, and slide-up drawer | `[Completed]` |
+| 2026-09-16 | Offline Vision Face Auto-Cluster | Clustered 86 faces into 9 distinct people, on-the-fly 180px WebP face crop avatars, Person Gallery Modal | `[Completed]` |
+| 2026-09-16 | Comprehensive Smart Triage | 6 dedicated trays (Screenshots, Bills, Duplicates, Blurry, Large Files, Junk) with 1-click batch resolvers | `[Completed]` |
+| 2026-09-16 | Travel Routes & Geo Heatmap | Chronological journey paths with total distance/duration, stop waypoints, and multi-tier density heatmap | `[Completed]` |
+| 2026-09-16 | Local Disk Storage Purge | Cleared 191MB of cached originals/thumbnails, enabled zero-disk in-memory fallback for avatars/streaming/ZIP | `[Completed]` |
