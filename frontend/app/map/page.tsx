@@ -21,7 +21,9 @@ import {
   Compass, 
   Image as ImageIcon,
   CheckCircle2,
-  Share2
+  Route,
+  Flame,
+  Milestone
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
@@ -46,6 +48,17 @@ interface GeoCluster {
   coverPhoto: GeoPhoto;
   earliestDate: string;
   latestDate: string;
+}
+
+interface TravelStop {
+  stopIndex: number;
+  latitude: number;
+  longitude: number;
+  locationName: string;
+  photoCount: number;
+  arrivalDate: string;
+  coverThumbnail: string;
+  cluster: GeoCluster | null;
 }
 
 type MapLayerType = 'streets' | 'satellite' | 'dark' | 'light';
@@ -85,6 +98,10 @@ export default function MapPage() {
   const [currentLayer, setCurrentLayer] = useState<MapLayerType>('satellite');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Travel Route & Heatmap toggles
+  const [showTravelRoutes, setShowTravelRoutes] = useState(false);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+
   // Cluster & Selection state
   const [selectedCluster, setSelectedCluster] = useState<GeoCluster | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -99,6 +116,8 @@ export default function MapPage() {
   const mapInstanceRef = useRef<any>(null);
   const tileLayerRef = useRef<any>(null);
   const markersLayerGroupRef = useRef<any>(null);
+  const routesLayerGroupRef = useRef<any>(null);
+  const heatmapLayerGroupRef = useRef<any>(null);
   const fullContainerRef = useRef<HTMLDivElement | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -151,7 +170,7 @@ export default function MapPage() {
     if (!geoPhotos.length) return [];
 
     const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-      const R = 6371; // Earth's radius in km
+      const R = 6371;
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
       const dLon = ((lon2 - lon1) * Math.PI) / 180;
       const a =
@@ -220,15 +239,87 @@ export default function MapPage() {
     return clusterList;
   }, [geoPhotos]);
 
-  // Distinct place breakdown for filtering
-  const placeCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const c of clusters) {
-      const name = c.location_name || 'Coordinates Only';
-      counts[name] = (counts[name] || 0) + c.count;
+  // Compute Chronological Travel Journey (Stops, Segments & Distance)
+  const travelJourney = useMemo(() => {
+    if (geoPhotos.length < 2) return null;
+
+    const sorted = [...geoPhotos].sort(
+      (a, b) => new Date(a.captured_at).getTime() - new Date(b.captured_at).getTime()
+    );
+
+    const getDistKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+      const R = 6371;
+      const dLat = ((lat2 - lat1) * Math.PI) / 180;
+      const dLon = ((lon2 - lon1) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) *
+          Math.cos((lat2 * Math.PI) / 180) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    const stops: TravelStop[] = [];
+
+    for (const p of sorted) {
+      if (stops.length === 0) {
+        const matchedCluster = clusters.find((c) =>
+          getDistKm(p.latitude, p.longitude, c.latitude, c.longitude) <= 12
+        ) || null;
+
+        stops.push({
+          stopIndex: 1,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          locationName: (p.location_name || 'Destination 1').split(',')[0],
+          photoCount: 1,
+          arrivalDate: p.captured_at,
+          coverThumbnail: p.thumbnail_url,
+          cluster: matchedCluster,
+        });
+      } else {
+        const last = stops[stops.length - 1];
+        const dist = getDistKm(p.latitude, p.longitude, last.latitude, last.longitude);
+        if (dist < 15) {
+          last.photoCount += 1;
+        } else {
+          const matchedCluster = clusters.find((c) =>
+            getDistKm(p.latitude, p.longitude, c.latitude, c.longitude) <= 12
+          ) || null;
+
+          stops.push({
+            stopIndex: stops.length + 1,
+            latitude: p.latitude,
+            longitude: p.longitude,
+            locationName: (p.location_name || `Destination ${stops.length + 1}`).split(',')[0],
+            photoCount: 1,
+            arrivalDate: p.captured_at,
+            coverThumbnail: p.thumbnail_url,
+            cluster: matchedCluster,
+          });
+        }
+      }
     }
-    return counts;
-  }, [clusters]);
+
+    let totalKm = 0;
+    for (let i = 0; i < stops.length - 1; i++) {
+      totalKm += getDistKm(
+        stops[i].latitude,
+        stops[i].longitude,
+        stops[i + 1].latitude,
+        stops[i + 1].longitude
+      );
+    }
+
+    return {
+      stops,
+      totalDistanceKm: Math.round(totalKm),
+      startDate: stops[0]?.arrivalDate,
+      endDate: stops[stops.length - 1]?.arrivalDate,
+    };
+  }, [geoPhotos, clusters]);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -252,9 +343,10 @@ export default function MapPage() {
 
     tileLayerRef.current = tileLayer;
 
-    // Feature group for photo pins
-    const markersGroup = L.featureGroup().addTo(map);
-    markersLayerGroupRef.current = markersGroup;
+    // Feature groups
+    heatmapLayerGroupRef.current = L.featureGroup().addTo(map);
+    routesLayerGroupRef.current = L.featureGroup().addTo(map);
+    markersLayerGroupRef.current = L.featureGroup().addTo(map);
 
     mapInstanceRef.current = map;
 
@@ -300,11 +392,9 @@ export default function MapPage() {
       const isSelected = selectedCluster?.id === cluster.id;
       const primaryPlaceName = cluster.location_name.split(',')[0] || 'Photos';
 
-      // Apple & Google Photos style squircle avatar with count badge & pointer
       const markerHtml = `
         <div class="photo-cluster-pin group" style="cursor: pointer; transform: translate(-50%, -100%);">
           <div style="position: relative; display: flex; align-items: center; justify-content: center;">
-            <!-- Outer Avatar Box -->
             <div style="
               width: ${cluster.count >= 10 ? '58px' : '48px'};
               height: ${cluster.count >= 10 ? '58px' : '48px'};
@@ -322,7 +412,6 @@ export default function MapPage() {
               />
             </div>
             
-            <!-- Pill Count Badge -->
             <div style="
               position: absolute;
               top: -6px;
@@ -339,12 +428,10 @@ export default function MapPage() {
               display: flex;
               align-items: center;
               justify-content: center;
-              letter-spacing: -0.02em;
             ">
               ${cluster.count}
             </div>
 
-            <!-- Downward Pointer Arrow Tip -->
             <div style="
               position: absolute;
               bottom: -7px;
@@ -370,7 +457,6 @@ export default function MapPage() {
 
       const marker = L.marker([cluster.latitude, cluster.longitude], { icon: customIcon });
 
-      // Click handler: fly to cluster and open drawer
       marker.on('click', () => {
         setSelectedCluster(cluster);
         setIsDrawerOpen(true);
@@ -382,7 +468,6 @@ export default function MapPage() {
         );
       });
 
-      // Hover tooltip
       marker.bindTooltip(
         `<div style="font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px;">
           <span>${primaryPlaceName}</span>
@@ -393,20 +478,132 @@ export default function MapPage() {
 
       markersGroup.addLayer(marker);
     }
-
-    // Auto-fit bounds if bounds are available and not already zoomed in
-    try {
-      const bounds = markersGroup.getBounds();
-      if (bounds.isValid()) {
-        mapInstanceRef.current.fitBounds(bounds, {
-          padding: [80, 80],
-          maxZoom: 14,
-        });
-      }
-    } catch (e) {
-      console.warn('Could not fit bounds:', e);
-    }
   }, [clusters, selectedCluster, selectedPlaceFilter, isLeafletReady, API_URL]);
+
+  // Render Travel Route Polylines & Waypoint Badges
+  useEffect(() => {
+    if (!mapInstanceRef.current || !routesLayerGroupRef.current || !isLeafletReady) return;
+    const L = (window as any).L;
+    if (!L) return;
+
+    const routesGroup = routesLayerGroupRef.current;
+    routesGroup.clearLayers();
+
+    if (!showTravelRoutes || !travelJourney || travelJourney.stops.length < 2) return;
+
+    const latLngs = travelJourney.stops.map((s) => [s.latitude, s.longitude]);
+
+    // Outer glow polyline
+    const outerGlow = L.polyline(latLngs, {
+      color: '#818cf8',
+      weight: 8,
+      opacity: 0.35,
+      lineCap: 'round',
+      lineJoin: 'round',
+    });
+    routesGroup.addLayer(outerGlow);
+
+    // Inner animated dashed polyline
+    const routeLine = L.polyline(latLngs, {
+      color: '#4f46e5',
+      weight: 4,
+      opacity: 0.95,
+      dashArray: '8, 12',
+      lineCap: 'round',
+      className: 'travel-route-animated-path',
+    });
+    routesGroup.addLayer(routeLine);
+
+    // Waypoint Badges
+    for (const stop of travelJourney.stops) {
+      const waypointHtml = `
+        <div style="cursor: pointer; transform: translate(-50%, -50%);">
+          <div style="
+            background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%);
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 2px 7px;
+            border-radius: 9999px;
+            border: 2px solid #ffffff;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+          ">
+            <span>#${stop.stopIndex}</span>
+            <span>${stop.locationName}</span>
+          </div>
+        </div>
+      `;
+
+      const waypointIcon = L.divIcon({
+        className: 'custom-map-waypoint',
+        html: waypointHtml,
+        iconSize: [80, 24],
+        iconAnchor: [40, 12],
+      });
+
+      const waypointMarker = L.marker([stop.latitude, stop.longitude], {
+        icon: waypointIcon,
+        zIndexOffset: 1000,
+      });
+
+      waypointMarker.on('click', () => {
+        if (stop.cluster) {
+          setSelectedCluster(stop.cluster);
+          setIsDrawerOpen(true);
+        }
+        mapInstanceRef.current.flyTo([stop.latitude, stop.longitude], 14, { duration: 0.8 });
+      });
+
+      routesGroup.addLayer(waypointMarker);
+    }
+  }, [showTravelRoutes, travelJourney, isLeafletReady]);
+
+  // Render Geographic Density Heatmap Layer
+  useEffect(() => {
+    if (!mapInstanceRef.current || !heatmapLayerGroupRef.current || !isLeafletReady) return;
+    const L = (window as any).L;
+    if (!L) return;
+
+    const heatGroup = heatmapLayerGroupRef.current;
+    heatGroup.clearLayers();
+
+    if (!showHeatmap || clusters.length === 0) return;
+
+    for (const cluster of clusters) {
+      const intensity = Math.min(cluster.count / 30, 1.0);
+
+      // Outer Translucent Halo
+      const outerCircle = L.circle([cluster.latitude, cluster.longitude], {
+        radius: 25000 + intensity * 15000,
+        color: 'transparent',
+        fillColor: '#6366f1',
+        fillOpacity: 0.25,
+      });
+      heatGroup.addLayer(outerCircle);
+
+      // Mid Glowing Halo
+      const midCircle = L.circle([cluster.latitude, cluster.longitude], {
+        radius: 12000 + intensity * 8000,
+        color: 'transparent',
+        fillColor: '#ec4899',
+        fillOpacity: 0.45,
+      });
+      heatGroup.addLayer(midCircle);
+
+      // Core Hotspot
+      const coreCircle = L.circle([cluster.latitude, cluster.longitude], {
+        radius: 4000 + intensity * 4000,
+        color: 'transparent',
+        fillColor: '#f43f5e',
+        fillOpacity: 0.75,
+      });
+      heatGroup.addLayer(coreCircle);
+    }
+  }, [showHeatmap, clusters, isLeafletReady]);
 
   // Outing Propagation Handler
   const handlePropagate = async () => {
@@ -437,9 +634,7 @@ export default function MapPage() {
     try {
       setIsRescanning(true);
       setStatusMessage('Deep scanning EXIF GPS & multi-frame coordinates...');
-      const res = await fetch(`${API_URL}/api/v1/media/rescan-geotags`, {
-        method: 'POST',
-      });
+      const res = await fetch(`${API_URL}/api/v1/media/rescan-geotags`, { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         setStatusMessage(`GPS deep scan complete! Found ${data.total_geotagged || 0} geotags.`);
@@ -454,7 +649,6 @@ export default function MapPage() {
     }
   };
 
-  // Fly to specific cluster
   const handleSelectCluster = (cluster: GeoCluster) => {
     setSelectedCluster(cluster);
     setIsDrawerOpen(true);
@@ -468,7 +662,6 @@ export default function MapPage() {
     }
   };
 
-  // Fit all markers in view
   const handleFitAll = () => {
     if (mapInstanceRef.current && markersLayerGroupRef.current) {
       const bounds = markersLayerGroupRef.current.getBounds();
@@ -478,7 +671,6 @@ export default function MapPage() {
     }
   };
 
-  // Fullscreen toggle
   const toggleFullscreen = () => {
     if (!fullContainerRef.current) return;
     if (!document.fullscreenElement) {
@@ -493,7 +685,6 @@ export default function MapPage() {
   useEffect(() => {
     const onFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
-      // Invalidate map size to prevent tile clipping
       setTimeout(() => {
         if (mapInstanceRef.current) {
           mapInstanceRef.current.invalidateSize();
@@ -504,7 +695,6 @@ export default function MapPage() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
-  // MediaItem representation for Lightbox
   const activeMediaItem: MediaItem | null = useMemo(() => {
     if (!selectedCluster || selectedPhotoIndex === null) return null;
     const p = selectedCluster.photos[selectedPhotoIndex];
@@ -540,9 +730,16 @@ export default function MapPage() {
           background: #090d16;
           font-family: inherit;
         }
-        .custom-map-cluster-marker {
+        .custom-map-cluster-marker, .custom-map-waypoint {
           background: transparent !important;
           border: none !important;
+        }
+        @keyframes travelDash {
+          from { stroke-dashoffset: 40; }
+          to { stroke-dashoffset: 0; }
+        }
+        .travel-route-animated-path {
+          animation: travelDash 1.8s linear infinite;
         }
         .leaflet-tooltip {
           background: rgba(15, 23, 42, 0.9) !important;
@@ -574,7 +771,7 @@ export default function MapPage() {
                   World Places Explorer
                 </h1>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
-                  {loading ? 'Locating memories...' : `${geoPhotos.length} photos across ${clusters.length} clusters`}
+                  {loading ? 'Locating memories...' : `${geoPhotos.length} photos across ${clusters.length} hubs`}
                 </p>
               </div>
             </div>
@@ -588,8 +785,36 @@ export default function MapPage() {
             )}
           </div>
 
-          {/* Right Island Controls: Layer Switcher, Outings, Rescan & Fullscreen */}
+          {/* Right Island Controls: Routes, Heatmap, Styles & Fullscreen */}
           <div className="pointer-events-auto flex items-center gap-2">
+            {/* Travel Routes Toggle */}
+            <button
+              onClick={() => setShowTravelRoutes(!showTravelRoutes)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold backdrop-blur-md shadow-xl border transition-all ${
+                showTravelRoutes
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-500/30'
+                  : 'bg-white/90 dark:bg-slate-900/90 hover:bg-white text-slate-700 dark:text-slate-200 border-slate-200/60 dark:border-slate-800/80'
+              }`}
+              title="Toggle Chronological Travel Journey Paths"
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Travel Routes</span>
+            </button>
+
+            {/* Heatmap Toggle */}
+            <button
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold backdrop-blur-md shadow-xl border transition-all ${
+                showHeatmap
+                  ? 'bg-pink-600 text-white border-pink-500 shadow-pink-500/30'
+                  : 'bg-white/90 dark:bg-slate-900/90 hover:bg-white text-slate-700 dark:text-slate-200 border-slate-200/60 dark:border-slate-800/80'
+              }`}
+              title="Toggle Density Heatmap"
+            >
+              <Flame className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Heatmap</span>
+            </button>
+
             {/* Map Style Selector */}
             <div className="flex items-center p-1 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-800/80">
               {(['streets', 'satellite', 'dark', 'light'] as MapLayerType[]).map((layer) => (
@@ -607,7 +832,7 @@ export default function MapPage() {
               ))}
             </div>
 
-            {/* Fit All Clusters */}
+            {/* Fit All */}
             <button
               onClick={handleFitAll}
               className="p-2 bg-white/90 dark:bg-slate-900/90 hover:bg-white dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-800/80 transition"
@@ -637,7 +862,7 @@ export default function MapPage() {
               <RefreshCw className={`w-4 h-4 ${isRescanning ? 'animate-spin text-indigo-500' : ''}`} />
             </button>
 
-            {/* Fullscreen Toggle */}
+            {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
               className="p-2 bg-white/90 dark:bg-slate-900/90 hover:bg-white dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-800/80 transition"
@@ -648,8 +873,53 @@ export default function MapPage() {
           </div>
         </div>
 
-        {/* Quick Cluster Filter Pills */}
-        {clusters.length > 0 && (
+        {/* Travel Journey Timeline Floating HUD */}
+        {showTravelRoutes && travelJourney && (
+          <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-xl text-white rounded-2xl p-3 border border-indigo-500/30 shadow-2xl flex items-center justify-between gap-4 animate-fadeIn">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white">
+                <Route className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-2">
+                  <span>Chronological Journey Path</span>
+                  <span className="bg-indigo-500/40 text-indigo-200 text-[10px] px-2 py-0.2 rounded-full border border-indigo-400/30">
+                    {travelJourney.totalDistanceKm} km total
+                  </span>
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  {travelJourney.stops.length} stops recorded between {new Date(travelJourney.startDate).toLocaleDateString()} and {new Date(travelJourney.endDate).toLocaleDateString()}
+                </p>
+              </div>
+            </div>
+
+            {/* Stops Chips */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 max-w-lg">
+              {travelJourney.stops.map((stop) => (
+                <button
+                  key={stop.stopIndex}
+                  onClick={() => {
+                    if (stop.cluster) {
+                      setSelectedCluster(stop.cluster);
+                      setIsDrawerOpen(true);
+                    }
+                    if (mapInstanceRef.current) {
+                      mapInstanceRef.current.flyTo([stop.latitude, stop.longitude], 14, { duration: 0.8 });
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-xl text-[11px] font-semibold whitespace-nowrap transition flex items-center gap-1.5 border border-white/10"
+                >
+                  <span className="text-indigo-400 font-mono">#{stop.stopIndex}</span>
+                  <span>{stop.locationName}</span>
+                  <span className="text-slate-400 text-[10px]">({stop.photoCount})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Quick Location Chips */}
+        {clusters.length > 0 && !showTravelRoutes && (
           <div className="pointer-events-auto flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
             <button
               onClick={() => {
@@ -701,7 +971,7 @@ export default function MapPage() {
         )}
       </div>
 
-      {/* Floating Bottom Quick Hint (when drawer is closed) */}
+      {/* Floating Bottom Quick Hint */}
       {!isDrawerOpen && clusters.length > 0 && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
           <button
@@ -739,14 +1009,12 @@ export default function MapPage() {
           <>
             {/* Drawer Drag Bar & Header */}
             <div className="flex-shrink-0 px-6 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800/80 flex flex-col gap-2">
-              {/* Center Handle */}
               <div 
                 className="w-12 h-1 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto cursor-pointer hover:bg-slate-400 transition"
                 onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
               />
 
               <div className="flex items-center justify-between gap-4">
-                {/* Left Cluster Info */}
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 flex-shrink-0 shadow-sm">
                     <MapPin className="w-5 h-5" />
@@ -779,9 +1047,7 @@ export default function MapPage() {
                   </div>
                 </div>
 
-                {/* Right Drawer Action Buttons */}
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* Zoom In to Cluster */}
                   <button
                     onClick={() => {
                       if (mapInstanceRef.current) {
@@ -799,7 +1065,6 @@ export default function MapPage() {
                     <span className="hidden sm:inline">Zoom In</span>
                   </button>
 
-                  {/* External Google Maps link */}
                   <a
                     href={`https://www.google.com/maps?q=${selectedCluster.latitude},${selectedCluster.longitude}`}
                     target="_blank"
@@ -811,7 +1076,6 @@ export default function MapPage() {
                     <span className="hidden sm:inline">Google Maps</span>
                   </a>
 
-                  {/* Expand / Collapse Height */}
                   <button
                     onClick={() => setIsDrawerExpanded(!isDrawerExpanded)}
                     className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition"
@@ -820,7 +1084,6 @@ export default function MapPage() {
                     {isDrawerExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
                   </button>
 
-                  {/* Close Drawer */}
                   <button
                     onClick={() => setIsDrawerOpen(false)}
                     className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl transition"
@@ -849,7 +1112,6 @@ export default function MapPage() {
                         loading="lazy"
                       />
 
-                      {/* Gradient Vignette on Hover */}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
                         <p className="text-white text-[11px] font-semibold truncate leading-tight">
                           {photo.filename}
@@ -862,7 +1124,6 @@ export default function MapPage() {
                         </p>
                       </div>
 
-                      {/* Top Action Badge */}
                       <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity">
                         <ImageIcon className="w-3 h-3" />
                       </div>
