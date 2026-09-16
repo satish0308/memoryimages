@@ -1049,6 +1049,20 @@ export default function MapPage() {
 
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (selectedCluster && selectedCluster.photos.length > 0) {
+                        setSelectedPhotoIndex(0);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-[1.02]"
+                    title="View photos in full-screen lightbox"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>View Fullscreen</span>
+                  </button>
+
+                  <button
                     onClick={() => {
                       if (mapInstanceRef.current) {
                         mapInstanceRef.current.flyTo(
@@ -1102,7 +1116,10 @@ export default function MapPage() {
                   return (
                     <div
                       key={photo.id}
-                      onClick={() => setSelectedPhotoIndex(index)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedPhotoIndex(index);
+                      }}
                       className="group relative aspect-square rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 cursor-pointer shadow-sm hover:shadow-xl transition-all duration-300 hover:scale-[1.03] border border-slate-200/60 dark:border-slate-700/60"
                     >
                       <img

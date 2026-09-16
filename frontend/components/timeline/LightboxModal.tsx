@@ -62,6 +62,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
   const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
   const [showFaceBoxes, setShowFaceBoxes] = useState(true);
   const [faces, setFaces] = useState<FaceData[]>([]);
@@ -348,19 +349,33 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center p-3 md:p-6 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-[99999] bg-black/95 flex items-center justify-center p-2 md:p-6 backdrop-blur-md animate-fadeIn"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       onMouseUp={handleMouseUp}
     >
-      <div className="relative max-w-7xl max-h-[95vh] w-full h-full flex flex-col md:flex-row bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
+      <div className={`relative max-h-[95vh] w-full h-full flex flex-col md:flex-row bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 transition-all duration-300 ${
+        showSidebar ? 'max-w-7xl' : 'max-w-[98vw]'
+      }`}>
         
-        {/* Top Controls: Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 z-40 p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
-          title="Close (Esc)"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        {/* Top Controls: Toggle Sidebar & Close */}
+        <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
+            title={showSidebar ? "Expand to Fullscreen (Hide Sidebar)" : "Show Info Sidebar"}
+          >
+            <Maximize2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
+            title="Close (Esc)"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         {/* Photo Interactive Viewport with Pan, Zoom & Face Tag Overlay */}
         <div 
@@ -535,10 +550,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         </div>
 
         {/* Multi-Tab Sidebar: Info & EXIF / Faces & People */}
-        <div className="w-full md:w-88 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between flex-shrink-0 z-20">
-          
-          {/* Sidebar Tabs Header */}
-          <div className="flex border-b border-slate-800 px-4 pt-3">
+        {showSidebar && (
+          <div className="w-full md:w-88 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between flex-shrink-0 z-20 animate-fadeIn">
+            
+            {/* Sidebar Tabs Header */}
+            <div className="flex border-b border-slate-800 px-4 pt-3">
             <button
               onClick={() => setActiveTab('info')}
               className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition ${
@@ -995,6 +1011,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

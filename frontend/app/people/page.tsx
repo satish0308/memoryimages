@@ -18,7 +18,8 @@ import {
   Calendar,
   MapPin,
   ExternalLink,
-  Search
+  Search,
+  Maximize2
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
@@ -84,6 +85,7 @@ export default function PeoplePage() {
 
   // Lightbox
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
+  const [unnamedPhotoMedia, setUnnamedPhotoMedia] = useState<MediaItem | null>(null);
 
   // Merge modal
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -260,8 +262,44 @@ export default function PeoplePage() {
     }
   };
 
+  const openFaceInLightbox = (face: UnnamedFaceItem) => {
+    setUnnamedPhotoMedia({
+      id: face.media_id,
+      filename: face.filename,
+      category: 'memory',
+      width: 1920,
+      height: 1080,
+      captured_at: face.captured_at || new Date().toISOString(),
+      is_favorite: false,
+      is_blurry: false,
+      thumbnail_url: `/api/v1/media/${face.media_id}/thumbnail?size=256`
+    });
+  };
+
+  const openPersonFullscreen = async (person: PersonItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedPerson(person);
+    setLoadingPhotos(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`);
+      if (res.ok) {
+        const photos = await res.json();
+        setPersonPhotos(photos);
+        if (photos.length > 0) {
+          setSelectedPhotoIndex(0);
+        }
+      }
+    } catch (e) {
+      console.error('Error loading person photos for fullscreen:', e);
+    } finally {
+      setLoadingPhotos(false);
+    }
+  };
+
   // Active Lightbox Photo
-  const activeMediaItem: MediaItem | null = selectedPhotoIndex !== null && personPhotos[selectedPhotoIndex]
+  const activeMediaItem: MediaItem | null = unnamedPhotoMedia
+    ? unnamedPhotoMedia
+    : selectedPhotoIndex !== null && personPhotos[selectedPhotoIndex]
     ? {
         id: personPhotos[selectedPhotoIndex].id,
         filename: personPhotos[selectedPhotoIndex].filename,
@@ -435,9 +473,15 @@ export default function PeoplePage() {
                       </div>
                     )}
 
-                    {/* Hover Inspect Indicator */}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                      <ImageIcon className="w-5 h-5" />
+                    {/* Hover Inspect & Fullscreen Indicator */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2">
+                      <button
+                        onClick={(e) => openPersonFullscreen(person, e)}
+                        className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg transition hover:scale-110"
+                        title="View Fullscreen Lightbox"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
 
@@ -477,13 +521,23 @@ export default function PeoplePage() {
                       </div>
                     )}
 
-                    {/* Photo Count Badge */}
-                    <button
-                      onClick={() => openPersonGallery(person)}
-                      className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium hover:underline mt-1 block mx-auto"
-                    >
-                      {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
-                    </button>
+                    {/* Photo Count & Fullscreen Actions */}
+                    <div className="flex items-center justify-center gap-2 mt-1">
+                      <button
+                        onClick={() => openPersonGallery(person)}
+                        className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
+                        title="Browse all photos in gallery"
+                      >
+                        {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
+                      </button>
+                      <button
+                        onClick={(e) => openPersonFullscreen(person, e)}
+                        className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-md transition hover:bg-slate-100 dark:hover:bg-slate-800"
+                        title="Open in full screen"
+                      >
+                        <Maximize2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -524,13 +578,20 @@ export default function PeoplePage() {
                   key={face.id}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 text-center space-y-2 shadow-sm hover:shadow-md transition"
                 >
-                  <div className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-slate-900 border-2 border-slate-100 dark:border-slate-800 shadow-sm">
+                  <div 
+                    onClick={() => openFaceInLightbox(face)}
+                    className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-slate-900 border-2 border-slate-100 dark:border-slate-800 shadow-sm cursor-pointer hover:border-indigo-500 transition hover:scale-105 group/crop relative"
+                    title="Click to view full photo in full screen"
+                  >
                     <img
                       src={`${API_URL}${face.crop_url}`}
                       alt={face.filename}
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/crop:opacity-100 transition-opacity flex items-center justify-center text-white">
+                      <Maximize2 className="w-4 h-4" />
+                    </div>
                   </div>
 
                   {namingFaceId === face.id ? (
@@ -618,6 +679,20 @@ export default function PeoplePage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
+                    if (personPhotos.length > 0) {
+                      setSelectedPhotoIndex(0);
+                    }
+                  }}
+                  disabled={personPhotos.length === 0}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 hover:scale-[1.02]"
+                  title="View this person's photos in full-screen lightbox"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                  <span>View Fullscreen</span>
+                </button>
+
+                <button
+                  onClick={() => {
                     setMergeSourceId(selectedPerson.id);
                     setShowMergeModal(true);
                   }}
@@ -653,7 +728,10 @@ export default function PeoplePage() {
                   {personPhotos.map((photo, index) => (
                     <div
                       key={photo.id}
-                      onClick={() => setSelectedPhotoIndex(index)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedPhotoIndex(index);
+                      }}
                       className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200/60 dark:border-slate-800 hover:shadow-xl hover:scale-[1.03] transition-all duration-300"
                     >
                       <img
@@ -763,7 +841,10 @@ export default function PeoplePage() {
       <LightboxModal
         photo={activeMediaItem}
         apiUrl={API_URL}
-        onClose={() => setSelectedPhotoIndex(null)}
+        onClose={() => {
+          setSelectedPhotoIndex(null);
+          setUnnamedPhotoMedia(null);
+        }}
         onToggleFavorite={() => {}}
         onDelete={() => {}}
         hasPrev={selectedPhotoIndex !== null && selectedPhotoIndex > 0}
