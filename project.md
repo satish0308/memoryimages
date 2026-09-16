@@ -230,4 +230,6 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | Automated WAL Backups & Disaster Recovery | Native sqlite3.backup online zero-downtime backups, gzip compression, point-in-time restore, safety rollback, and UI dashboard in /settings | `[Completed]` |
 | 2026-09-16 | S3 / MinIO Object Storage Engine | 100% self-hosted MinIO S3 integration, boto3 streaming engine, zero-disk photo ingestion/thumbnails, WAL backup exports, presigned URLs, and Settings/Sync UI dashboards | `[Completed]` |
 | 2026-09-16 | PostgreSQL + pgvector Dual-DB Engine | Dynamic SQLite/PostgreSQL toggle, native pgvector HNSW 512-dim index, reflection migration engine, and /settings control panel | `[Completed]` |
+| 2026-09-16 | Google CDN Proxy & Memory Cache | Server-side proxying & in-memory caching to resolve Google Drive 429 referer block | `[Completed]` |
+| 2026-09-16 | Fullscreen Lightbox & Event Stop | Elevated z-index to z-[99999], edge-to-edge toggle, and event stop across Map & People galleries | `[Completed]` |
 
