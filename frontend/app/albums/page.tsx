@@ -1,7 +1,31 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { FolderPlus, BookOpen, Trash2, ArrowLeft, Image as ImageIcon, Plus, Play } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { 
+  FolderPlus, 
+  BookOpen, 
+  Trash2, 
+  ArrowLeft, 
+  Image as ImageIcon, 
+  Plus, 
+  Play, 
+  Sparkles, 
+  MapPin, 
+  Compass, 
+  Users, 
+  Heart, 
+  Download, 
+  Search, 
+  Check, 
+  X, 
+  Edit3, 
+  Layers, 
+  Calendar, 
+  CheckSquare, 
+  Square,
+  ChevronRight,
+  Filter
+} from 'lucide-react';
 import { PhotoCard, MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
@@ -15,43 +39,258 @@ interface AlbumItem {
   created_at: string;
 }
 
-interface AlbumDetail extends AlbumItem {
+interface SmartPlace {
+  location_name: string;
+  city: string;
+  photo_count: number;
+  cover_id: number | null;
+  cover_thumbnail_url: string | null;
+}
+
+interface SmartTrip {
+  title: string;
+  date: string;
+  photo_count: number;
+  cover_id: number | null;
+  cover_thumbnail_url: string | null;
+  media_ids: number[];
+}
+
+interface SmartPerson {
+  id: number;
+  name: string;
+  photo_count: number;
+  faces_count: number;
+  avatar_url: string | null;
+  cover_thumbnail_url: string | null;
+}
+
+interface SmartCollectionsData {
+  places: SmartPlace[];
+  trips: SmartTrip[];
+  people: SmartPerson[];
+  favorites: {
+    count: number;
+    cover_id: number | null;
+    cover_thumbnail_url: string | null;
+  };
+  categories: {
+    screenshots: number;
+    receipts_bills: number;
+    blurry: number;
+  };
+}
+
+interface SelectedCollectionState {
+  type: 'album' | 'place' | 'trip' | 'people' | 'favorites';
+  id?: number | string;
+  name: string;
+  description?: string | null;
+  photo_count: number;
   photos: MediaItem[];
 }
 
+interface AvailablePhotoItem {
+  id: number;
+  filename: string;
+  captured_at: string | null;
+  location_name: string | null;
+  thumbnail_url: string;
+  in_album: boolean;
+}
+
 export default function AlbumsPage() {
+  const [activeTab, setActiveTab] = useState<'all' | 'albums' | 'places' | 'trips' | 'people'>('all');
   const [albums, setAlbums] = useState<AlbumItem[]>([]);
-  const [selectedAlbum, setSelectedAlbum] = useState<AlbumDetail | null>(null);
+  const [smartCollections, setSmartCollections] = useState<SmartCollectionsData | null>(null);
+  const [selectedCollection, setSelectedCollection] = useState<SelectedCollectionState | null>(null);
+  
+  // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [newAlbumDesc, setNewAlbumDesc] = useState('');
+  const [isCurating, setIsCurating] = useState(false);
+  
+  // Photo Picker Modal state
+  const [showPickerModal, setShowPickerModal] = useState(false);
+  const [availablePhotos, setAvailablePhotos] = useState<AvailablePhotoItem[]>([]);
+  const [pickerSelectedIds, setPickerSelectedIds] = useState<number[]>([]);
+  const [pickerSearch, setPickerSearch] = useState('');
+  const [isAddingPhotos, setIsAddingPhotos] = useState(false);
+
+  // Lightbox & Slideshow state
   const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
-  const [loading, setLoading] = useState(true);
   const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Inline edit album
+  const [isEditingAlbum, setIsEditingAlbum] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-  const fetchAlbums = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/albums`);
-      if (res.ok) setAlbums(await res.json());
+      const [albumsRes, smartRes] = await Promise.all([
+        fetch(`${API_URL}/api/v1/albums`),
+        fetch(`${API_URL}/api/v1/albums/collections/smart`)
+      ]);
+
+      if (albumsRes.ok) {
+        const albumsData = await albumsRes.json();
+        setAlbums(albumsData);
+      }
+      if (smartRes.ok) {
+        const smartData = await smartRes.json();
+        setSmartCollections(smartData);
+      }
     } catch (e) {
-      console.error('Error fetching albums:', e);
+      console.error('Error loading albums and collections:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [API_URL]);
 
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Open custom album
   const openAlbum = async (id: number) => {
     try {
       const res = await fetch(`${API_URL}/api/v1/albums/${id}`);
-      if (res.ok) setSelectedAlbum(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedCollection({
+          type: 'album',
+          id: data.id,
+          name: data.name,
+          description: data.description,
+          photo_count: data.photo_count,
+          photos: data.photos
+        });
+        setEditName(data.name);
+        setEditDesc(data.description || '');
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to open album:', e);
     }
   };
 
+  // Open Place collection
+  const openPlace = async (place: SmartPlace) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(place.city)}&limit=200`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedCollection({
+          type: 'place',
+          name: `${place.city} Collection`,
+          description: place.location_name,
+          photo_count: data.results?.length || place.photo_count,
+          photos: (data.results || []).map((m: any) => ({
+            ...m,
+            width: m.width || 1280,
+            height: m.height || 720,
+            captured_at: m.captured_at || new Date().toISOString(),
+            is_favorite: !!m.is_favorite,
+            is_blurry: !!m.is_blurry,
+            thumbnail_url: m.thumbnail_url || `/api/v1/media/${m.id}/thumbnail?size=256`
+          }))
+        });
+      }
+    } catch (e) {
+      console.error('Failed to open place:', e);
+    }
+  };
+
+  // Open Trip / Outing story
+  const openTrip = async (trip: SmartTrip) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/search/events`);
+      if (res.ok) {
+        const events = await res.json();
+        const found = events.find((e: any) => e.title === trip.title);
+        const photos = found?.items || [];
+        setSelectedCollection({
+          type: 'trip',
+          name: trip.title,
+          description: `Spatiotemporal outing on ${trip.date}`,
+          photo_count: photos.length || trip.photo_count,
+          photos: photos
+        });
+      }
+    } catch (e) {
+      console.error('Failed to open trip:', e);
+    }
+  };
+
+  // Open Person collection
+  const openPerson = async (person: SmartPerson) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`);
+      if (res.ok) {
+        const photos = await res.json();
+        setSelectedCollection({
+          type: 'people',
+          id: person.id,
+          name: person.name,
+          description: `Identified across ${photos.length} photos`,
+          photo_count: photos.length,
+          photos: photos.map((m: any) => ({
+            ...m,
+            width: m.width || 1280,
+            height: m.height || 720,
+            thumbnail_url: m.thumbnail_url || `/api/v1/media/${m.id}/thumbnail?size=256`
+          }))
+        });
+      }
+    } catch (e) {
+      console.error('Failed to open person photos:', e);
+    }
+  };
+
+  // Open Favorites
+  const openFavorites = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/media?is_favorite=true&limit=200`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedCollection({
+          type: 'favorites',
+          name: 'Favorite Memories',
+          description: 'Your starred and most cherished moments',
+          photo_count: data.total || data.items?.length || 0,
+          photos: (data.items || []).map((m: any) => ({
+            ...m,
+            thumbnail_url: `/api/v1/media/${m.id}/thumbnail?size=256`
+          }))
+        });
+      }
+    } catch (e) {
+      console.error('Failed to open favorites:', e);
+    }
+  };
+
+  // Auto-curate smart albums
+  const handleAutoCurate = async () => {
+    try {
+      setIsCurating(true);
+      const res = await fetch(`${API_URL}/api/v1/albums/auto-curate`, { method: 'POST' });
+      if (res.ok) {
+        await loadData();
+      }
+    } catch (e) {
+      console.error('Error auto-curating:', e);
+    } finally {
+      setIsCurating(false);
+    }
+  };
+
+  // Create custom album
   const handleCreateAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlbumName.trim()) return;
@@ -63,162 +302,622 @@ export default function AlbumsPage() {
         body: JSON.stringify({ name: newAlbumName.trim(), description: newAlbumDesc.trim() || null })
       });
       if (res.ok) {
+        const created = await res.json();
         setNewAlbumName('');
         setNewAlbumDesc('');
         setShowCreateModal(false);
-        fetchAlbums();
+        await loadData();
+        openAlbum(created.id);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to create album:', e);
     }
   };
 
-  const handleDeleteAlbum = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('Delete this album? (Photos will remain safely in your library)')) return;
+  // Update album metadata (rename / description)
+  const handleSaveAlbumEdit = async () => {
+    if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName.trim(), description: editDesc.trim() || null })
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setSelectedCollection(prev => prev ? { ...prev, name: updated.name, description: updated.description } : null);
+        setIsEditingAlbum(false);
+        loadData();
+      }
+    } catch (e) {
+      console.error('Failed to update album:', e);
+    }
+  };
+
+  // Delete album
+  const handleDeleteAlbum = async (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this album container? (Your photos remain safely in your library)')) return;
 
     try {
       const res = await fetch(`${API_URL}/api/v1/albums/${id}`, { method: 'DELETE' });
       if (res.ok) {
-        if (selectedAlbum && selectedAlbum.id === id) setSelectedAlbum(null);
-        fetchAlbums();
+        if (selectedCollection && selectedCollection.id === id) {
+          setSelectedCollection(null);
+        }
+        loadData();
       }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to delete album:', e);
     }
   };
 
-  useEffect(() => {
-    fetchAlbums();
-  }, []);
+  // Remove single photo from album
+  const handleRemovePhotoFromAlbum = async (mediaId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos/${mediaId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setSelectedCollection(prev => {
+          if (!prev) return null;
+          const updated = prev.photos.filter(p => p.id !== mediaId);
+          return { ...prev, photo_count: updated.length, photos: updated };
+        });
+        loadData();
+      }
+    } catch (e) {
+      console.error('Failed to remove photo:', e);
+    }
+  };
+
+  // Open photo picker
+  const handleOpenPhotoPicker = async () => {
+    if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/albums/available-photos?album_id=${selectedCollection.id}&limit=300`);
+      if (res.ok) {
+        const photos: AvailablePhotoItem[] = await res.json();
+        setAvailablePhotos(photos);
+        setPickerSelectedIds([]);
+        setPickerSearch('');
+        setShowPickerModal(true);
+      }
+    } catch (e) {
+      console.error('Failed to load available photos:', e);
+    }
+  };
+
+  // Add selected photos to album
+  const handleAddSelectedPhotos = async () => {
+    if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id || pickerSelectedIds.length === 0) return;
+    try {
+      setIsAddingPhotos(true);
+      const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media_ids: pickerSelectedIds })
+      });
+      if (res.ok) {
+        setShowPickerModal(false);
+        openAlbum(Number(selectedCollection.id));
+        loadData();
+      }
+    } catch (e) {
+      console.error('Failed to add photos to album:', e);
+    } finally {
+      setIsAddingPhotos(false);
+    }
+  };
+
+  // Download entire album as ZIP
+  const handleExportAlbumZip = async () => {
+    if (!selectedCollection || selectedCollection.photos.length === 0) return;
+    try {
+      setIsExportingZip(true);
+      const mediaIds = selectedCollection.photos.map(p => p.id);
+      const res = await fetch(`${API_URL}/api/v1/media/bulk-download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media_ids: mediaIds })
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${selectedCollection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_collection.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error('Failed to download ZIP:', e);
+    } finally {
+      setIsExportingZip(false);
+    }
+  };
+
+  const filteredPickerPhotos = availablePhotos.filter(p => {
+    if (!pickerSearch.trim()) return true;
+    const q = pickerSearch.toLowerCase();
+    return p.filename.toLowerCase().includes(q) || (p.location_name && p.location_name.toLowerCase().includes(q));
+  });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="max-w-7xl mx-auto space-y-6 pb-16">
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div className="flex items-center gap-3">
-          {selectedAlbum && (
+          {selectedCollection && (
             <button
-              onClick={() => setSelectedAlbum(null)}
-              className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition"
-              title="Back to Albums"
+              onClick={() => {
+                setSelectedCollection(null);
+                setIsEditingAlbum(false);
+              }}
+              className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition shadow-sm"
+              title="Back to Albums & Collections"
             >
               <ArrowLeft className="w-4 h-4 text-slate-700" />
             </button>
           )}
           <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-indigo-600" />
-              {selectedAlbum ? selectedAlbum.name : 'Albums & Collections'}
+              {selectedCollection ? selectedCollection.name : 'Albums & Collections'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {selectedAlbum
-                ? `${selectedAlbum.photo_count} photos in this album`
-                : 'Create smart custom sets for vacations, family events, and projects'}
+              {selectedCollection ? (
+                <span>
+                  {selectedCollection.photo_count} photo{selectedCollection.photo_count !== 1 ? 's' : ''} •{' '}
+                  {selectedCollection.description || 'Collection Gallery'}
+                </span>
+              ) : (
+                <span>
+                  {albums.length} Custom Albums • {smartCollections?.places.length || 0} Places •{' '}
+                  {smartCollections?.trips.length || 0} Trips • {smartCollections?.people.length || 0} People
+                </span>
+              )}
             </p>
           </div>
         </div>
 
-        {selectedAlbum ? (
-          selectedAlbum.photos.length > 0 && (
-            <button
-              onClick={() => setIsSlideshowOpen(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
-            >
-              <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Play Slideshow</span>
-            </button>
-          )
-        ) : (
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
-          >
-            <Plus className="w-4 h-4" />
-            Create Album
-          </button>
-        )}
+        {/* Header Action Buttons */}
+        <div className="flex items-center gap-2">
+          {selectedCollection ? (
+            <>
+              {selectedCollection.type === 'album' && (
+                <>
+                  <button
+                    onClick={() => setIsEditingAlbum(!isEditingAlbum)}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold shadow-sm transition"
+                    title="Rename or edit description"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    onClick={handleOpenPhotoPicker}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold shadow-sm transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Photos</span>
+                  </button>
+                </>
+              )}
+
+              {selectedCollection.photos.length > 0 && (
+                <>
+                  <button
+                    onClick={handleExportAlbumZip}
+                    disabled={isExportingZip}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                    title="Export collection as ZIP"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-600" />
+                    <span>{isExportingZip ? 'Exporting...' : 'Export ZIP'}</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIsSlideshowOpen(true)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <span>Play Slideshow</span>
+                  </button>
+                </>
+              )}
+
+              {selectedCollection.type === 'album' && (
+                <button
+                  onClick={() => handleDeleteAlbum(Number(selectedCollection.id))}
+                  className="p-2 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-xl text-xs transition"
+                  title="Delete Album"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleAutoCurate}
+                disabled={isCurating}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                title="Automatically organize your photos into trips and place collections"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isCurating ? 'Curating...' : 'Auto-Curate Albums'}</span>
+              </button>
+
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Create Album</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Albums Grid */}
-      {!selectedAlbum && (
-        <>
-          {albums.length === 0 && !loading && (
-            <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center max-w-md mx-auto space-y-3">
-              <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
-                <FolderPlus className="w-6 h-6" />
+      {/* Inline Album Edit Header */}
+      {selectedCollection && selectedCollection.type === 'album' && isEditingAlbum && (
+        <div className="bg-white border border-indigo-200 rounded-2xl p-4 shadow-sm space-y-3 animate-fadeIn">
+          <h4 className="text-xs font-bold text-slate-800">Edit Album Details</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="Album Name"
+              className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <input
+              type="text"
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
+              placeholder="Album Description"
+              className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setIsEditingAlbum(false)}
+              className="px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 rounded-xl"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveAlbumEdit}
+              className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl shadow-sm"
+            >
+              Save Changes
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main View: Overview / Tabs */}
+      {!selectedCollection && (
+        <div className="space-y-8">
+          {/* Navigation Filter Tabs */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            {[
+              { id: 'all', label: 'All & Highlights', icon: Layers },
+              { id: 'albums', label: `My Albums (${albums.length})`, icon: FolderPlus },
+              { id: 'places', label: `Places & Cities (${smartCollections?.places.length || 0})`, icon: MapPin },
+              { id: 'trips', label: `Trips & Outings (${smartCollections?.trips.length || 0})`, icon: Compass },
+              { id: 'people', label: `People (${smartCollections?.people.length || 0})`, icon: Users },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
+                    activeTab === tab.id
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* SECTION: Places Collections */}
+          {(activeTab === 'all' || activeTab === 'places') && smartCollections && smartCollections.places.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-emerald-600" />
+                  Places & Cities
+                </h3>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {smartCollections.places.length} visited location{smartCollections.places.length !== 1 ? 's' : ''}
+                </span>
               </div>
-              <h3 className="font-semibold text-slate-800 text-sm">No Albums Yet</h3>
-              <p className="text-xs text-slate-500">
-                Click "Create Album" above to start grouping your favorite memories together.
-              </p>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {smartCollections.places.map((place) => (
+                  <div
+                    key={place.location_name}
+                    onClick={() => openPlace(place)}
+                    className="group bg-white border border-slate-200 rounded-2xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition hover:-translate-y-0.5"
+                  >
+                    <div className="aspect-[4/3] bg-slate-100 relative overflow-hidden">
+                      {place.cover_thumbnail_url ? (
+                        <img
+                          src={`${API_URL}${place.cover_thumbnail_url}`}
+                          alt={place.city}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-300">
+                          <MapPin className="w-8 h-8" />
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-80 group-hover:opacity-90 transition" />
+                      <div className="absolute bottom-2 left-2 right-2 text-white">
+                        <p className="font-bold text-xs truncate drop-shadow-sm">{place.city}</p>
+                        <p className="text-[10px] text-white/80 drop-shadow-sm">
+                          {place.photo_count} photo{place.photo_count !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {albums.map((album) => (
-              <div
-                key={album.id}
-                onClick={() => openAlbum(album.id)}
-                className="group bg-white border border-slate-200 rounded-2xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition flex flex-col"
-              >
-                {/* Album Cover Photo */}
-                <div className="aspect-[4/3] bg-slate-100 overflow-hidden relative">
-                  {album.cover_thumbnail_url ? (
-                    <img
-                      src={`${API_URL}${album.cover_thumbnail_url}`}
-                      alt={album.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-300">
-                      <ImageIcon className="w-10 h-10" />
-                    </div>
-                  )}
-
-                  {/* Delete Button on Hover */}
-                  <button
-                    onClick={(e) => handleDeleteAlbum(album.id, e)}
-                    className="absolute top-2 right-2 p-1.5 bg-black/40 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition backdrop-blur-sm"
-                    title="Delete Album"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* Album Info */}
-                <div className="p-3">
-                  <h4 className="font-semibold text-xs text-slate-800 truncate group-hover:text-indigo-600 transition">
-                    {album.name}
-                  </h4>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    {album.photo_count} photo{album.photo_count !== 1 ? 's' : ''}
-                  </p>
-                </div>
+          {/* SECTION: Trips & Outings */}
+          {(activeTab === 'all' || activeTab === 'trips') && smartCollections && smartCollections.trips.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <Compass className="w-4 h-4 text-indigo-600" />
+                  Trips & Outings
+                </h3>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {smartCollections.trips.length} spatiotemporal stories
+                </span>
               </div>
-            ))}
-          </div>
-        </>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {smartCollections.trips.map((trip, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => openTrip(trip)}
+                    className="group bg-white border border-slate-200 rounded-2xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition hover:-translate-y-0.5 flex flex-col"
+                  >
+                    <div className="aspect-[16/9] bg-slate-100 relative overflow-hidden">
+                      {trip.cover_thumbnail_url ? (
+                        <img
+                          src={`${API_URL}${trip.cover_thumbnail_url}`}
+                          alt={trip.title}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-300">
+                          <Compass className="w-8 h-8" />
+                        </div>
+                      )}
+                      <span className="absolute top-2 right-2 px-2 py-0.5 bg-black/60 backdrop-blur-md text-white rounded-full text-[10px] font-semibold">
+                        {trip.photo_count} photos
+                      </span>
+                    </div>
+
+                    <div className="p-3">
+                      <h4 className="font-semibold text-xs text-slate-900 truncate group-hover:text-indigo-600 transition">
+                        {trip.title}
+                      </h4>
+                      <p className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-slate-400" />
+                        {trip.date}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION: People & Faces */}
+          {(activeTab === 'all' || activeTab === 'people') && smartCollections && smartCollections.people.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-violet-600" />
+                  People & Faces
+                </h3>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  {smartCollections.people.length} identified individuals
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+                {smartCollections.people.map((person) => (
+                  <div
+                    key={person.id}
+                    onClick={() => openPerson(person)}
+                    className="group bg-white border border-slate-200 rounded-2xl p-3 text-center cursor-pointer shadow-sm hover:shadow-md transition hover:-translate-y-0.5 flex flex-col items-center"
+                  >
+                    <div className="w-16 h-16 rounded-full overflow-hidden bg-slate-100 ring-2 ring-violet-200 group-hover:ring-violet-500 transition shadow-sm mb-2">
+                      {person.avatar_url ? (
+                        <img
+                          src={`${API_URL}${person.avatar_url}`}
+                          alt={person.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-300">
+                          <Users className="w-6 h-6" />
+                        </div>
+                      )}
+                    </div>
+                    <h4 className="font-semibold text-xs text-slate-800 truncate w-full group-hover:text-violet-600 transition">
+                      {person.name}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {person.photo_count} photo{person.photo_count !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION: My Albums (Custom & Curated) */}
+          {(activeTab === 'all' || activeTab === 'albums') && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                  <FolderPlus className="w-4 h-4 text-indigo-600" />
+                  My Albums ({albums.length})
+                </h3>
+                {albums.length > 0 && (
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New Album
+                  </button>
+                )}
+              </div>
+
+              {albums.length === 0 && !loading ? (
+                <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center max-w-lg mx-auto space-y-4">
+                  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+                    <FolderPlus className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">No Albums Yet</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Organize your library with custom albums, or 1-click auto-curate smart collections from your trips and locations.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-center gap-3 pt-1">
+                    <button
+                      onClick={handleAutoCurate}
+                      disabled={isCurating}
+                      className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-xs font-semibold shadow-sm hover:from-purple-500 hover:to-indigo-500 transition flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{isCurating ? 'Curating...' : 'Auto-Curate from Photos'}</span>
+                    </button>
+                    <button
+                      onClick={() => setShowCreateModal(true)}
+                      className="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold hover:bg-slate-50 transition"
+                    >
+                      Create Custom Album
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {albums.map((album) => (
+                    <div
+                      key={album.id}
+                      onClick={() => openAlbum(album.id)}
+                      className="group bg-white border border-slate-200 rounded-2xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition hover:-translate-y-0.5 flex flex-col"
+                    >
+                      <div className="aspect-[4/3] bg-slate-100 overflow-hidden relative">
+                        {album.cover_thumbnail_url ? (
+                          <img
+                            src={`${API_URL}${album.cover_thumbnail_url}`}
+                            alt={album.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-300">
+                            <ImageIcon className="w-10 h-10" />
+                          </div>
+                        )}
+
+                        {/* Photo Count Badge */}
+                        <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/60 backdrop-blur-md text-white rounded-full text-[10px] font-semibold">
+                          {album.photo_count} photo{album.photo_count !== 1 ? 's' : ''}
+                        </span>
+
+                        {/* Quick Delete */}
+                        <button
+                          onClick={(e) => handleDeleteAlbum(album.id, e)}
+                          className="absolute top-2 right-2 p-1.5 bg-black/40 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition backdrop-blur-sm"
+                          title="Delete Album"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="p-3">
+                        <h4 className="font-semibold text-xs text-slate-800 truncate group-hover:text-indigo-600 transition">
+                          {album.name}
+                        </h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                          {album.description || `Created ${new Date(album.created_at).toLocaleDateString()}`}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Album Photos View */}
-      {selectedAlbum && (
+      {/* Selected Collection / Album Photos View */}
+      {selectedCollection && (
         <div className="space-y-4">
-          {selectedAlbum.photos.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center text-slate-400 text-xs">
-              No photos currently added to this album.
+          {selectedCollection.photos.length === 0 ? (
+            <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-12 text-center max-w-md mx-auto space-y-3">
+              <div className="w-10 h-10 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+                <ImageIcon className="w-5 h-5" />
+              </div>
+              <h4 className="text-xs font-bold text-slate-800">No photos in this album yet</h4>
+              <p className="text-xs text-slate-500">
+                Click "Add Photos" above to select memories from your library to add here.
+              </p>
+              {selectedCollection.type === 'album' && (
+                <button
+                  onClick={handleOpenPhotoPicker}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+                >
+                  Add Photos Now
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {selectedAlbum.photos.map((photo) => (
-                <PhotoCard
-                  key={photo.id}
-                  item={photo}
-                  apiUrl={API_URL}
-                  onSelect={setSelectedPhoto}
-                  onToggleFavorite={() => {}}
-                  onDelete={() => {}}
-                />
+              {selectedCollection.photos.map((photo) => (
+                <div key={photo.id} className="relative group">
+                  <PhotoCard
+                    item={photo}
+                    apiUrl={API_URL}
+                    onSelect={setSelectedPhoto}
+                    onToggleFavorite={() => {}}
+                    onDelete={() => {}}
+                  />
+                  {/* Remove from Album Button */}
+                  {selectedCollection.type === 'album' && (
+                    <button
+                      onClick={(e) => handleRemovePhotoFromAlbum(photo.id, e)}
+                      className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition z-10 backdrop-blur-sm"
+                      title="Remove from this album"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -227,19 +926,22 @@ export default function AlbumsPage() {
 
       {/* Create Album Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
           <form
             onSubmit={handleCreateAlbum}
-            className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-xl animate-fadeIn"
+            className="bg-white rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl"
           >
-            <h3 className="font-bold text-sm text-slate-900">Create New Album</h3>
+            <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+              <FolderPlus className="w-4 h-4 text-indigo-600" />
+              Create New Album
+            </h3>
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-semibold text-slate-700">Album Name</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Summer Vacation, Family Trip"
+                  placeholder="e.g. Summer Vacation, Road Trip"
                   value={newAlbumName}
                   onChange={(e) => setNewAlbumName(e.target.value)}
                   className="w-full mt-1 px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -270,10 +972,136 @@ export default function AlbumsPage() {
                 type="submit"
                 className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm"
               >
-                Create
+                Create Album
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Photo Picker Modal: Add Photos to Album */}
+      {showPickerModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">Add Photos to Album</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select photos from your library to include in &ldquo;{selectedCollection?.name}&rdquo;
+                </p>
+              </div>
+              <button
+                onClick={() => setShowPickerModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Toolbar */}
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-xs">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter photos by name or place..."
+                  value={pickerSearch}
+                  onChange={(e) => setPickerSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const selectable = filteredPickerPhotos.filter(p => !p.in_album).map(p => p.id);
+                    if (pickerSelectedIds.length === selectable.length) {
+                      setPickerSelectedIds([]);
+                    } else {
+                      setPickerSelectedIds(selectable);
+                    }
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-700 font-medium px-2 py-1 hover:bg-indigo-50 rounded"
+                >
+                  {pickerSelectedIds.length > 0 ? 'Deselect All' : 'Select All'}
+                </button>
+                <span className="text-xs text-slate-500 font-semibold bg-white px-2.5 py-1 border border-slate-200 rounded-lg">
+                  {pickerSelectedIds.length} Selected
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Photo Grid */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2.5">
+                {filteredPickerPhotos.map((photo) => {
+                  const isChecked = pickerSelectedIds.includes(photo.id);
+                  return (
+                    <div
+                      key={photo.id}
+                      onClick={() => {
+                        if (photo.in_album) return;
+                        setPickerSelectedIds(prev => 
+                          prev.includes(photo.id) ? prev.filter(id => id !== photo.id) : [...prev, photo.id]
+                        );
+                      }}
+                      className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border transition ${
+                        photo.in_album
+                          ? 'opacity-40 cursor-not-allowed border-slate-200'
+                          : isChecked
+                          ? 'ring-2 ring-indigo-600 border-indigo-600'
+                          : 'border-slate-200 hover:border-slate-400'
+                      }`}
+                    >
+                      <img
+                        src={`${API_URL}${photo.thumbnail_url}`}
+                        alt={photo.filename}
+                        className="w-full h-full object-cover"
+                      />
+
+                      {photo.in_album ? (
+                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                          <span className="text-[10px] font-bold text-white bg-slate-800/80 px-2 py-0.5 rounded-full">
+                            In Album
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="absolute top-1.5 right-1.5">
+                          {isChecked ? (
+                            <div className="w-5 h-5 bg-indigo-600 text-white rounded-md flex items-center justify-center shadow">
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </div>
+                          ) : (
+                            <div className="w-5 h-5 bg-black/40 group-hover:bg-black/60 rounded-md border border-white/80 transition" />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPickerModal(false)}
+                className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-200 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={pickerSelectedIds.length === 0 || isAddingPhotos}
+                onClick={handleAddSelectedPhotos}
+                className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm transition disabled:opacity-50"
+              >
+                {isAddingPhotos ? 'Adding...' : `Add ${pickerSelectedIds.length} Photos`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -288,7 +1116,7 @@ export default function AlbumsPage() {
 
       {/* Ambient Slideshow Modal */}
       <AmbientSlideshowModal
-        photos={selectedAlbum?.photos || []}
+        photos={selectedCollection?.photos || []}
         apiUrl={API_URL}
         isOpen={isSlideshowOpen}
         onClose={() => setIsSlideshowOpen(false)}
