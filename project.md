@@ -121,14 +121,25 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 ### Phase 11: Multi-User Authentication, Private Vaults & Shareable Public Links
 - [x] **JWT User Authentication & Password Hashing**: Secure login/registration system (`/login`, `/register`) using bcrypt and stateless JWT authentication tokens (modeled on 9drive auth architecture). `[Completed]`
 - [x] **Multi-User Account Switcher & Profiles**: UserNavMenu avatar dropdown, instant family member account switching, and profile updating (`PATCH /api/v1/auth/me`). `[Completed]`
-- [ ] **Multi-User Private Libraries**: Multi-tenant data segregation where users have private photo libraries, private favorites, and role-based permissions (`admin` / `user`). `[Planned]`
-- [ ] **Family Shared Spaces & Shared Albums**: Shared family vaults where family members can pool memories and contribute photos to shared collections. `[Planned]`
-- [ ] **Public Shareable Album Links (Read-Only)**: Generate tokenized public sharing URLs (e.g. `/share/{token}`) for albums with optional PIN/password protection and expiration dates (7 days, 30 days, forever). `[Planned]`
-- [ ] **Guest Presentation Gallery**: Responsive, distraction-free guest view for shared links allowing friends/family to view, swipe, and download ZIPs without an account. `[Planned]`
+- [ ] **Multi-User Private Libraries & Family Shared Spaces**:
+  - *Data Segregation*: Multi-tenant schema where individual photos and personal favorites are tied to specific user accounts (`user_id`).
+  - *Role-Based Access Control*: `admin` (can manage storage settings, all users, Google Drive sync) vs `member` (can view/upload personal memories).
+  - *Family Shared Vault*: Collaborative family pools and shared collections where family members can contribute photos together. `[Planned]`
+- [ ] **Public Shareable Album Links & Guest Presentation Gallery**:
+  - *Tokenized Public Sharing*: Generate secure, cryptographically random share URLs (e.g. `/share/[token]`) for any custom album or smart collection.
+  - *Security & Access Control*: Optional PIN / password protection, read-only permission flags, and auto-expiration options (7 days, 30 days, or permanent).
+  - *Guest Experience*: Distraction-free, responsive guest landing page allowing family and friends to view high-resolution photo grids, swipe through slideshows, and download full-resolution ZIP archives without creating an account. `[Planned]`
 
-### Phase 12: Creative Media Studio, Motion Live Photos & Travel Heatmaps
-- [ ] **Non-Destructive Web Editing Studio**: In-browser adjustments (auto-enhance exposure/contrast/saturation, rotate, crop to 1:1, 16:9, 4:3, and vintage black-and-white filters) while preserving untouched originals. `[Planned]`
-- [ ] **Apple Live Photos & Short Video Motion Support**: Support for paired `.heic` + `.mov` Live Photos with hover-motion playback and inline silent video player. `[Planned]`
+### Phase 12: Creative Media Studio, Motion Live Photos & PWA Ingestion
+- [ ] **Non-Destructive Web Editing Studio**:
+  - *In-Browser Parametric Editing*: Real-time canvas adjustments for exposure, contrast, saturation, highlights, shadows, sharpness, and warmth without downloading files locally.
+  - *Transform & Geometry*: 90° clockwise/counterclockwise rotation, horizontal/vertical flip, and aspect-ratio crop presets (1:1 Square, 16:9 Cinema, 4:3 Classic, Freeform).
+  - *Aesthetic Filter Presets*: One-click photo styles including Vivid, Warm Nostalgia, Cool Slate, Noir B&W, and Vintage Film.
+  - *Non-Destructive Guarantee*: Zero alteration to authoritative originals on Google Drive; edit recipes are persisted as JSON metadata overlays or exported as new edited copies. `[Planned]`
+- [ ] **Apple Live Photos & Short Video Motion Support**:
+  - *Motion Detection & Pairing*: Auto-association of paired still images and short video clips (`.heic` + `.mov` or `.jpg` + `.mp4`) sharing identical base timestamps and EXIF capture signatures.
+  - *Hover & Long-Press Motion*: Dynamic hover-to-play motion preview on timeline thumbnails with a subtle "LIVE" badge indicator.
+  - *Inline Silent Player*: Silent looping video playback in the Lightbox viewer with toggle for high-definition audio. `[Planned]`
 - [x] **Interactive Travel Route & Geographic Heatmap**: Chronological journey visualization on the map connecting geotagged photos from vacations and road trips with distance and duration statistics, numbered waypoints, and multi-ring density heatmap layer. `[Completed]`
 - [ ] **PWA & Chunked Multi-File Uploader**: Progressive Web App manifest for home screen install, service worker offline caching of recent memories, and drag-and-drop resume-enabled chunked uploader. `[Planned]`
 
