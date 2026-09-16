@@ -75,12 +75,12 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 ### Phase 4: Face Recognition & Person Identification
 - [x] **Face Detection & Clustering Schema**: Relational schema and API endpoints for People, Face Detections, and Person tagging. `[Completed]`
 - [x] **People Management UI**: Dedicated "People" tab to view clusters, label identities, and review photos. `[Completed]`
-- [ ] **Heavyweight ONNX Inference Pipeline**: Download and attach local offline models for ArcFace. `[Planned]`
+- [x] **UltraFace ONNX Inference Pipeline**: Lightweight 1.2MB offline ONNX model with NMS bounding box detection and interactive tagging. `[Completed]`
 
 ### Phase 5: Semantic Natural Language Search & Event Grouping
 - [x] **Spatiotemporal Event Clustering**: Automatic grouping of photos taken within time and location proximity into named events ("Moments & Outings"). `[Completed]`
 - [x] **Multi-Attribute & Full-Text Search Engine**: Real-time query matching across filenames, OCR text, camera models, locations, categories, and people. `[Completed]`
-- [ ] **CLIP Vector Search**: Multimodal embedding search enabling natural language queries like *"sunset at beach"*. `[Planned]`
+- [x] **CLIP Vector Search**: FastEmbed ViT-B/32 multimodal embedding search enabling natural language queries like *"sunset at beach"*. `[Completed]`
 
 ### Phase 6: Dual Sync (Local Folders & Google Drive)
 - [x] **Local Directory Watcher & Manual Scan**: API and UI button to trigger recursive scans of mounted folders. `[Completed]`
@@ -91,7 +91,7 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [x] **"On This Day" / Flashback Engine**: Automatically surfaces memories taken on today's date from 1, 2, 3+ years ago. `[Completed]`
 - [x] **Custom Smart Albums & Collections**: Dedicated album builder to organize custom sets (trips, events, projects). `[Completed]`
 - [x] **Location & Map Explorer**: Interactive GPS clustering visualizing photos on a world map. `[Completed]`
-- [ ] **Receipt & Document Text Inspector**: Live drawer displaying extracted OCR text and figures from scanned receipts. `[Planned]`
+- [x] **Receipt & Document Text Inspector**: Live drawer displaying extracted OCR text, currency figures, and vendor info from scanned receipts. `[Completed]`
 
 ### Phase 8: Modular Frontend Architecture & Build Chunking
 - [x] **Timeline Component Deconstruction**: Chunked monolithic pages into standalone sub-components (`PhotoCard`, `DaySection`, `MomentsCarousel`, `LightboxModal`, `CategoryFilterBar`). `[Completed]`
@@ -117,6 +117,19 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 - [x] **Ambient Cinematic Slideshow Mode**: Fullscreen memory playback with gentle Ken Burns motion transitions, autoplay timers (3s, 5s, 8s, 12s), auto-hiding playback controls, and metadata HUD. `[Completed]`
 - [x] **Offline ONNX Semantic CLIP Search**: Multimodal embedding search enabling natural language queries like *"sunset at beach"*, *"dog playing with ball"* running 100% offline with FastEmbed CLIP ViT-B/32. `[Completed]`
 - [x] **Image Quality Degradation Resolution**: Upgraded to 512px High-DPI thumbnails, 2560px WebP previews, Display P3 ICC profile preservation, and uncompressed progressive original loading in Lightbox. `[Completed]`
+
+### Phase 11: Multi-User Authentication, Private Vaults & Shareable Public Links
+- [ ] **JWT User Authentication & Password Hashing**: Secure login/registration system (`/login`, `/register`) using bcrypt and stateless JWT authentication tokens (modeled on 9drive auth architecture). `[Planned]`
+- [ ] **Multi-User Private Libraries**: Multi-tenant data segregation where users have private photo libraries, private favorites, and role-based permissions (`admin` / `user`). `[Planned]`
+- [ ] **Family Shared Spaces & Shared Albums**: Shared family vaults where family members can pool memories and contribute photos to shared collections. `[Planned]`
+- [ ] **Public Shareable Album Links (Read-Only)**: Generate tokenized public sharing URLs (e.g. `/share/{token}`) for albums with optional PIN/password protection and expiration dates (7 days, 30 days, forever). `[Planned]`
+- [ ] **Guest Presentation Gallery**: Responsive, distraction-free guest view for shared links allowing friends/family to view, swipe, and download ZIPs without an account. `[Planned]`
+
+### Phase 12: Creative Media Studio, Motion Live Photos & Travel Heatmaps
+- [ ] **Non-Destructive Web Editing Studio**: In-browser adjustments (auto-enhance exposure/contrast/saturation, rotate, crop to 1:1, 16:9, 4:3, and vintage black-and-white filters) while preserving untouched originals. `[Planned]`
+- [ ] **Apple Live Photos & Short Video Motion Support**: Support for paired `.heic` + `.mov` Live Photos with hover-motion playback and inline silent video player. `[Planned]`
+- [ ] **Interactive Travel Route & Geographic Heatmap**: Chronological journey visualization on the map connecting geotagged photos from vacations and road trips with distance and duration statistics. `[Planned]`
+- [ ] **PWA & Chunked Multi-File Uploader**: Progressive Web App manifest for home screen install, service worker offline caching of recent memories, and drag-and-drop resume-enabled chunked uploader. `[Planned]`
 
 ---
 
