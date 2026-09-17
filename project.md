@@ -154,9 +154,11 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
   - Native HNSW vector index acceleration (`idx_media_embeddings_hnsw` on 512-dim CLIP vectors with `vector_cosine_ops`, `m=16, ef_construction=64`) for sub-10ms semantic search.
   - Reflection-based 1-click database migration engine (`/api/v1/system/database/migrate`) copying all users, sync sources, media, faces, albums, associations, and vector embeddings between SQLite and PostgreSQL with zero data loss.
   - Interactive Database & Vector Engine control panel in `/settings` (real-time telemetry, table record counts, HNSW index status & rebuilding, connection testing, and migration modal). `[Completed]`
-- [ ] **Asynchronous Background Task Queue (Redis + Celery/ARQ) & WebSockets**:
-  - Offload heavy AI jobs (face clustering, CLIP indexing, batch OCR, and thumbnail warming) to a dedicated worker container.
-  - Real-time WebSocket progress reporting to the frontend UI with percentage meters and active task logs. `[Planned]`
+- [x] **Asynchronous Background Task Queue (Redis + Async Worker) & WebSockets**:
+  - Offload heavy AI jobs (CLIP vector indexing, UltraFace face detection, vision clustering, S3 sync, and WAL database backups) to a dedicated `memorypics-worker` container.
+  - Redis 7 (`memorypics-redis`) task queue broker with PubSub event broadcasting, multi-worker task distribution, and graceful in-memory queue fallback.
+  - Real-time WebSocket endpoint (`/api/v1/tasks/ws`) with single-loop architecture streaming live percentage meters, step counters, and item logs to client browsers.
+  - Global `TaskQueueDrawer` and Header task indicator with 1-click AI job dispatchers, live cancel buttons, and recent task execution history. `[Completed]`
 
 ### Phase 14: Multi-Cloud Object Storage & Universal Sync
 - [x] **S3 / MinIO Object Storage Engine (Self-Hosted MinIO)**:
@@ -232,4 +234,5 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-16 | PostgreSQL + pgvector Dual-DB Engine | Dynamic SQLite/PostgreSQL toggle, native pgvector HNSW 512-dim index, reflection migration engine, and /settings control panel | `[Completed]` |
 | 2026-09-16 | Google CDN Proxy & Memory Cache | Server-side proxying & in-memory caching to resolve Google Drive 429 referer block | `[Completed]` |
 | 2026-09-16 | Fullscreen Lightbox & Event Stop | Elevated z-index to z-[99999], edge-to-edge toggle, and event stop across Map & People galleries | `[Completed]` |
+| 2026-09-17 | Async Background Worker & WebSockets | Dedicated Redis 7 task worker, real-time WebSocket progress bars, global Task Drawer, and 1-click AI job dispatchers | `[Completed]` |
 

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     S3_PUBLIC_URL: str = os.getenv("S3_PUBLIC_URL", "http://localhost:9002")
     S3_CONSOLE_URL: str = os.getenv("S3_CONSOLE_URL", "http://localhost:9001")
     
+    # Asynchronous Task Queue & Redis
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    
     @property
     def cors_origin_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]

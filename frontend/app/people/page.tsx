@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { useTaskQueue } from '@/context/TaskQueueContext';
 
 interface PersonItem {
   id: number;
@@ -96,6 +97,7 @@ export default function PeoplePage() {
   const [namingFaceId, setNamingFaceId] = useState<number | null>(null);
   const [newPersonName, setNewPersonName] = useState('');
 
+  const { dispatchTask } = useTaskQueue();
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   const fetchPeople = useCallback(async () => {
@@ -172,44 +174,14 @@ export default function PeoplePage() {
     }
   };
 
-  // Run AI Auto-Clustering
+  // Run AI Auto-Clustering via Background Worker
   const handleAutoCluster = async () => {
-    try {
-      setIsClustering(true);
-      setStatusMessage('Analyzing facial embeddings & clustering identities...');
-      const res = await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setStatusMessage(`Clustered ${data.total_faces || 0} faces into ${data.clusters_count || 0} people groups!`);
-        fetchPeople();
-        setTimeout(() => setStatusMessage(null), 4000);
-      }
-    } catch (e) {
-      console.error('Error auto-clustering:', e);
-      setStatusMessage('Face clustering failed.');
-    } finally {
-      setIsClustering(false);
-    }
+    dispatchTask('face_cluster_all', {}, 'Vision Person Face Clustering');
   };
 
-  // Scan library photos for faces
+  // Scan library photos for faces via Background Worker
   const handleScanFaces = async () => {
-    try {
-      setIsScanning(true);
-      setStatusMessage('Scanning all library photos with UltraFace ONNX...');
-      const res = await fetch(`${API_URL}/api/v1/people/detect-all`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setStatusMessage(`Scan complete! Detected ${data.faces_detected || 0} faces.`);
-        fetchPeople();
-        setTimeout(() => setStatusMessage(null), 4000);
-      }
-    } catch (e) {
-      console.error('Error scanning faces:', e);
-      setStatusMessage('Face scan failed.');
-    } finally {
-      setIsScanning(false);
-    }
+    dispatchTask('face_detect_all', {}, 'UltraFace Face Detection');
   };
 
   // Assign name to an unnamed face

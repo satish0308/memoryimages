@@ -6,6 +6,7 @@
 
 [![Docker](https://img.shields.io/badge/Docker-24.0+-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20%2B%20pgvector-336791?style=flat-square&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![Redis](https://img.shields.io/badge/Redis-7.2-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14.2%20App%20Router-black?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![FastEmbed CLIP](https://img.shields.io/badge/FastEmbed-CLIP%20ViT--B%2F32-orange?style=flat-square&logo=onnx&logoColor=white)](https://github.com/qdrant/fastembed)
@@ -97,6 +98,12 @@ Modern smartphone cameras generate thousands of files: family vacations, burst s
 - **1-Click Reflection Migration**: Copy all records, users, media, face detections, albums, and embeddings from SQLite to PostgreSQL (or vice versa) in seconds with foreign key hierarchy validation.
 - **Settings Telemetry & Index Management**: Dedicated UI dashboard displaying active dialect, connection health, table row counts, pgvector version, and 1-click HNSW index rebuilds.
 
+### ⚡ Asynchronous Background Worker Queue (Redis + WebSockets)
+- **Dedicated Background Worker**: Heavy AI computations (UltraFace face detection, CLIP vector indexing, vision person clustering, and WAL database backups) are offloaded to an isolated `memorypics-worker` container.
+- **Redis 7 Task Broker**: Redis queue with PubSub event broadcasting, cancellation triggers, and resilient in-memory fallback.
+- **Sub-50ms Live WebSockets**: Full-duplex WebSocket stream (`/api/v1/tasks/ws`) broadcasting real-time progress percentages, step counters, and item logs directly to the user interface.
+- **Global Tasks Drawer & Header Indicator**: Interactive header pulse badge and slide-out Tasks Drawer with animated striped progress bars, cancellation controls, and 1-click AI job dispatchers.
+
 ### 🔒 JWT Authentication & Multi-User Switcher
 - **Stateless JWT Auth**: Secure password hashing with bcrypt and tokenized session management.
 - **Family Account Switcher**: Instant user profile switching directly from the navigation bar.
@@ -112,7 +119,7 @@ Modern smartphone cameras generate thousands of files: family vacations, burst s
                                   |  (React / Tailwind / Lucide / Leaflet)|
                                   +-------------------+-------------------+
                                                       |
-                                             HTTP / REST / WebP
+                                           REST API / WebSockets (Live)
                                                       |
                                   +-------------------v-------------------+
                                   |       FastAPI Backend Engine          |
@@ -122,12 +129,19 @@ Modern smartphone cameras generate thousands of files: family vacations, burst s
             +-------------------------------+                   +-------------------------------+
             |                                                                                   |
 +-----------v---------------------------+                               +-----------------------v-----------------------+
-|          Offline AI Services          |                               |          Storage & Ingestion                  |
-|  - UltraFace ONNX (Face Detection)   |                               |  - Direct Google Drive CDN Streaming          |
-|  - FastEmbed CLIP ViT-B/32 (Search)   |                               |  - In-Memory RAM Caching (9drive Pattern)     |
-|  - pHash & Laplacian Variance (Blur)  |                               |  - SQLite Database (WAL Mode)                 |
-|  - Tesseract OCR (Receipt Text)       |                               |  - Inotify Filesystem Watcher (watchdog)      |
-+---------------------------------------+                               +-----------------------------------------------+
+|    Redis 7 Queue & Task Broker        |                               |          Storage & Databases                  |
+|  - LPUSH/BLPOP Task Distribution      |                               |  - SQLite (WAL Mode) & PostgreSQL 16          |
+|  - Real-Time PubSub Event Stream      |                               |  - Native pgvector HNSW Vector Index          |
+|  - WebSocket Progress Relaying        |                               |  - MinIO S3 Object Storage (Self-Hosted)      |
++-------------------+-------------------+                               |  - Direct Google Drive CDN In-Memory Stream   |
+                    |                                                   +-----------------------------------------------+
++-------------------v-------------------+
+|      Async AI Worker Container        |
+|  - UltraFace ONNX (Face Detection)   |
+|  - FastEmbed CLIP ViT-B/32 (Search)   |
+|  - Face Vision Clustering Engine      |
+|  - Automated WAL Database Backups     |
++---------------------------------------+
 ```
 
 ---
