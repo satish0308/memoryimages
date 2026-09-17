@@ -241,10 +241,27 @@ def get_face_crop_image(db: Session, face: FaceDetection) -> Optional[bytes]:
         logger.error(f"Failed to generate face crop: {e}")
         return None
 
+def is_user_named(name: Optional[str]) -> bool:
+    """Checks if a person's name is a meaningful user-assigned name (e.g. 'Mom', 'Dad', 'Satish') vs a placeholder ('Person 9', 'Unnamed Person')."""
+    if not name:
+        return False
+    clean = name.strip()
+    if clean.lower() in ("unnamed", "unnamed person", "unknown"):
+        return False
+    if clean.startswith("Person ") and clean[7:].strip().isdigit():
+        return False
+    return True
+
 def auto_cluster_faces(db: Session, similarity_threshold: float = 0.80) -> Dict[str, Any]:
     """
-    Computes vision embeddings for all detected faces, clusters them using cosine similarity,
-    and creates Person records with face crops.
+    Intelligently clusters face crops with Anchor Retention for user-named people (e.g. 'Mom', 'Dad').
+
+    Guarantees:
+    1. ZERO SHUFFLE: Faces already assigned to a named person (like 'Mom') are NEVER reassigned or stolen.
+    2. ZERO VANISH: Named people are NEVER overwritten with 'Person X' and NEVER deleted.
+    3. SMART RECOGNITION: Computes centroid embeddings for named people and automatically recruits
+       new matching unassigned faces into their profile.
+    4. Safe clustering: Only unassigned faces are grouped into new placeholder Person records.
     """
     from PIL import Image
     from fastembed import ImageEmbedding
@@ -255,6 +272,14 @@ def auto_cluster_faces(db: Session, similarity_threshold: float = 0.80) -> Dict[
     if not faces:
         return {"status": "no_faces", "created_people": 0, "assigned_faces": 0}
 
+    # 1. Identify all user-named people (e.g. 'Mom') and lock their existing faces
+    named_people = {p.id: p for p in db.query(Person).all() if is_user_named(p.name)}
+    locked_face_ids = set()
+    for f in faces:
+        if f.person_id in named_people:
+            locked_face_ids.add(f.id)
+
+    # 2. Extract crops and prepare embeddings for all valid faces
     crops = []
     valid_faces = []
 
@@ -302,61 +327,123 @@ def auto_cluster_faces(db: Session, similarity_threshold: float = 0.80) -> Dict[
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     embeddings = embeddings / np.maximum(norms, 1e-6)
 
-    # Cosine similarity matrix
-    sim_matrix = np.dot(embeddings, embeddings.T)
+    # 3. Compute Centroid vector embeddings for all User-Named People
+    person_centroids = {}  # person_id -> normalized centroid vector
+    for person_id, person in named_people.items():
+        person_indices = [
+            i for i, f in enumerate(valid_faces)
+            if f.id in locked_face_ids and f.person_id == person_id
+        ]
+        if person_indices:
+            person_embs = embeddings[person_indices]
+            centroid = np.mean(person_embs, axis=0)
+            norm = np.linalg.norm(centroid)
+            if norm > 1e-6:
+                person_centroids[person_id] = centroid / norm
 
-    # Greedy clustering
-    visited = set()
-    clusters = []
-    for i in range(len(valid_faces)):
-        if i in visited:
-            continue
-        cluster = [i]
-        visited.add(i)
-        for j in range(i + 1, len(valid_faces)):
-            if j in visited:
-                continue
-            if sim_matrix[i, j] >= similarity_threshold:
-                cluster.append(j)
-                visited.add(j)
-        clusters.append(cluster)
+    # 4. Smart Recruitment: Compare flexible/unassigned faces against Named People centroids
+    newly_matched_to_named = 0
+    assigned_flexible_indices = set()
 
-    # Sort clusters largest to smallest
-    clusters.sort(key=len, reverse=True)
+    for i, f in enumerate(valid_faces):
+        if f.id in locked_face_ids:
+            continue  # Already locked to their named person, NEVER touch
+
+        # Compare face embedding against all named centroids
+        best_sim = -1.0
+        best_person_id = None
+        face_emb = embeddings[i]
+
+        for person_id, centroid in person_centroids.items():
+            sim = float(np.dot(face_emb, centroid))
+            if sim > best_sim:
+                best_sim = sim
+                best_person_id = person_id
+
+        # If high match to a named person (e.g. 'Mom'), recruit this face to 'Mom'!
+        if best_sim >= similarity_threshold and best_person_id is not None:
+            f.person_id = best_person_id
+            assigned_flexible_indices.add(i)
+            newly_matched_to_named += 1
+            logger.info(f"Auto-clustered face #{f.id} to named person '{named_people[best_person_id].name}' (sim: {best_sim:.3f})")
+
+    # 5. Cluster Remaining Unassigned Faces
+    remaining_indices = [
+        i for i, f in enumerate(valid_faces)
+        if f.id not in locked_face_ids and i not in assigned_flexible_indices
+    ]
 
     created_people_count = 0
-    assigned_faces_count = 0
+    assigned_faces_count = newly_matched_to_named
 
-    for idx, cluster_indices in enumerate(clusters):
-        person = None
-        # Check if any face in this cluster already has a named Person
-        for i in cluster_indices:
-            f = valid_faces[i]
-            if f.person_id:
-                p = db.query(Person).filter(Person.id == f.person_id).first()
-                if p:
-                    person = p
-                    break
+    if remaining_indices:
+        rem_embeddings = embeddings[remaining_indices]
+        rem_sim_matrix = np.dot(rem_embeddings, rem_embeddings.T)
 
-        if not person:
-            person = Person(name=f"Person {idx + 1}")
-            db.add(person)
-            db.commit()
-            db.refresh(person)
-            created_people_count += 1
+        visited = set()
+        clusters = []
+        for r_i in range(len(remaining_indices)):
+            if r_i in visited:
+                continue
+            cluster = [remaining_indices[r_i]]
+            visited.add(r_i)
+            for r_j in range(r_i + 1, len(remaining_indices)):
+                if r_j in visited:
+                    continue
+                if rem_sim_matrix[r_i, r_j] >= similarity_threshold:
+                    cluster.append(remaining_indices[r_j])
+                    visited.add(r_j)
+            clusters.append(cluster)
 
-        for i in cluster_indices:
-            f = valid_faces[i]
-            f.person_id = person.id
-            f.cluster_id = idx + 1
-            assigned_faces_count += 1
+        clusters.sort(key=len, reverse=True)
+
+        # Existing placeholder people (Person X) that can be reused
+        placeholder_people = [
+            p for p in db.query(Person).all()
+            if not is_user_named(p.name)
+        ]
+
+        # Determine next available index for Person X to avoid name collisions
+        existing_numbers = []
+        for p in db.query(Person).all():
+            if p.name.startswith("Person "):
+                try:
+                    existing_numbers.append(int(p.name[7:].strip()))
+                except ValueError:
+                    pass
+        next_num = (max(existing_numbers) + 1) if existing_numbers else 1
+
+        for c_idx, cluster_indices in enumerate(clusters):
+            # Check if any face in this cluster is already attached to a placeholder person
+            person = None
+            for idx_in_valid in cluster_indices:
+                f = valid_faces[idx_in_valid]
+                if f.person_id and f.person_id in [p.id for p in placeholder_people]:
+                    person = next((p for p in placeholder_people if p.id == f.person_id), None)
+                    if person:
+                        break
+
+            if not person:
+                person = Person(name=f"Person {next_num}")
+                next_num += 1
+                db.add(person)
+                db.commit()
+                db.refresh(person)
+                created_people_count += 1
+
+            for idx_in_valid in cluster_indices:
+                f = valid_faces[idx_in_valid]
+                f.person_id = person.id
+                f.cluster_id = person.id
+                assigned_faces_count += 1
 
     db.commit()
 
     return {
         "status": "completed",
         "total_faces": len(valid_faces),
-        "clusters_count": len(clusters),
+        "locked_named_faces": len(locked_face_ids),
+        "newly_matched_to_named": newly_matched_to_named,
         "created_people": created_people_count,
         "assigned_faces": assigned_faces_count
     }
