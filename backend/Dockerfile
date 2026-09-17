@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebp-dev \
     libpng-dev \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies

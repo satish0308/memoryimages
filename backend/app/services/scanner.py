@@ -16,7 +16,10 @@ from app.services.thumbnail import generate_thumbnails
 from app.services.triage_engine import classify_media_item
 from app.config import settings
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".bmp"}
+SUPPORTED_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".bmp",
+    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"
+}
 
 _GEOCODE_CACHE: Dict[Tuple[float, float], str] = {}
 
@@ -261,6 +264,34 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         return duplicate_hash
         
     captured_at = datetime.fromtimestamp(stat.st_mtime)
+
+    # Check if video file
+    from app.services.video_engine import is_video_file, probe_video_metadata, extract_video_keyframes
+    from app.models.media import MediaCategory
+    if is_video_file(file_path):
+        meta = probe_video_metadata(file_path)
+        media = Media(
+            filename=os.path.basename(file_path),
+            original_path=file_path,
+            file_size=file_size,
+            file_hash=file_hash,
+            mime_type=f"video/{ext.lstrip('.')}" if ext != ".mov" else "video/quicktime",
+            width=meta.get("width", 1280),
+            height=meta.get("height", 720),
+            duration_seconds=meta.get("duration", 0.0),
+            category=MediaCategory.MEMORY,
+            captured_at=captured_at,
+            source_type=source_type,
+            source_id=source_id
+        )
+        db.add(media)
+        db.commit()
+        db.refresh(media)
+        try:
+            extract_video_keyframes(db, media)
+        except Exception as e:
+            print(f"Error extracting keyframes for {file_path}: {e}")
+        return media
     
     # Open image to inspect & extract EXIF
     try:

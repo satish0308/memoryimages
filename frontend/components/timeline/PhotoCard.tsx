@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Heart, Trash2, Check } from 'lucide-react';
+import { Heart, Trash2, Check, Play } from 'lucide-react';
 
 export interface MediaItem {
   id: number;
@@ -24,6 +24,18 @@ export interface MediaItem {
   location_name?: string | null;
   expires_at?: string | null;
   thumbnail_url: string;
+  // AI Emotion, Mood & Video properties
+  mood?: string | null;
+  mood_score?: number;
+  is_smiling?: boolean;
+  dominant_color?: string | null;
+  color_hex?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  matched_timestamp?: number | null;
+  matched_timestamp_label?: string | null;
+  similarity?: number;
+  match_percent?: number;
 }
 
 interface PhotoCardProps {
@@ -90,9 +102,21 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             Bill / Doc
           </span>
         )}
+        {item.is_video && (
+          <span className="bg-rose-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm">
+            <Play className="w-2.5 h-2.5 fill-white" />
+            <span>{item.matched_timestamp_label ? `At ${item.matched_timestamp_label}` : 'Video'}</span>
+          </span>
+        )}
         {item.is_blurry && (
           <span className="bg-amber-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
             Blurry
+          </span>
+        )}
+        {item.mood && !item.is_video && (
+          <span className="bg-slate-900/80 text-white text-[9px] font-medium px-1.5 py-0.5 rounded backdrop-blur-sm capitalize hidden sm:inline-flex items-center gap-1">
+            {item.is_smiling ? '😊 ' : ''}
+            {item.mood}
           </span>
         )}
       </div>

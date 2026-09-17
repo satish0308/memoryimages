@@ -70,9 +70,14 @@ export default function PhotosPage() {
       return;
     }
     try {
-      const res = await fetch(
-        `${API_URL}/api/v1/search?q=${encodeURIComponent(query.trim())}&semantic=${isSemanticSearch}`
-      );
+      let url = `${API_URL}/api/v1/search?q=${encodeURIComponent(query.trim())}&semantic=${isSemanticSearch}`;
+      if (smartFilters.mood !== 'all') url += `&mood=${smartFilters.mood}`;
+      if (smartFilters.color !== 'all') url += `&dominant_color=${smartFilters.color}`;
+      if (smartFilters.mediaType === 'photos') url += `&media_type=photo`;
+      if (smartFilters.mediaType === 'videos') url += `&media_type=video`;
+      if (smartFilters.smilingOnly) url += `&smiling_only=true`;
+
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setSearchResults(data.results || []);
@@ -95,7 +100,7 @@ export default function PhotosPage() {
       }, 300);
       return () => clearTimeout(timeout);
     }
-  }, [activeCategory, scale, searchQuery, isSemanticSearch]);
+  }, [activeCategory, scale, searchQuery, isSemanticSearch, smartFilters]);
 
   // Selection handlers
   const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {
@@ -247,6 +252,10 @@ export default function PhotosPage() {
       smartFilters.favoritesOnly ||
       smartFilters.geotaggedOnly ||
       smartFilters.sharpOnly ||
+      smartFilters.mood !== 'all' ||
+      smartFilters.color !== 'all' ||
+      smartFilters.mediaType !== 'all' ||
+      smartFilters.smilingOnly ||
       Boolean(smartFilters.startDate) ||
       Boolean(smartFilters.endDate);
 
@@ -293,6 +302,19 @@ export default function PhotosPage() {
         if (smartFilters.geotaggedOnly && (item.latitude === null || item.latitude === undefined)) return false;
         if (smartFilters.sharpOnly && item.is_blurry) return false;
 
+        // Emotion & Mood Filter
+        if (smartFilters.mood !== 'all' && item.mood !== smartFilters.mood) return false;
+
+        // Color Filter
+        if (smartFilters.color !== 'all' && item.dominant_color !== smartFilters.color) return false;
+
+        // Format Filter
+        if (smartFilters.mediaType === 'photos' && item.is_video) return false;
+        if (smartFilters.mediaType === 'videos' && !item.is_video) return false;
+
+        // Smiling faces only
+        if (smartFilters.smilingOnly && !item.is_smiling) return false;
+
         return true;
       });
 
@@ -317,6 +339,10 @@ export default function PhotosPage() {
     if (smartFilters.favoritesOnly) count++;
     if (smartFilters.geotaggedOnly) count++;
     if (smartFilters.sharpOnly) count++;
+    if (smartFilters.mood !== 'all') count++;
+    if (smartFilters.color !== 'all') count++;
+    if (smartFilters.mediaType !== 'all') count++;
+    if (smartFilters.smilingOnly) count++;
     return count;
   }, [smartFilters]);
 
@@ -380,6 +406,62 @@ export default function PhotosPage() {
         >
           <Sparkles className={`w-3.5 h-3.5 ${isSemanticSearch ? 'text-amber-300' : 'text-slate-400'}`} />
           <span>{isSemanticSearch ? 'AI Semantic ON' : 'AI Semantic OFF'}</span>
+        </button>
+      </div>
+
+      {/* Quick Emotion, Mood & Format Filter Pills */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
+        {[
+          { id: 'all', label: 'All Moods', emoji: '✨' },
+          { id: 'joyful', label: 'Joyful', emoji: '😊' },
+          { id: 'serene', label: 'Serene', emoji: '🌅' },
+          { id: 'celebratory', label: 'Celebration', emoji: '🎉' },
+          { id: 'adventurous', label: 'Adventure', emoji: '⛰️' },
+          { id: 'cozy', label: 'Cozy', emoji: '☕' },
+          { id: 'dramatic', label: 'Dramatic', emoji: '🎭' },
+          { id: 'romantic', label: 'Romantic', emoji: '❤️' },
+          { id: 'nostalgic', label: 'Nostalgic', emoji: '🕰️' },
+        ].map((m) => (
+          <button
+            key={m.id}
+            onClick={() => setSmartFilters((prev) => ({ ...prev, mood: prev.mood === m.id ? 'all' : m.id }))}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition whitespace-nowrap font-medium ${
+              smartFilters.mood === m.id
+                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-transparent shadow-sm'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <span>{m.emoji}</span>
+            <span>{m.label}</span>
+          </button>
+        ))}
+
+        <div className="h-4 w-px bg-slate-300 mx-1 flex-shrink-0" />
+
+        {/* Video format chip */}
+        <button
+          onClick={() => setSmartFilters((prev) => ({ ...prev, mediaType: prev.mediaType === 'videos' ? 'all' : 'videos' }))}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition whitespace-nowrap font-medium ${
+            smartFilters.mediaType === 'videos'
+              ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <Play className="w-3 h-3 fill-current" />
+          <span>Videos</span>
+        </button>
+
+        {/* Smiling faces chip */}
+        <button
+          onClick={() => setSmartFilters((prev) => ({ ...prev, smilingOnly: !prev.smilingOnly }))}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition whitespace-nowrap font-medium ${
+            smartFilters.smilingOnly
+              ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <span>😄</span>
+          <span>Smiling Faces</span>
         </button>
       </div>
 

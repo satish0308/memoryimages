@@ -28,6 +28,8 @@ TASK_NAMES = {
     "db_backup_create": "Automated Database Backup",
     "media_scan": "Storage Library Scanner",
     "s3_sync_library": "MinIO S3 Library Sync",
+    "mood_analysis_all": "AI Emotion, Mood & Color Analysis",
+    "video_index_all": "Video Keyframe AI Search Indexing",
 }
 
 def get_redis_client():

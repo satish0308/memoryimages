@@ -70,9 +70,18 @@ class Media(Base):
     source_type = Column(Enum(SourceType), default=SourceType.LOCAL)
     source_id = Column(String(255), nullable=True)  # External ID (e.g. Google Drive File ID)
 
+    # AI Emotion, Mood & Color Attributes
+    mood = Column(String(64), nullable=True, index=True)
+    mood_score = Column(Float, default=0.0)
+    is_smiling = Column(Boolean, default=False, index=True)
+    dominant_color = Column(String(32), nullable=True, index=True)
+    color_hex = Column(String(7), nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+
     # Relationships
     faces = relationship("FaceDetection", back_populates="media", cascade="all, delete-orphan")
     embedding = relationship("MediaEmbedding", back_populates="media", uselist=False, cascade="all, delete-orphan")
+    keyframes = relationship("VideoKeyframe", back_populates="media", cascade="all, delete-orphan")
 
 try:
     from pgvector.sqlalchemy import Vector
@@ -94,5 +103,18 @@ class MediaEmbedding(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     media = relationship("Media", back_populates="embedding")
+
+class VideoKeyframe(Base):
+    __tablename__ = "video_keyframes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    media_id = Column(Integer, ForeignKey("media.id", ondelete="CASCADE"), index=True, nullable=False)
+    timestamp_seconds = Column(Float, nullable=False)
+    thumbnail_path = Column(String(1024), nullable=True)
+    vector = Column(LargeBinary, nullable=True)  # 512 float32 = 2048 bytes
+    embedding = Column(EmbeddingVectorType, nullable=True)  # Native pgvector 512-dim vector
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    media = relationship("Media", back_populates="keyframes")
 
 

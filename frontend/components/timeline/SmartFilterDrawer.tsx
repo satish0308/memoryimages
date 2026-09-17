@@ -12,7 +12,11 @@ import {
   Maximize2, 
   Smartphone, 
   Square,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Film,
+  Smile,
+  Palette,
+  Play
 } from 'lucide-react';
 
 export interface SmartFilters {
@@ -24,6 +28,11 @@ export interface SmartFilters {
   favoritesOnly: boolean;
   geotaggedOnly: boolean;
   sharpOnly: boolean;
+  // AI Emotion, Mood & Visual filters
+  mood: string;
+  color: string;
+  mediaType: 'all' | 'photos' | 'videos';
+  smilingOnly: boolean;
 }
 
 export const DEFAULT_SMART_FILTERS: SmartFilters = {
@@ -35,6 +44,10 @@ export const DEFAULT_SMART_FILTERS: SmartFilters = {
   favoritesOnly: false,
   geotaggedOnly: false,
   sharpOnly: false,
+  mood: 'all',
+  color: 'all',
+  mediaType: 'all',
+  smilingOnly: false,
 };
 
 interface SmartFilterDrawerProps {
@@ -73,8 +86,35 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
     filters.favoritesOnly ||
     filters.geotaggedOnly ||
     filters.sharpOnly ||
+    filters.mood !== 'all' ||
+    filters.color !== 'all' ||
+    filters.mediaType !== 'all' ||
+    filters.smilingOnly ||
     Boolean(filters.startDate) ||
     Boolean(filters.endDate);
+
+  const MOOD_OPTIONS = [
+    { id: 'all', label: 'All Moods', emoji: '✨' },
+    { id: 'joyful', label: 'Joyful & Happy', emoji: '😊' },
+    { id: 'serene', label: 'Serene & Calm', emoji: '🌅' },
+    { id: 'celebratory', label: 'Celebratory', emoji: '🎉' },
+    { id: 'adventurous', label: 'Adventurous', emoji: '⛰️' },
+    { id: 'cozy', label: 'Cozy & Warm', emoji: '☕' },
+    { id: 'dramatic', label: 'Dramatic', emoji: '🎭' },
+    { id: 'romantic', label: 'Romantic', emoji: '❤️' },
+    { id: 'nostalgic', label: 'Nostalgic', emoji: '🕰️' },
+  ];
+
+  const COLOR_OPTIONS = [
+    { id: 'all', label: 'All Colors', hex: 'transparent' },
+    { id: 'blue', label: 'Ocean Blue', hex: '#3B82F6' },
+    { id: 'green', label: 'Lush Green', hex: '#10B981' },
+    { id: 'gold', label: 'Golden Amber', hex: '#F59E0B' },
+    { id: 'red', label: 'Crimson Red', hex: '#EF4444' },
+    { id: 'orange', label: 'Sunset Orange', hex: '#F97316' },
+    { id: 'purple', label: 'Royal Purple', hex: '#8B5CF6' },
+    { id: 'monochrome', label: 'Black & White', hex: '#64748B' },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm flex justify-end animate-fadeIn">
@@ -88,7 +128,7 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Smart Filters</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Narrow down timeline by camera, date & quality
+                Filter by emotion, mood, colors, camera & format
               </p>
             </div>
           </div>
@@ -103,7 +143,112 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
         {/* Scrollable Filter Options */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6 text-sm">
           
-          {/* 1. Date Range */}
+          {/* 1. Media Type (Photos vs Videos) */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <Film className="w-3.5 h-3.5" />
+              <span>Media Format</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'all', label: 'All Formats' },
+                { id: 'photos', label: 'Photos Only' },
+                { id: 'videos', label: 'Videos Only' },
+              ].map((fmt) => (
+                <button
+                  key={fmt.id}
+                  onClick={() => update({ mediaType: fmt.id as SmartFilters['mediaType'] })}
+                  className={`py-2 px-2.5 rounded-xl text-xs font-semibold border transition ${
+                    filters.mediaType === fmt.id
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {fmt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. AI Emotion & Mood */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Emotion & Atmosphere</span>
+              </div>
+              {filters.mood !== 'all' && (
+                <button
+                  onClick={() => update({ mood: 'all' })}
+                  className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline capitalize"
+                >
+                  Clear Mood
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {MOOD_OPTIONS.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => update({ mood: m.id })}
+                  className={`flex items-center gap-1.5 py-2 px-2 rounded-xl text-xs font-medium border transition ${
+                    filters.mood === m.id
+                      ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-transparent shadow-sm'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="text-sm">{m.emoji}</span>
+                  <span className="truncate text-[11px] font-semibold">{m.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. Color Palette Swatches */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-2">
+                <Palette className="w-3.5 h-3.5 text-purple-500" />
+                <span>Color Palette</span>
+              </div>
+              {filters.color !== 'all' && (
+                <button
+                  onClick={() => update({ color: 'all' })}
+                  className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline capitalize"
+                >
+                  Clear Color
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              {COLOR_OPTIONS.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => update({ color: c.id })}
+                  className={`flex items-center gap-2 py-1.5 px-2 rounded-xl border text-xs font-medium transition ${
+                    filters.color === c.id
+                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 border-transparent shadow-xs ring-2 ring-indigo-500'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {c.id !== 'all' ? (
+                    <span
+                      className="w-3.5 h-3.5 rounded-full border border-white/50 shadow-xs flex-shrink-0"
+                      style={{ backgroundColor: c.hex }}
+                    />
+                  ) : (
+                    <span className="w-3.5 h-3.5 rounded-full border border-dashed border-slate-400 flex-shrink-0" />
+                  )}
+                  <span className="truncate text-[11px]">{c.label.split(' ')[0]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 4. Date Range */}
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <Calendar className="w-3.5 h-3.5" />
@@ -157,7 +302,7 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             )}
           </div>
 
-          {/* 2. Photo Orientation */}
+          {/* 5. Photo Orientation */}
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <Maximize2 className="w-3.5 h-3.5" />
@@ -190,7 +335,7 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             </div>
           </div>
 
-          {/* 3. Camera / Device */}
+          {/* 6. Camera / Device */}
           {availableCameras.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
@@ -213,13 +358,27 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             </div>
           )}
 
-          {/* 4. Special Attribute Toggles */}
+          {/* 7. Special Attribute Toggles */}
           <div className="space-y-3">
             <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Attributes & Flags
             </div>
 
             <div className="space-y-2">
+              {/* Smiling Faces Only */}
+              <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition">
+                <div className="flex items-center gap-2.5">
+                  <Smile className={`w-4 h-4 ${filters.smilingOnly ? 'text-amber-500' : 'text-slate-400'}`} />
+                  <span className="text-xs font-medium text-slate-800 dark:text-slate-200">Smiling Faces Only</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={filters.smilingOnly}
+                  onChange={(e) => update({ smilingOnly: e.target.checked })}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                />
+              </label>
+
               {/* Favorites Only */}
               <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition">
                 <div className="flex items-center gap-2.5">
@@ -281,7 +440,7 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             onClick={onClose}
             className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-md flex items-center justify-center gap-2"
           >
-            <span>Show {matchingCount} Photos</span>
+            <span>Show {matchingCount} Items</span>
             <span className="text-indigo-200 text-[10px]">({totalCount} total)</span>
           </button>
         </div>

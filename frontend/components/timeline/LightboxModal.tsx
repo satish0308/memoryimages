@@ -19,7 +19,9 @@ import {
   ExternalLink,
   Plus,
   Check,
-  Edit2
+  Edit2,
+  Sparkles,
+  Play
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 
@@ -80,6 +82,14 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const dragStart = useRef({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Sync video seek timestamp
+  useEffect(() => {
+    if (photo?.matched_timestamp && videoRef.current) {
+      videoRef.current.currentTime = photo.matched_timestamp;
+    }
+  }, [photo?.id, photo?.matched_timestamp]);
 
   // Sync category state when photo changes
   useEffect(() => {
@@ -417,18 +427,63 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               transition: isDragging ? 'none' : 'transform 75ms ease-out',
             }}
           >
-            <img
-              ref={imageRef}
-              src={
-                isHighResLoaded
-                  ? `${apiUrl}/api/v1/media/${photo.id}/view`
-                  : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
-              }
-              alt={photo.filename}
-              onClick={handleImageClick}
-              className="max-h-[85vh] max-w-full object-contain rounded-lg"
-              draggable={false}
-            />
+            {photo.is_video ? (
+              <div className="flex flex-col items-center gap-3">
+                <video
+                  ref={videoRef}
+                  src={`${apiUrl}/api/v1/media/${photo.id}/view`}
+                  controls
+                  autoPlay
+                  className="max-h-[75vh] max-w-full rounded-xl shadow-2xl bg-black"
+                  onLoadedMetadata={(e) => {
+                    if (photo.matched_timestamp) {
+                      e.currentTarget.currentTime = photo.matched_timestamp;
+                    }
+                  }}
+                />
+                {photo.matched_timestamp_label && (
+                  <div className="bg-rose-600/95 text-white text-xs px-3.5 py-1.5 rounded-full shadow-xl flex items-center gap-2.5 animate-fadeIn">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
+                    <span>Matched scene at <strong>{photo.matched_timestamp_label}</strong></span>
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          videoRef.current.currentTime = photo.matched_timestamp || 0;
+                          videoRef.current.play();
+                        }
+                      }}
+                      className="bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded text-[11px] font-semibold transition"
+                    >
+                      Jump to Scene
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          videoRef.current.currentTime = 0;
+                          videoRef.current.play();
+                        }
+                      }}
+                      className="bg-black/30 hover:bg-black/50 px-2 py-0.5 rounded text-[11px] font-semibold transition"
+                    >
+                      Play from Start
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <img
+                ref={imageRef}
+                src={
+                  isHighResLoaded
+                    ? `${apiUrl}/api/v1/media/${photo.id}/view`
+                    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
+                }
+                alt={photo.filename}
+                onClick={handleImageClick}
+                className="max-h-[85vh] max-w-full object-contain rounded-lg"
+                draggable={false}
+              />
+            )}
 
             {/* Interactive Face Bounding Boxes */}
             {showFaceBoxes && zoom === 1 && faces.map((face) => (
@@ -640,6 +695,66 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* AI Emotion, Mood & Visual Intelligence Card */}
+                {(photo.mood || photo.dominant_color || photo.is_video) && (
+                  <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 rounded-xl p-3.5 space-y-3 border border-indigo-500/20 shadow-md">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-indigo-300 font-semibold text-xs">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>AI Visual Intelligence</span>
+                      </div>
+                      {photo.is_video && (
+                        <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <Play className="w-2.5 h-2.5 fill-rose-300" />
+                          Video ({photo.duration_seconds ? `${photo.duration_seconds}s` : 'Clip'})
+                        </span>
+                      )}
+                    </div>
+
+                    {photo.mood && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Emotion & Atmosphere</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="capitalize font-semibold text-slate-200">
+                            {photo.mood === 'joyful' && '😊 Joyful'}
+                            {photo.mood === 'serene' && '🌅 Serene'}
+                            {photo.mood === 'celebratory' && '🎉 Celebratory'}
+                            {photo.mood === 'adventurous' && '⛰️ Adventurous'}
+                            {photo.mood === 'cozy' && '☕ Cozy'}
+                            {photo.mood === 'dramatic' && '🎭 Dramatic'}
+                            {photo.mood === 'romantic' && '❤️ Romantic'}
+                            {photo.mood === 'nostalgic' && '✨ Nostalgic'}
+                            {!['joyful', 'serene', 'celebratory', 'adventurous', 'cozy', 'dramatic', 'romantic', 'nostalgic'].includes(photo.mood) && photo.mood}
+                          </span>
+                          {photo.is_smiling && (
+                            <span className="bg-emerald-500/20 text-emerald-300 text-[10px] px-1.5 py-0.5 rounded font-medium">
+                              Smiling
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {photo.dominant_color && (
+                      <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800">
+                        <span className="text-slate-400">Color Palette</span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-3.5 h-3.5 rounded-full border border-white/40 shadow-xs"
+                            style={{ backgroundColor: photo.color_hex || '#4F46E5' }}
+                          />
+                          <span className="capitalize font-medium text-slate-300">
+                            {photo.dominant_color}
+                          </span>
+                          {photo.color_hex && (
+                            <span className="font-mono text-[10px] text-slate-500">{photo.color_hex}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Camera & Lens Technical EXIF */}
                 {(photo.camera_make || photo.camera_model || photo.iso || photo.exposure_time) && (

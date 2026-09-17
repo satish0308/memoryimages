@@ -259,8 +259,46 @@ def run_s3_sync(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             message=f"S3 sync complete: {res.get('indexed_count', 0)} objects synced.",
             result=res
         )
+def run_mood_analysis(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Runs AI Emotion, Mood & Color Palette analysis across library photos."""
+    from app.services.mood_engine import analyze_all_media_moods
+    TaskQueue.update_task(task_id, progress=10, message="Analyzing emotions, moods and color palettes...")
+    with SessionLocal() as db:
+        res = analyze_all_media_moods(db, limit=payload.get("limit", 500))
+        TaskQueue.update_task(
+            task_id,
+            progress=100,
+            message=f"Analyzed {res.get('processed_count', 0)} photos.",
+            result=res
+        )
         return res
 
+def run_video_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Extracts keyframes and generates CLIP vectors for all video files."""
+    from app.models.media import Media
+    from app.services.video_engine import extract_video_keyframes
+    TaskQueue.update_task(task_id, progress=10, message="Scanning video files and extracting keyframes...")
+    with SessionLocal() as db:
+        videos = db.query(Media).filter(
+            Media.is_deleted == False,
+            Media.mime_type.like("video/%")
+        ).all()
+        total = len(videos)
+        if total == 0:
+            return {"videos_processed": 0, "keyframes": 0}
+        total_kfs = 0
+        for i, v in enumerate(videos):
+            kfs = extract_video_keyframes(db, v)
+            total_kfs += len(kfs)
+            pct = int(((i + 1) / total) * 100)
+            TaskQueue.update_task(
+                task_id,
+                progress=pct,
+                current_step=i + 1,
+                total_steps=total,
+                message=f"Indexed video {i + 1}/{total}: {v.filename}"
+            )
+        return {"videos_processed": total, "keyframes": total_kfs}
 
 DISPATCH_TABLE = {
     "clip_index_all": run_clip_indexing,
@@ -269,6 +307,8 @@ DISPATCH_TABLE = {
     "db_backup_create": run_database_backup,
     "media_scan": run_media_scan,
     "s3_sync_library": run_s3_sync,
+    "mood_analysis_all": run_mood_analysis,
+    "video_index_all": run_video_indexing,
 }
 
 

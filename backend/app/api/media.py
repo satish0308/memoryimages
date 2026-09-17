@@ -263,8 +263,20 @@ def get_thumbnail(
             )
         except Exception:
             pass
-        
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on disk")
+
+@router.get("/{media_id}/keyframe/{keyframe_id}/thumbnail")
+def get_keyframe_thumbnail(media_id: int, keyframe_id: int, db: Session = Depends(get_db)):
+    """Serves WebP preview thumbnail for a video keyframe."""
+    from app.models.media import VideoKeyframe
+    kf = db.query(VideoKeyframe).filter(VideoKeyframe.id == keyframe_id, VideoKeyframe.media_id == media_id).first()
+    if not kf or not kf.thumbnail_path or not os.path.isfile(kf.thumbnail_path):
+        raise HTTPException(status_code=404, detail="Keyframe thumbnail not found")
+    return FileResponse(
+        kf.thumbnail_path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
 
 @router.get("/{media_id}/view")
 def view_original(media_id: int, db: Session = Depends(get_db)):
