@@ -483,7 +483,7 @@ export default function TriagePage() {
           <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">OCR Text Vault</p>
         </button>
 
-        {/* Duplicates Tab */}
+        {/* Duplicates & Bursts Tab */}
         <button
           onClick={() => setActiveTab('duplicates')}
           className={`p-3.5 rounded-2xl border text-left transition-all ${
@@ -494,12 +494,12 @@ export default function TriagePage() {
         >
           <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
             <Copy className="w-4 h-4 text-purple-500" />
-            Duplicates
+            Duplicates & Bursts
           </div>
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {duplicates.length}
           </p>
-          <p className="text-[10px] text-purple-700 dark:text-purple-400 font-medium">pHash Clusters</p>
+          <p className="text-[10px] text-purple-700 dark:text-purple-400 font-medium">AI Best Picked</p>
         </button>
 
         {/* Blurry Tab */}
@@ -853,11 +853,21 @@ export default function TriagePage() {
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="font-bold text-sm text-slate-900 dark:text-white">
-                        Cluster #{idx + 1} ({cluster.count} matching images)
-                      </span>
-                      <p className="text-xs text-slate-400 font-mono">
-                        Perceptual Hash: {cluster.hash}
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">
+                          {cluster.cluster_type === 'burst' ? '📸 Rapid Burst Sequence' : '👯 Duplicate Cluster'} #{idx + 1}
+                        </span>
+                        <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
+                          {cluster.count} shots
+                        </span>
+                        {cluster.duration_seconds !== undefined && cluster.duration_seconds > 0 && (
+                          <span className="text-xs text-slate-400">
+                            ({cluster.duration_seconds}s interval)
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">
+                        Cluster ID: {cluster.hash || cluster.id}
                       </p>
                     </div>
 
@@ -875,7 +885,11 @@ export default function TriagePage() {
                       <div
                         key={item.id}
                         onClick={() => setActiveCompareCluster(cluster)}
-                        className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200 dark:border-slate-800 hover:border-indigo-500 transition-all hover:scale-[1.02]"
+                        className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border transition-all hover:scale-[1.02] ${
+                          item.is_best_shot
+                            ? 'border-amber-400 dark:border-amber-500 shadow-md ring-1 ring-amber-400/40'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-indigo-500'
+                        }`}
                       >
                         <img
                           src={`${API_URL}${item.thumbnail_url}`}
@@ -883,6 +897,12 @@ export default function TriagePage() {
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                           loading="lazy"
                         />
+                        {item.is_best_shot && (
+                          <div className="absolute top-1.5 left-1.5 bg-amber-500 text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-0.5">
+                            <Award className="w-2.5 h-2.5" />
+                            <span>Best Shot</span>
+                          </div>
+                        )}
                         <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded-md font-mono">
                           {((item.file_size || 0) / (1024 * 1024)).toFixed(1)}MB
                         </div>

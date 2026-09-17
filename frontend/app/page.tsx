@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal } from 'lucide-react';
+import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers } from 'lucide-react';
 
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
@@ -14,6 +14,7 @@ import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { OnThisDaySection } from '@/components/flashbacks/OnThisDaySection';
 import { SmartFilterDrawer, SmartFilters, DEFAULT_SMART_FILTERS } from '@/components/timeline/SmartFilterDrawer';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
+import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 
 export default function PhotosPage() {
   const [timeline, setTimeline] = useState<TimelineGroup[]>([]);
@@ -35,13 +36,19 @@ export default function PhotosPage() {
   const [smartFilters, setSmartFilters] = useState<SmartFilters>(DEFAULT_SMART_FILTERS);
   const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
 
+  // Smart Duplicates & Burst Collapse state
+  const [collapseBursts, setCollapseBursts] = useState(true);
+  const [inspectingBurstLead, setInspectingBurstLead] = useState<MediaItem | null>(null);
+
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   const fetchTimeline = async () => {
     try {
       setLoading(true);
       const categoryParam = activeCategory !== 'all' ? `&category=${activeCategory}` : '';
-      const res = await fetch(`${API_URL}/api/v1/media/timeline?scale=${scale}${categoryParam}`);
+      const res = await fetch(
+        `${API_URL}/api/v1/media/timeline?scale=${scale}${categoryParam}&collapse_bursts=${collapseBursts}`
+      );
       if (res.ok) {
         setTimeline(await res.json());
       }
@@ -100,7 +107,7 @@ export default function PhotosPage() {
       }, 300);
       return () => clearTimeout(timeout);
     }
-  }, [activeCategory, scale, searchQuery, isSemanticSearch, smartFilters]);
+  }, [activeCategory, scale, searchQuery, isSemanticSearch, smartFilters, collapseBursts]);
 
   // Selection handlers
   const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {
@@ -490,6 +497,24 @@ export default function PhotosPage() {
           />
 
           <div className="flex items-center gap-2">
+            {/* Smart Burst Collapse Toggle */}
+            <button
+              onClick={() => setCollapseBursts((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
+                collapseBursts
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 shadow-amber-50'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+              title={
+                collapseBursts
+                  ? 'Burst Collapse is Active (📸 Stacks shown as AI Best Shot). Click to expand all individual photos.'
+                  : 'Burst Collapse is Off (Showing all individual photos). Click to collapse burst groups into stacks.'
+              }
+            >
+              <Layers className="w-3.5 h-3.5 text-amber-500" />
+              <span>{collapseBursts ? 'Bursts: Collapsed' : 'Bursts: Expanded'}</span>
+            </button>
+
             {/* Ambient Slideshow Launcher */}
             <button
               onClick={() => setIsSlideshowOpen(true)}
@@ -598,6 +623,7 @@ export default function PhotosPage() {
                   onToggleSelect={toggleSelectPhoto}
                   onToggleFavorite={toggleFavorite}
                   onDelete={deletePhoto}
+                  onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
                 />
               ))}
             </div>
@@ -643,6 +669,7 @@ export default function PhotosPage() {
               onToggleSelectGroup={toggleSelectGroup}
               onToggleFavorite={toggleFavorite}
               onDelete={deletePhoto}
+              onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
             />
           ))}
         </div>
@@ -714,6 +741,17 @@ export default function PhotosPage() {
         apiUrl={API_URL}
         isOpen={isSlideshowOpen}
         onClose={() => setIsSlideshowOpen(false)}
+      />
+
+      {/* Smart Burst Inspector & Redundant Cleaner Modal */}
+      <BurstInspectorModal
+        leadItem={inspectingBurstLead}
+        apiUrl={API_URL}
+        isOpen={Boolean(inspectingBurstLead)}
+        onClose={() => setInspectingBurstLead(null)}
+        onResolved={() => {
+          fetchTimeline();
+        }}
       />
     </div>
   );

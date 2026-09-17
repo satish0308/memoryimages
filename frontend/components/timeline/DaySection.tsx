@@ -25,6 +25,7 @@ interface DaySectionProps {
   onToggleSelectGroup?: (groupIds: number[], selectAll: boolean) => void;
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
+  onOpenBurst?: (item: MediaItem, e: React.MouseEvent) => void;
 }
 
 export const DaySection: React.FC<DaySectionProps> = ({
@@ -37,6 +38,7 @@ export const DaySection: React.FC<DaySectionProps> = ({
   onToggleSelectGroup,
   onToggleFavorite,
   onDelete,
+  onOpenBurst,
 }) => {
   const groupItemIds = group.items.map((i) => i.id);
   const isAllGroupSelected =
@@ -122,6 +124,7 @@ export const DaySection: React.FC<DaySectionProps> = ({
             onToggleSelect={onToggleSelect}
             onToggleFavorite={onToggleFavorite}
             onDelete={onDelete}
+            onOpenBurst={onOpenBurst}
           />
         ))}
       </div>

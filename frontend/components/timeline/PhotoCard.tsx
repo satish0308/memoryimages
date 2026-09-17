@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Heart, Trash2, Check, Play } from 'lucide-react';
+import { Heart, Trash2, Check, Play, Layers, Award } from 'lucide-react';
 
 export interface MediaItem {
   id: number;
@@ -36,6 +36,13 @@ export interface MediaItem {
   matched_timestamp_label?: string | null;
   similarity?: number;
   match_percent?: number;
+  // Smart Duplicates & Burst Shot properties
+  burst_count?: number;
+  burst_id?: string | null;
+  burst_media_ids?: number[];
+  is_burst_lead?: boolean;
+  burst_score?: number | null;
+  burst_type?: 'burst' | 'duplicate' | null;
 }
 
 interface PhotoCardProps {
@@ -46,6 +53,7 @@ interface PhotoCardProps {
   onToggleSelect?: (id: number, e: React.MouseEvent) => void;
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
+  onOpenBurst?: (item: MediaItem, e: React.MouseEvent) => void;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -56,22 +64,34 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   onToggleSelect,
   onToggleFavorite,
   onDelete,
+  onOpenBurst,
 }) => {
+  const isBurst = Boolean(item.burst_count && item.burst_count > 1);
+
   return (
-    <div
-      onClick={() => onSelect(item)}
-      className={`group relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition ${
-        isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
-      }`}
-    >
-      <img
-        src={`${apiUrl}${item.thumbnail_url}`}
-        alt={item.filename}
-        className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
-          isSelected ? 'brightness-95' : ''
+    <div className="relative group">
+      {/* 3D Stacked Card Effect for Burst Groups */}
+      {isBurst && (
+        <>
+          <div className="absolute inset-0 bg-slate-300 dark:bg-slate-700 rounded-xl transform rotate-2 translate-x-1.5 translate-y-1.5 -z-10 shadow-sm transition-transform group-hover:rotate-3 group-hover:translate-x-2" />
+          <div className="absolute inset-0 bg-slate-400/70 dark:bg-slate-800 rounded-xl transform -rotate-1 -translate-x-1 -translate-y-1 -z-20 shadow-sm transition-transform group-hover:-rotate-2 group-hover:-translate-x-1.5" />
+        </>
+      )}
+
+      <div
+        onClick={() => onSelect(item)}
+        className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition ${
+          isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
         }`}
-        loading="lazy"
-      />
+      >
+        <img
+          src={`${apiUrl}${item.thumbnail_url}`}
+          alt={item.filename}
+          className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
+            isSelected ? 'brightness-95' : ''
+          }`}
+          loading="lazy"
+        />
 
       {/* Select Checkbox Button (Top Left) */}
       <button
@@ -121,6 +141,25 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         )}
       </div>
 
+      {/* Burst Stack Pill Badge */}
+      {isBurst && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onOpenBurst) onOpenBurst(item, e);
+          }}
+          className="absolute bottom-2 left-2 z-20 flex items-center gap-1.5 bg-slate-950/85 hover:bg-slate-900 text-amber-300 hover:text-amber-200 text-[10px] font-bold px-2 py-0.5 rounded-lg backdrop-blur-md shadow-md border border-amber-400/30 transition-all hover:scale-105"
+          title={`${item.burst_count} burst shots. Click to inspect, compare & clean.`}
+        >
+          <Layers className="w-3 h-3 text-amber-400" />
+          <span>{item.burst_count} shots</span>
+          <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1 py-0.2 rounded font-semibold">
+            ★ Best
+          </span>
+        </button>
+      )}
+
       {/* Hover Overlay Controls */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2 pointer-events-none">
         <div className="flex justify-end pointer-events-auto">
@@ -147,5 +186,6 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         </div>
       </div>
     </div>
+  </div>
   );
 };

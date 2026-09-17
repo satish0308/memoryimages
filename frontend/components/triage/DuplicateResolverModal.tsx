@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, CheckCircle, Trash2, Award, Sparkles, AlertCircle, Eye } from 'lucide-react';
+import { X, CheckCircle, Trash2, Award, Sparkles, AlertCircle, Eye, Smile } from 'lucide-react';
 
 export interface DuplicateItem {
   id: number;
@@ -13,11 +13,23 @@ export interface DuplicateItem {
   is_blurry?: boolean;
   captured_at: string;
   thumbnail_url: string;
+  // Enhanced AI Scoring
+  sharpness_score?: number;
+  expression_score?: number;
+  resolution_score?: number;
+  composite_score?: number;
+  is_smiling?: boolean;
+  is_best_shot?: boolean;
 }
 
 export interface DuplicateCluster {
+  id?: string;
   hash: string;
   count: number;
+  cluster_type?: 'burst' | 'duplicate';
+  duration_seconds?: number;
+  best_shot_id?: number;
+  reclaimable_mb?: number;
   items: DuplicateItem[];
 }
 
@@ -36,13 +48,16 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = ({
 }) => {
   if (!cluster || cluster.items.length < 2) return null;
 
-  // Determine the recommended best shot based on sharpness score and file resolution
-  const sortedByQuality = [...cluster.items].sort((a, b) => {
-    const scoreA = (a.blurriness_score || 0) + ((a.width || 0) * (a.height || 0)) / 10000;
-    const scoreB = (b.blurriness_score || 0) + ((b.width || 0) * (b.height || 0)) / 10000;
-    return scoreB - scoreA;
-  });
-  const bestShotId = sortedByQuality[0]?.id || cluster.items[0].id;
+  // Determine the recommended best shot from AI or sharpness fallback
+  const bestShotId =
+    cluster.best_shot_id ||
+    cluster.items.find((i) => i.is_best_shot)?.id ||
+    [...cluster.items].sort((a, b) => {
+      const scoreA = (a.composite_score || a.blurriness_score || 0);
+      const scoreB = (b.composite_score || b.blurriness_score || 0);
+      return scoreB - scoreA;
+    })[0]?.id ||
+    cluster.items[0].id;
 
   const [selectedKeepId, setSelectedKeepId] = useState<number>(bestShotId);
   const [loading, setLoading] = useState(false);
@@ -161,32 +176,45 @@ export const DuplicateResolverModal: React.FC<DuplicateResolverModalProps> = ({
 
                       <div className="grid grid-cols-2 gap-2 text-slate-300 text-[11px] pt-1">
                         <div>
-                          <span className="text-slate-500 block">Resolution</span>
-                          <span className="font-mono">
-                            {item.width && item.height ? `${item.width}×${item.height}` : 'Standard'}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 block">File Size</span>
-                          <span className="font-mono">
-                            {(item.file_size / (1024 * 1024)).toFixed(2)} MB
+                          <span className="text-slate-500 block">AI Quality Score</span>
+                          <span className="font-mono font-bold text-amber-400">
+                            {item.composite_score ? `${item.composite_score.toFixed(1)}/100` : 'Standard'}
                           </span>
                         </div>
                         <div>
                           <span className="text-slate-500 block">Sharpness</span>
                           <span
                             className={`font-mono font-semibold ${
-                              (item.blurriness_score || 0) > 100
+                              (item.sharpness_score || item.blurriness_score || 0) > 70
                                 ? 'text-emerald-400'
                                 : 'text-amber-400'
                             }`}
                           >
-                            {item.blurriness_score ? item.blurriness_score.toFixed(1) : 'Normal'}
+                            {item.sharpness_score
+                              ? `${item.sharpness_score.toFixed(0)}/100`
+                              : item.blurriness_score
+                              ? item.blurriness_score.toFixed(1)
+                              : 'Normal'}
                           </span>
                         </div>
                         <div>
-                          <span className="text-slate-500 block">Captured</span>
-                          <span>{new Date(item.captured_at).toLocaleDateString()}</span>
+                          <span className="text-slate-500 block">Expression</span>
+                          <span className="flex items-center gap-1">
+                            {item.is_smiling ? (
+                              <span className="text-emerald-400 font-medium flex items-center gap-0.5">
+                                <Smile className="w-3 h-3" />
+                                <span>Smiling</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">Neutral</span>
+                            )}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block">Resolution</span>
+                          <span className="font-mono">
+                            {item.width && item.height ? `${item.width}×${item.height}` : 'Standard'}
+                          </span>
                         </div>
                       </div>
                     </div>

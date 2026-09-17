@@ -53,12 +53,16 @@ def list_media(
 def get_timeline(
     category: Optional[MediaCategory] = None,
     scale: str = Query("day", regex="^(day|month|year)$"),
+    collapse_bursts: bool = Query(True),
     db: Session = Depends(get_db)
 ):
     """
-    Returns media items grouped chronologically by Day, Month, or Year,
-    enabling pinch-to-zoom timeline scaling and bulk selection.
+    Returns media items grouped chronologically by Day, Month, or Year.
+    When collapse_bursts is True (default), burst sequences and near duplicates
+    are collapsed into a single card representing the AI Best Shot with a burst count badge.
     """
+    from app.services.burst_engine import detect_burst_clusters
+
     query = db.query(Media).filter(
         Media.is_archived == False,
         Media.is_deleted == False
@@ -67,10 +71,26 @@ def get_timeline(
         query = query.filter(Media.category == category)
         
     items = query.order_by(desc(Media.captured_at)).all()
+
+    # Pre-calculate burst clusters if collapsing is active
+    subordinate_burst_ids = set()
+    burst_lead_map = {}
+    if collapse_bursts:
+        clusters = detect_burst_clusters(db, category=category)
+        for c in clusters:
+            best_id = c["best_shot_id"]
+            burst_lead_map[best_id] = c
+            for it in c["items"]:
+                if it["id"] != best_id:
+                    subordinate_burst_ids.add(it["id"])
     
     # Group based on requested scale
     timeline_groups = {}
     for item in items:
+        # If burst collapse is active and this item is a redundant shot in a burst, skip showing it in main grid
+        if collapse_bursts and item.id in subordinate_burst_ids:
+            continue
+
         if not item.captured_at:
             group_key = "Unknown Date"
             label = "Unknown Date"
@@ -92,6 +112,16 @@ def get_timeline(
                 "count": 0,
                 "items": []
             }
+
+        # Check if this item is the lead of a burst
+        burst_info = burst_lead_map.get(item.id)
+        burst_count = burst_info["count"] if burst_info else 1
+        burst_id = burst_info["id"] if burst_info else None
+        burst_media_ids = [it["id"] for it in burst_info["items"]] if burst_info else []
+        is_burst_lead = bool(burst_info)
+        burst_score = burst_info["items"][0]["composite_score"] if burst_info else None
+        burst_type = burst_info["cluster_type"] if burst_info else None
+
         timeline_groups[group_key]["count"] += 1
         timeline_groups[group_key]["items"].append({
             "id": item.id,
@@ -112,7 +142,22 @@ def get_timeline(
             "latitude": item.latitude,
             "longitude": item.longitude,
             "location_name": item.location_name,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            # AI Emotion, Mood & Color
+            "mood": item.mood,
+            "mood_score": item.mood_score,
+            "is_smiling": item.is_smiling,
+            "dominant_color": item.dominant_color,
+            "color_hex": item.color_hex,
+            "is_video": (item.mime_type or "").startswith("video/"),
+            "duration_seconds": item.duration_seconds,
+            # Burst Shot Grouping
+            "burst_count": burst_count,
+            "burst_id": burst_id,
+            "burst_media_ids": burst_media_ids,
+            "is_burst_lead": is_burst_lead,
+            "burst_score": burst_score,
+            "burst_type": burst_type
         })
         
     return list(timeline_groups.values())
@@ -186,6 +231,18 @@ def get_media_detail(media_id: int, db: Session = Depends(get_db)):
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
     return media
+
+@router.get("/{media_id}/burst")
+def get_media_burst(media_id: int, db: Session = Depends(get_db)):
+    """
+    Returns the burst sequence or duplicate cluster containing this media item,
+    including AI quality rankings, sharpness scores, and Best Shot designation.
+    """
+    from app.services.burst_engine import get_burst_for_media
+    cluster = get_burst_for_media(db, media_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="No burst sequence found for this photo")
+    return cluster
 
 @router.get("/{media_id}/thumbnail")
 def get_thumbnail(

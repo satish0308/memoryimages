@@ -131,42 +131,24 @@ def get_bills_and_receipts(db: Session = Depends(get_db)):
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 
+from app.services.burst_engine import (
+    detect_burst_clusters,
+    resolve_burst_cluster,
+    resolve_all_bursts
+)
+
 @router.get("/duplicates")
-def get_duplicate_clusters(db: Session = Depends(get_db)):
+@router.get("/bursts")
+def get_duplicate_and_burst_clusters(db: Session = Depends(get_db)):
     """
-    Groups items by identical or near-identical perceptual hash (pHash).
+    Groups items into Rapid Burst sequences and Perceptual Duplicates.
+    Every cluster is ranked using composite quality scoring (sharpness, smile, resolution)
+    with the top item flagged as AI Best Shot.
     """
-    # Find perceptual hashes shared by > 1 media item
-    duplicate_hashes = db.query(Media.perceptual_hash).filter(
-        Media.perceptual_hash != None,
-        Media.is_deleted == False
-    ).group_by(Media.perceptual_hash).having(func.count(Media.id) > 1).all()
-    
-    hashes = [h[0] for h in duplicate_hashes]
-    clusters = []
-    
-    for h in hashes:
-        items = db.query(Media).filter(
-            Media.perceptual_hash == h,
-            Media.is_deleted == False
-        ).order_by(desc(Media.captured_at)).all()
-        
-        clusters.append({
-            "hash": h,
-            "count": len(items),
-            "items": [{
-                "id": m.id,
-                "filename": m.filename,
-                "file_size": m.file_size,
-                "width": m.width,
-                "height": m.height,
-                "blurriness_score": m.blurriness_score,
-                "is_blurry": m.is_blurry,
-                "captured_at": m.captured_at,
-                "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
-            } for m in items]
-        })
-        
+    clusters = detect_burst_clusters(db)
+    # Ensure backwards compatibility for legacy cluster.hash field
+    for c in clusters:
+        c["hash"] = c["id"]
     return clusters
 
 class ResolveDuplicatesRequest(BaseModel):
@@ -174,24 +156,13 @@ class ResolveDuplicatesRequest(BaseModel):
     delete_media_ids: List[int]
 
 @router.post("/resolve-duplicates")
+@router.post("/bursts/resolve")
 def resolve_duplicates(req: ResolveDuplicatesRequest, db: Session = Depends(get_db)):
     """
     Keeps the selected best shot and soft-deletes the redundant duplicate photos.
     Adheres strictly to the safe zero auto-deletion policy with manual confirmation.
     """
-    if not req.delete_media_ids:
-        return {"status": "no_op", "count": 0}
-
-    deleted_count = db.query(Media).filter(
-        Media.id.in_(req.delete_media_ids)
-    ).update({"is_deleted": True}, synchronize_session=False)
-    db.commit()
-
-    return {
-        "status": "resolved",
-        "kept_media_id": req.keep_media_id,
-        "deleted_count": deleted_count
-    }
+    return resolve_burst_cluster(db, req.keep_media_id, req.delete_media_ids)
 
 @router.get("/bills/{media_id}/inspect")
 def inspect_bill_document(media_id: int, db: Session = Depends(get_db)):
@@ -311,51 +282,11 @@ def mark_as_sharp(req: BatchActionRequest, db: Session = Depends(get_db)):
     return {"status": "marked_sharp", "count": updated}
 
 @router.post("/resolve-all-duplicates")
+@router.post("/bursts/resolve-all")
 def resolve_all_duplicates(db: Session = Depends(get_db)):
     """
-    Auto-resolves all duplicate clusters by keeping the highest resolution/sharpness image
-    in each cluster and soft-deleting redundant copies.
+    Auto-resolves all duplicate and burst clusters: keeps each cluster's AI Best Shot
+    (highest sharpness, smile, resolution) and soft-deletes redundant copies.
     """
-    duplicate_hashes = db.query(Media.perceptual_hash).filter(
-        Media.perceptual_hash != None,
-        Media.is_deleted == False
-    ).group_by(Media.perceptual_hash).having(func.count(Media.id) > 1).all()
-
-    total_deleted = 0
-    resolved_clusters = 0
-
-    for (h,) in duplicate_hashes:
-        items = db.query(Media).filter(
-            Media.perceptual_hash == h,
-            Media.is_deleted == False
-        ).all()
-
-        if len(items) <= 1:
-            continue
-
-        # Score items: higher resolution (w*h) + file_size + blurriness_score
-        def item_quality(m):
-            res = (m.width or 1000) * (m.height or 1000)
-            size = m.file_size or 0
-            sharpness = m.blurriness_score or 0
-            return (res, size, sharpness)
-
-        sorted_items = sorted(items, key=item_quality, reverse=True)
-        best_item = sorted_items[0]
-        redundant_items = sorted_items[1:]
-
-        redundant_ids = [m.id for m in redundant_items]
-        deleted_count = db.query(Media).filter(
-            Media.id.in_(redundant_ids)
-        ).update({"is_deleted": True}, synchronize_session=False)
-
-        total_deleted += deleted_count
-        resolved_clusters += 1
-
-    db.commit()
-    return {
-        "status": "all_resolved",
-        "clusters_resolved": resolved_clusters,
-        "deleted_duplicates": total_deleted
-    }
+    return resolve_all_bursts(db)
 
