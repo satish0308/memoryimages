@@ -255,3 +255,44 @@ def list_users(db: Session = Depends(get_db)):
 def logout():
     """Client-side token invalidation."""
     return {"status": "logged_out"}
+
+@router.get("/google/url")
+def get_google_sign_in_url():
+    """Returns the Google OAuth sign-in URL for mandatory Google account authentication."""
+    from app.services.google_sync import get_google_auth_url
+    res = get_google_auth_url()
+    if "error" in res:
+        raise HTTPException(status_code=400, detail=res["error"])
+    return res
+
+from fastapi.responses import RedirectResponse
+
+@router.get("/google/callback")
+def auth_google_callback(
+    code: str,
+    state: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Google OAuth callback specifically under /auth/google/callback."""
+    from app.services.google_sync import handle_oauth_callback
+    import urllib.parse
+    res = handle_oauth_callback(db, code, state)
+    if res.get("status") == "error":
+        err_msg = urllib.parse.quote(str(res.get("error", "Google authentication failed")))
+        return RedirectResponse(url=f"http://localhost:3000/login?error={err_msg}")
+
+    token = res.get("access_token")
+    user = res.get("user")
+    if token and user:
+        query = urllib.parse.urlencode({
+            "token": token,
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+            "full_name": user.get("full_name") or "",
+            "is_admin": "true" if user.get("is_admin") else "false",
+            "provider": "google"
+        })
+        return RedirectResponse(url=f"http://localhost:3000/login?{query}")
+
+    return RedirectResponse(url="http://localhost:3000/login?status=google_connected")

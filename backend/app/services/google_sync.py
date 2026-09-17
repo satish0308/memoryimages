@@ -111,15 +111,19 @@ def handle_oauth_callback(db: Session, code: str, state: Optional[str] = None) -
         }
         
         display_name = "Google Drive Photos"
+        user_email = None
+        user_name = None
         try:
             oauth2_service = build("oauth2", "v2", credentials=credentials)
             user_info = oauth2_service.userinfo().get().execute()
-            if user_info.get("email"):
-                display_name = f"Google Drive ({user_info.get('email')})"
+            user_email = user_info.get("email")
+            user_name = user_info.get("name")
+            if user_email:
+                display_name = f"Google Drive ({user_email})"
         except Exception as e:
             logger.warning(f"Could not fetch user profile info: {e}")
 
-        # Save or update SyncSource
+        # Save or update SyncSource for Google Drive
         source = db.query(SyncSource).filter(SyncSource.sync_type == SyncType.GOOGLE_DRIVE).first()
         if not source:
             source = SyncSource(
@@ -137,7 +141,65 @@ def handle_oauth_callback(db: Session, code: str, state: Optional[str] = None) -
             
         db.commit()
         db.refresh(source)
-        return {"status": "success", "source_id": source.id}
+
+        # Authenticate / Register the Google Account into the local User system
+        from sqlalchemy import func
+        from app.models.user import User
+        from app.services.auth_service import create_access_token, get_password_hash
+        import secrets
+
+        user = None
+        access_token = None
+        if user_email:
+            clean_email = user_email.strip().lower()
+            user = db.query(User).filter(func.lower(User.email) == clean_email).first()
+            if not user:
+                # Generate unique username from email prefix
+                base_username = clean_email.split("@")[0].replace(".", "_")
+                candidate_username = base_username
+                suffix = 1
+                while db.query(User).filter(func.lower(User.username) == candidate_username.lower()).first():
+                    candidate_username = f"{base_username}_{suffix}"
+                    suffix += 1
+
+                is_admin = db.query(User).count() == 0 or candidate_username == "admin"
+                user = User(
+                    username=candidate_username,
+                    email=clean_email,
+                    full_name=user_name or candidate_username,
+                    hashed_password=get_password_hash(secrets.token_urlsafe(32)),
+                    is_active=True,
+                    is_admin=is_admin
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+            else:
+                if user_name and not user.full_name:
+                    user.full_name = user_name
+                user.is_active = True
+                db.commit()
+                db.refresh(user)
+
+            access_token = create_access_token({
+                "sub": str(user.id),
+                "username": user.username,
+                "email": user.email,
+                "is_admin": user.is_admin
+            })
+
+        return {
+            "status": "success",
+            "source_id": source.id,
+            "access_token": access_token,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin
+            } if user else None
+        }
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
         return {"status": "error", "error": str(e)}

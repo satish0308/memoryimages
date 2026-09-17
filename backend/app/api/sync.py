@@ -53,14 +53,30 @@ def google_oauth_callback(
     db: Session = Depends(get_db)
 ):
     """OAuth callback endpoint where Google redirects with the authorization code."""
+    import urllib.parse
     res = handle_oauth_callback(db, code, state)
     if res.get("status") == "error":
-        raise HTTPException(status_code=400, detail=res.get("error"))
+        err_msg = urllib.parse.quote(str(res.get("error", "Google authentication failed")))
+        return RedirectResponse(url=f"http://localhost:3000/login?error={err_msg}")
         
     source_id = res.get("source_id")
     if source_id:
         background_tasks.add_task(run_google_drive_sync, db, source_id)
         
+    token = res.get("access_token")
+    user = res.get("user")
+    if token and user:
+        query = urllib.parse.urlencode({
+            "token": token,
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+            "full_name": user.get("full_name") or "",
+            "is_admin": "true" if user.get("is_admin") else "false",
+            "provider": "google"
+        })
+        return RedirectResponse(url=f"http://localhost:3000/login?{query}")
+
     return RedirectResponse(url="http://localhost:3000/sync?status=connected&syncing=1")
 
 @router.post("/google/{source_id}/trigger")

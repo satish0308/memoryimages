@@ -237,3 +237,4 @@ Every day, users take dozens of photos: precious memories, temporary screenshots
 | 2026-09-17 | Async Background Worker & WebSockets | Dedicated Redis 7 task worker, real-time WebSocket progress bars, global Task Drawer, and 1-click AI job dispatchers | `[Completed]` |
 | 2026-09-17 | Full Codebase Scan & Routing Audit | Reordered People API routes, resolved /register page export structure via AuthView, audited all 9 frontend routes & 30 backend endpoints | `[Completed]` |
 | 2026-09-17 | Proper Sign-In Page & Route Guard | Removed silent auto-login, built full-screen AppShell AuthGuard, isolated /login and /register, added global Bearer fetch interceptor | `[Completed]` |
+| 2026-09-17 | Mandatory Google Account Sign-In | Integrated mandatory Google SSO with official Google branding, backend user auto-provisioning, JWT callback redirect, and offline emergency fallback | `[Completed]` |

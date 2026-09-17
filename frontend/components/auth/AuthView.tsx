@@ -1,22 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { 
-  LogIn, 
-  UserPlus, 
-  Lock, 
-  User as UserIcon, 
-  Mail,
-  Sparkles, 
   ShieldCheck, 
-  AlertCircle,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  HardDrive,
-  Cpu,
-  ArrowRight
+  AlertCircle, 
+  Sparkles, 
+  Cpu, 
+  HardDrive, 
+  Cloud, 
+  CheckCircle2, 
+  ArrowRight,
+  Lock,
+  ChevronDown,
+  ChevronUp,
+  KeyRound
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -24,82 +22,114 @@ interface AuthViewProps {
   initialTab?: 'login' | 'register';
 }
 
-export function AuthView({ initialTab = 'login' }: AuthViewProps) {
+function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
   const router = useRouter();
-  const { login, register } = useAuth();
-  const [tab, setTab] = useState<'login' | 'register'>(initialTab);
-  
-  // Login fields
-  const [loginIdentifier, setLoginIdentifier] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [showLoginPassword, setShowLoginPassword] = useState(false);
-  
-  // Register fields
-  const [regUsername, setRegUsername] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regFullName, setRegFullName] = useState('');
-  const [showRegPassword, setShowRegPassword] = useState(false);
+  const searchParams = useSearchParams();
+  const { login, isAuthenticated } = useAuth();
 
-  const [rememberMe, setRememberMe] = useState(true);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
+  const [googleSuccess, setGoogleSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginIdentifier.trim() || !loginPassword) {
-      setError('Please provide your username/email and password.');
+  // Developer / Emergency Fallback State (Collapsed by default)
+  const [showFallback, setShowFallback] = useState(false);
+  const [fallbackUser, setFallbackUser] = useState('admin');
+  const [fallbackPass, setFallbackPass] = useState('password123');
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+  // Check URL parameters for returned Google OAuth tokens
+  useEffect(() => {
+    const token = searchParams.get('token');
+    const email = searchParams.get('email');
+    const username = searchParams.get('username');
+    const fullName = searchParams.get('full_name');
+    const isAdmin = searchParams.get('is_admin') === 'true';
+    const id = searchParams.get('id');
+    const err = searchParams.get('error');
+
+    if (err) {
+      setError(decodeURIComponent(err));
       return;
     }
+
+    if (token && email) {
+      const googleUser = {
+        id: id ? parseInt(id, 10) : 1,
+        username: username || email.split('@')[0],
+        email: email,
+        full_name: fullName || username || email.split('@')[0],
+        is_admin: isAdmin,
+        is_active: true
+      };
+
+      localStorage.setItem('memorypics_token', token);
+      localStorage.setItem('memorypics_user', JSON.stringify(googleUser));
+      setGoogleSuccess(`Signed in as ${googleUser.email}!`);
+
+      // Smooth transition to library
+      const timer = setTimeout(() => {
+        window.location.href = '/';
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams]);
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/');
+    }
+  }, [isAuthenticated, router]);
+
+  // Trigger Google OAuth Redirect Flow
+  const handleGoogleSignIn = async () => {
     setError(null);
-    setLoading(true);
-    const result = await login(loginIdentifier, loginPassword);
-    setLoading(false);
-    if (result.success) {
-      router.push('/');
-    } else {
-      setError(result.error || 'Invalid credentials. Please verify and try again.');
+    setConnectingGoogle(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/google/url`);
+      const data = await res.json();
+      if (res.ok && data.auth_url) {
+        window.location.href = data.auth_url;
+      } else {
+        setError(data.detail || data.error || 'Could not connect to Google OAuth service.');
+        setConnectingGoogle(false);
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to reach authentication server.');
+      setConnectingGoogle(false);
     }
   };
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  // Developer / Emergency Local Sign-In Fallback
+  const handleFallbackSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regUsername.trim() || !regEmail.trim() || !regPassword) {
-      setError('Please fill in all required fields.');
-      return;
-    }
-    if (regPassword.length < 6) {
-      setError('Password must contain at least 6 characters.');
+    if (!fallbackUser.trim() || !fallbackPass) {
+      setError('Please provide fallback credentials.');
       return;
     }
     setError(null);
-    setLoading(true);
-    const result = await register(regUsername, regEmail, regPassword, regFullName);
-    setLoading(false);
+    setFallbackLoading(true);
+    const result = await login(fallbackUser, fallbackPass);
+    setFallbackLoading(false);
     if (result.success) {
       router.push('/');
     } else {
-      setError(result.error || 'Account creation failed. Please try a different username or email.');
+      setError(result.error || 'Fallback sign-in failed.');
     }
-  };
-
-  const fillAdminCredentials = () => {
-    setTab('login');
-    setLoginIdentifier('admin');
-    setLoginPassword('password123');
-    setError(null);
   };
 
   return (
     <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center p-4 sm:p-6 lg:p-8 relative overflow-hidden">
-      {/* Dynamic Background Ambient Orbs */}
+      {/* Ambient Lighting Orbs */}
       <div className="absolute top-1/4 -left-48 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/4 -right-48 w-96 h-96 bg-purple-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-500/5 rounded-full blur-[140px] pointer-events-none" />
 
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
         
-        {/* Left Hero Column: Brand Pillars & Architecture (Desktop Only) */}
+        {/* Left Hero Column: Brand Pillars & Privacy Guarantees */}
         <div className="hidden lg:flex lg:col-span-5 flex-col justify-between space-y-8 pr-4">
           <div className="space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-400 text-xs font-semibold">
@@ -110,13 +140,13 @@ export function AuthView({ initialTab = 'login' }: AuthViewProps) {
             <h1 className="text-3xl font-extrabold text-white tracking-tight leading-tight">
               Your Memories, <br />
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
-                Private & Intelligent.
+                Safe & Synchronized.
               </span>
             </h1>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Self-hosted family photo intelligence designed with zero cloud dependency. 
-              Seamlessly browse, search, and relive your moments with offline AI.
+              Private family photo intelligence backed by your Google Account. 
+              Enjoy seamless offline AI, zero-disk in-memory streaming, and instant Google Drive sync.
             </p>
           </div>
 
@@ -124,11 +154,13 @@ export function AuthView({ initialTab = 'login' }: AuthViewProps) {
           <div className="space-y-3">
             <div className="flex items-start gap-3 p-3 bg-slate-900/60 border border-slate-800/80 rounded-2xl">
               <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-xl">
-                <ShieldCheck className="w-4 h-4" />
+                <Cloud className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-semibold text-slate-200">100% Local & Private</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">Your files never leave your system. Zero third-party telemetry.</p>
+                <h4 className="text-xs font-semibold text-slate-200">Mandatory Google Account Auth</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Verified Google identity with direct Google Drive photo stream integration.
+                </p>
               </div>
             </div>
 
@@ -138,7 +170,9 @@ export function AuthView({ initialTab = 'login' }: AuthViewProps) {
               </div>
               <div>
                 <h4 className="text-xs font-semibold text-slate-200">Offline Vision & CLIP AI</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">Vector semantic search and UltraFace clustering run completely on-device.</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Face clustering and semantic search run locally on your host without cloud tracking.
+                </p>
               </div>
             </div>
 
@@ -148,299 +182,180 @@ export function AuthView({ initialTab = 'login' }: AuthViewProps) {
               </div>
               <div>
                 <h4 className="text-xs font-semibold text-slate-200">Zero Local Disk Footprint</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">In-memory streaming guarantees no duplicate caches eat your hard drive.</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  In-memory streaming prevents gigabytes of duplicate thumbnail caches from filling your drive.
+                </p>
               </div>
             </div>
           </div>
 
           <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Secure Database & Redis Worker Connected</span>
+            <span>Dual-Engine: PostgreSQL & Redis Background Worker Online</span>
           </div>
         </div>
 
-        {/* Right Column: Sign In / Register Card */}
+        {/* Right Column: Google Sign In Card */}
         <div className="lg:col-span-7 w-full max-w-md mx-auto">
-          <div className="bg-slate-900/90 border border-slate-800/90 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 relative animate-slideUp">
+          <div className="bg-slate-900/95 border border-slate-800/90 backdrop-blur-2xl rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 relative animate-slideUp">
             
             {/* Header Brand */}
             <div className="text-center mb-6">
-              <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-indigo-600/30">
-                <Sparkles className="w-6 h-6 text-amber-300" />
+              <div className="w-14 h-14 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-indigo-600/30">
+                <Sparkles className="w-7 h-7 text-amber-300" />
               </div>
-              <h2 className="text-xl font-bold text-white tracking-tight">
-                {tab === 'login' ? 'Welcome Back' : 'Create Your Account'}
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Sign In to MyMemoryPics
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                {tab === 'login' 
-                  ? 'Sign in to access your private library and albums' 
-                  : 'Start organizing your family memories securely'}
+              <p className="text-xs text-slate-400 mt-1.5">
+                Authentication with a verified Google Account is mandatory.
               </p>
             </div>
 
-            {/* Tab Switcher */}
-            <div className="flex p-1 bg-slate-800/80 rounded-2xl mb-6 border border-slate-700/50">
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('login');
-                  setError(null);
-                }}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition ${
-                  tab === 'login'
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>Sign In</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('register');
-                  setError(null);
-                }}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition ${
-                  tab === 'register'
-                    ? 'bg-indigo-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Create Account</span>
-              </button>
+            {/* Mandatory Requirement Pill */}
+            <div className="mb-6 p-3.5 bg-indigo-950/40 border border-indigo-800/50 rounded-2xl flex items-start gap-2.5 text-xs text-indigo-300">
+              <ShieldCheck className="w-4 h-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-semibold text-indigo-200">Mandatory Google SSO</p>
+                <p className="text-[11px] text-indigo-300/80 leading-relaxed">
+                  Signing in with Google ensures your library access permissions and Google Drive photo streaming are securely authorized.
+                </p>
+              </div>
             </div>
 
-            {/* Error Banner */}
+            {/* Error Notification Banner */}
             {error && (
-              <div className="mb-5 flex items-center gap-2.5 p-3 bg-red-950/60 border border-red-800/60 text-red-300 rounded-2xl text-xs animate-shake">
+              <div className="mb-5 flex items-center gap-2.5 p-3.5 bg-red-950/60 border border-red-800/60 text-red-300 rounded-2xl text-xs animate-shake">
                 <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                 <span>{error}</span>
               </div>
             )}
 
-            {/* Form Container */}
-            {tab === 'login' ? (
-              /* --- SIGN IN FORM --- */
-              <form onSubmit={handleLoginSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Username or Email
-                  </label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="text"
-                      value={loginIdentifier}
-                      onChange={(e) => setLoginIdentifier(e.target.value)}
-                      placeholder="e.g. admin or satish@example.com"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type={showLoginPassword ? 'text' : 'password'}
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition"
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowLoginPassword(!showLoginPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
-                    >
-                      {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-xs pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-slate-400 select-none">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="w-3.5 h-3.5 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 bg-slate-800"
-                    />
-                    <span>Remember this session</span>
-                  </label>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl font-semibold text-xs shadow-lg shadow-indigo-600/30 transition disabled:opacity-60 flex items-center justify-center gap-2 hover:scale-[1.01]"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Authenticating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <LogIn className="w-4 h-4" />
-                      <span>Sign In to MyMemoryPics</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Quick 1-Click Admin Fill Helper */}
-                <div className="pt-3 border-t border-slate-800/80">
-                  <button
-                    type="button"
-                    onClick={fillAdminCredentials}
-                    className="w-full py-2 bg-slate-800/40 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 text-slate-300 rounded-xl text-[11px] font-medium transition flex items-center justify-center gap-2"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Quick Fill Default Admin (admin / password123)</span>
-                  </button>
-                </div>
-              </form>
-            ) : (
-              /* --- CREATE ACCOUNT FORM --- */
-              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Username *
-                  </label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="text"
-                      value={regUsername}
-                      onChange={(e) => setRegUsername(e.target.value)}
-                      placeholder="e.g. satish"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Email Address *
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="email"
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="satish@example.com"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Full Name (Optional)
-                  </label>
-                  <div className="relative">
-                    <CheckCircle2 className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type="text"
-                      value={regFullName}
-                      onChange={(e) => setRegFullName(e.target.value)}
-                      placeholder="Satish"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Password * (min. 6 characters)
-                  </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input
-                      type={showRegPassword ? 'text' : 'password'}
-                      value={regPassword}
-                      onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-800/60 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-                      required
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowRegPassword(!showRegPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
-                    >
-                      {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl font-semibold text-xs shadow-lg shadow-indigo-600/30 transition disabled:opacity-60 flex items-center justify-center gap-2 hover:scale-[1.01] mt-2"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Creating Account...</span>
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="w-4 h-4" />
-                      <span>Create Free Local Account</span>
-                    </>
-                  )}
-                </button>
-              </form>
+            {/* Google Success Banner */}
+            {googleSuccess && (
+              <div className="mb-5 flex items-center gap-2.5 p-3.5 bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 rounded-2xl text-xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <span>{googleSuccess} Redirecting to your photos...</span>
+              </div>
             )}
 
-            {/* Switch Tab Prompt */}
-            <div className="mt-5 text-center text-xs text-slate-400">
-              {tab === 'login' ? (
-                <span>
-                  Don&apos;t have an account yet?{' '}
+            {/* PRIMARY ACTION: Official Google Sign-In Button */}
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={connectingGoogle}
+                className="w-full py-3.5 px-4 bg-white hover:bg-slate-100 text-slate-900 rounded-2xl font-semibold text-sm shadow-xl hover:shadow-2xl transition-all duration-200 flex items-center justify-center gap-3 border border-slate-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-75 disabled:pointer-events-none cursor-pointer"
+              >
+                {connectingGoogle ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-slate-700 border-t-transparent rounded-full animate-spin" />
+                    <span>Connecting to Google...</span>
+                  </>
+                ) : (
+                  <>
+                    {/* Official Google 'G' 4-Color Vector Logo */}
+                    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.25 21.36 7.33 24 12 24z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.98 0 12s.46 3.84 1.26 5.42l4.02-3.15z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                      />
+                    </svg>
+                    <span>Sign in with Google Account</span>
+                  </>
+                )}
+              </button>
+
+              <p className="text-[11px] text-slate-500 text-center leading-relaxed">
+                By continuing, you agree to access your private MyMemoryPics host via authorized Google OAuth 2.0.
+              </p>
+            </div>
+
+            {/* Collapsible Developer / Emergency Local Fallback */}
+            <div className="mt-8 pt-4 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setShowFallback(!showFallback)}
+                className="w-full flex items-center justify-between text-[11px] text-slate-500 hover:text-slate-400 py-1 transition"
+              >
+                <div className="flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Developer & Offline Local Fallback</span>
+                </div>
+                {showFallback ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+
+              {showFallback && (
+                <form onSubmit={handleFallbackSubmit} className="mt-3 space-y-3 p-3 bg-slate-950/60 border border-slate-800 rounded-2xl animate-fadeIn text-xs">
+                  <p className="text-[11px] text-slate-400">
+                    Use only for local debugging or offline hosts with no internet connectivity.
+                  </p>
+                  <div>
+                    <label className="block text-[10px] uppercase font-semibold text-slate-400 mb-1">
+                      Local Username
+                    </label>
+                    <input
+                      type="text"
+                      value={fallbackUser}
+                      onChange={(e) => setFallbackUser(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-semibold text-slate-400 mb-1">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      value={fallbackPass}
+                      onChange={(e) => setFallbackPass(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                      required
+                    />
+                  </div>
                   <button
-                    type="button"
-                    onClick={() => {
-                      setTab('register');
-                      setError(null);
-                    }}
-                    className="text-indigo-400 hover:underline font-medium inline-flex items-center gap-0.5"
+                    type="submit"
+                    disabled={fallbackLoading}
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-medium text-xs transition disabled:opacity-50"
                   >
-                    <span>Create account</span>
-                    <ArrowRight className="w-3 h-3" />
+                    {fallbackLoading ? 'Authenticating Fallback...' : 'Sign In as Local Admin'}
                   </button>
-                </span>
-              ) : (
-                <span>
-                  Already have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('login');
-                      setError(null);
-                    }}
-                    className="text-indigo-400 hover:underline font-medium inline-flex items-center gap-0.5"
-                  >
-                    <span>Sign in here</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </button>
-                </span>
+                </form>
               )}
             </div>
+
           </div>
         </div>
+
       </div>
     </div>
+  );
+}
+
+export function AuthView(props: AuthViewProps) {
+  return (
+    <React.Suspense fallback={
+      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-white">
+        <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-600/30 animate-pulse mb-3">
+          <Sparkles className="w-6 h-6 text-amber-300" />
+        </div>
+        <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <AuthViewContent {...props} />
+    </React.Suspense>
   );
 }
