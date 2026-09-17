@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 export interface User {
   id: number;
@@ -37,12 +38,33 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [allUsers, setAllUsers] = useState<UserSummary[]>([]);
 
-  // Load session from localStorage on mount
+  // Setup global fetch interceptor to automatically attach Bearer token to all outgoing requests
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const originalFetch = window.fetch;
+      window.fetch = async (...args: Parameters<typeof window.fetch>) => {
+        let [resource, config] = args;
+        const currentToken = localStorage.getItem('memorypics_token');
+        if (currentToken) {
+          config = config || {};
+          const headers = new Headers(config.headers || {});
+          if (!headers.has('Authorization')) {
+            headers.set('Authorization', `Bearer ${currentToken}`);
+          }
+          config.headers = headers;
+        }
+        return originalFetch(resource, config);
+      };
+    }
+  }, []);
+
+  // Load session from localStorage on mount (NO silent auto-login)
   useEffect(() => {
     const savedToken = localStorage.getItem('memorypics_token');
     const savedUser = localStorage.getItem('memorypics_user');
@@ -51,15 +73,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       try {
         setToken(savedToken);
         setUser(JSON.parse(savedUser));
-        // Verify token against backend
         validateToken(savedToken);
       } catch (e) {
         localStorage.removeItem('memorypics_token');
         localStorage.removeItem('memorypics_user');
+        setUser(null);
+        setToken(null);
       }
     } else {
-      // If no token exists, fetch default user info or public state
-      fetchDefaultProfile();
+      setUser(null);
+      setToken(null);
     }
     fetchAllUsers();
     setIsLoading(false);
@@ -83,26 +106,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const fetchDefaultProfile = async () => {
-    // Attempt login with default admin if local storage is clean
-    try {
-      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username_or_email: 'admin', password: 'password123' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setToken(data.access_token);
-        setUser(data.user);
-        localStorage.setItem('memorypics_token', data.access_token);
-        localStorage.setItem('memorypics_user', JSON.stringify(data.user));
-      }
-    } catch (e) {
-      // Backend not yet ready or offline
-    }
-  };
-
   const fetchAllUsers = async () => {
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/users`);
@@ -111,7 +114,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAllUsers(users);
       }
     } catch (e) {
-      console.error('Failed to fetch user list:', e);
+      // Backend not yet ready or offline
     }
   };
 
@@ -175,6 +178,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null);
     localStorage.removeItem('memorypics_token');
     localStorage.removeItem('memorypics_user');
+    router.push('/login');
   };
 
   const refreshProfile = async () => {
