@@ -70,6 +70,55 @@ def get_people_stats(db: Session = Depends(get_db)):
         "photos_with_faces": photos_with_faces
     }
 
+@router.get("/unnamed-faces")
+def get_unnamed_faces(limit: int = 60, db: Session = Depends(get_db)):
+    """Returns detected faces that are not assigned to a named person."""
+    unnamed = (
+        db.query(FaceDetection)
+        .outerjoin(Person, FaceDetection.person_id == Person.id)
+        .filter((FaceDetection.person_id == None) | (Person.name.like("Person %")) | (Person.name == "Unnamed Person"))
+        .limit(limit)
+        .all()
+    )
+    results = []
+    for f in unnamed:
+        m = db.query(Media).filter(Media.id == f.media_id).first()
+        p = db.query(Person).filter(Person.id == f.person_id).first() if f.person_id else None
+        results.append({
+            "id": f.id,
+            "media_id": f.media_id,
+            "filename": m.filename if m else "Unknown",
+            "captured_at": m.captured_at if m else None,
+            "person_id": f.person_id,
+            "person_name": p.name if p else "Unnamed",
+            "crop_url": f"/api/v1/people/faces/{f.id}/crop",
+            "confidence": f.confidence
+        })
+    return results
+
+@router.post("/auto-cluster")
+def trigger_auto_cluster(db: Session = Depends(get_db)):
+    """Auto-clusters all detected faces using vision vector embeddings into Person groups."""
+    res = auto_cluster_faces(db)
+    return res
+
+@router.get("/faces/{face_id}/crop")
+def get_face_crop(face_id: int, db: Session = Depends(get_db)):
+    """Returns a square WebP face crop avatar for a specific face detection."""
+    face = db.query(FaceDetection).filter(FaceDetection.id == face_id).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Face detection not found")
+        
+    crop_bytes = get_face_crop_image(db, face)
+    if not crop_bytes:
+        raise HTTPException(status_code=404, detail="Could not generate face crop")
+        
+    return Response(
+        content=crop_bytes, 
+        media_type="image/webp", 
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
 @router.get("/{person_id}")
 def get_person_detail(person_id: int, db: Session = Depends(get_db)):
     """Returns person details and their photo count."""
@@ -112,55 +161,6 @@ def get_person_avatar(person_id: int, db: Session = Depends(get_db)):
         media_type="image/webp", 
         headers={"Cache-Control": "public, max-age=86400"}
     )
-
-@router.get("/faces/{face_id}/crop")
-def get_face_crop(face_id: int, db: Session = Depends(get_db)):
-    """Returns a square WebP face crop avatar for a specific face detection."""
-    face = db.query(FaceDetection).filter(FaceDetection.id == face_id).first()
-    if not face:
-        raise HTTPException(status_code=404, detail="Face detection not found")
-        
-    crop_bytes = get_face_crop_image(db, face)
-    if not crop_bytes:
-        raise HTTPException(status_code=404, detail="Could not generate face crop")
-        
-    return Response(
-        content=crop_bytes, 
-        media_type="image/webp", 
-        headers={"Cache-Control": "public, max-age=86400"}
-    )
-
-@router.post("/auto-cluster")
-def trigger_auto_cluster(db: Session = Depends(get_db)):
-    """Auto-clusters all detected faces using vision vector embeddings into Person groups."""
-    res = auto_cluster_faces(db)
-    return res
-
-@router.get("/unnamed-faces")
-def get_unnamed_faces(limit: int = 60, db: Session = Depends(get_db)):
-    """Returns detected faces that are not assigned to a named person."""
-    unnamed = (
-        db.query(FaceDetection)
-        .outerjoin(Person, FaceDetection.person_id == Person.id)
-        .filter((FaceDetection.person_id == None) | (Person.name.like("Person %")) | (Person.name == "Unnamed Person"))
-        .limit(limit)
-        .all()
-    )
-    results = []
-    for f in unnamed:
-        m = db.query(Media).filter(Media.id == f.media_id).first()
-        p = db.query(Person).filter(Person.id == f.person_id).first() if f.person_id else None
-        results.append({
-            "id": f.id,
-            "media_id": f.media_id,
-            "filename": m.filename if m else "Unknown",
-            "captured_at": m.captured_at if m else None,
-            "person_id": f.person_id,
-            "person_name": p.name if p else "Unnamed",
-            "crop_url": f"/api/v1/people/faces/{f.id}/crop",
-            "confidence": f.confidence
-        })
-    return results
 
 @router.get("/{person_id}/photos")
 def get_person_photos(person_id: int, db: Session = Depends(get_db)):
