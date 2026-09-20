@@ -45,10 +45,22 @@ cache/
 
 # Environment variables & secrets
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 credentials.json
 token.json
+client_secret*.json
+service_account*.json
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# Logs
+*.log
+logs/
 
 # System & IDE
 .DS_Store
