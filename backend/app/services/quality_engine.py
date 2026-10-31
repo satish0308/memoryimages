@@ -112,10 +112,10 @@ def analyze_image_quality(
             avg_face_var = sum(face_scores) / len(face_scores)
             effective_sharpness = best_face_var
 
-            # If the face is in sharp focus (variance >= 75.0)
-            if best_face_var >= 75.0:
-                if global_variance < 70.0:
-                    # Face is crisp but overall image has low variance -> Creamy Bokeh / Portrait Mode!
+            # If the face is in sharp focus (variance >= 65.0)
+            if best_face_var >= 65.0:
+                if best_face_var >= global_variance * 1.30 or global_variance < 70.0:
+                    # Face is crisp while overall canvas has lower variance -> Artistic Portrait / Bokeh!
                     is_bokeh = True
                     blur_type = "bokeh_portrait"
                 else:
@@ -129,7 +129,7 @@ def analyze_image_quality(
         center_crop = gray.crop((cx1, cy1, cx2, cy2))
         center_var = calculate_laplacian_variance(center_crop)
 
-        if center_var >= 95.0 and global_variance < 60.0:
+        if center_var >= 75.0 and (center_var >= global_variance * 1.30 or global_variance < 65.0):
             # Macro / Center Bokeh! The subject in the center is crisp, background is soft
             is_bokeh = True
             blur_type = "bokeh_portrait"
