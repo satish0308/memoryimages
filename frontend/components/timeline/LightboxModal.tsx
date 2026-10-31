@@ -21,7 +21,12 @@ import {
   Check,
   Edit2,
   Sparkles,
-  Play
+  Play,
+  Wand2,
+  Sun,
+  Mountain,
+  Sliders,
+  Loader2
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 
@@ -64,7 +69,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
   const [showFaceBoxes, setShowFaceBoxes] = useState(true);
   const [faces, setFaces] = useState<FaceData[]>([]);
@@ -95,6 +100,77 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   } | null>(null);
   const [isSavingEnhance, setIsSavingEnhance] = useState(false);
 
+  // AI Image Enhancement Studio State
+  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [selectedPreset, setSelectedPreset] = useState<'auto_magic' | 'shadow_fix' | 'dehaze' | 'super_res'>('auto_magic');
+  const [sliderPos, setSliderPos] = useState(50);
+  const [isDraggingSlider, setIsDraggingSlider] = useState(false);
+  const [isSavingEnhancedCopy, setIsSavingEnhancedCopy] = useState(false);
+  const [isEnhanceLoading, setIsEnhanceLoading] = useState(false);
+  const [enhancedSuccessMsg, setEnhancedSuccessMsg] = useState<string | null>(null);
+  const sliderContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectPreset = (preset: 'auto_magic' | 'shadow_fix' | 'dehaze' | 'super_res') => {
+    setSelectedPreset(preset);
+    setIsEnhanceLoading(true);
+  };
+
+  const handleSliderMove = (clientX: number) => {
+    if (!sliderContainerRef.current) return;
+    const rect = sliderContainerRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pos = ((clientX - rect.left) / rect.width) * 100;
+    setSliderPos(Math.max(0, Math.min(100, pos)));
+  };
+
+  const handleSaveEnhancedCopy = async () => {
+    if (!photo) return;
+    try {
+      setIsSavingEnhancedCopy(true);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/enhance/save?preset=${selectedPreset}`, {
+        method: 'POST',
+        headers,
+      });
+      if (res.ok) {
+        setEnhancedSuccessMsg('Enhanced copy saved to your library!');
+        setTimeout(() => setEnhancedSuccessMsg(null), 3500);
+      }
+    } catch (e) {
+      console.error('Failed to save enhanced photo:', e);
+    } finally {
+      setIsSavingEnhancedCopy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isDraggingSlider) return;
+    const handleMouseUp = () => setIsDraggingSlider(false);
+    const handleMouseMove = (e: MouseEvent) => {
+      handleSliderMove(e.clientX);
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches[0]) {
+        handleSliderMove(e.touches[0].clientX);
+      }
+    };
+
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('touchend', handleMouseUp);
+    window.addEventListener('touchmove', handleTouchMove);
+
+    return () => {
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('touchend', handleMouseUp);
+      window.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [isDraggingSlider]);
+
   const dragStart = useRef({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -112,6 +188,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setShowDeleteConfirm(false);
     setIsDeleting(false);
     setIsPlayingMotion(false);
+    setIsEnhancing(false);
+    setSliderPos(50);
   }, [photo?.id]);
 
   const handleConfirmDelete = async () => {
@@ -204,8 +282,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
     if (photo?.id) {
       // Progressively preload the uncompressed original image for pixel-perfect zoom
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
       const img = new window.Image();
-      img.src = `${apiUrl}/api/v1/media/${photo.id}/view`;
+      img.src = `${apiUrl}/api/v1/media/${photo.id}/view${token ? `?token=${token}` : ''}`;
       img.onload = () => setIsHighResLoaded(true);
 
       // Fetch detected faces for this photo
@@ -389,7 +468,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       } else if (e.key.toLowerCase() === 'f') {
         setShowFaceBoxes((prev) => !prev);
       } else if (e.key.toLowerCase() === 'i') {
-        setActiveTab((prev) => (prev === 'info' ? 'faces' : 'info'));
+        setShowSidebar((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -449,6 +528,17 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     ? ((photo.width * photo.height) / 1000000).toFixed(1) 
     : null;
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+  const tokenParam = token ? `&token=${token}` : '';
+  const tokenQuery = token ? `?token=${token}` : '';
+
+  const highResUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
+  const displayImageUrl = isHighResLoaded
+    ? highResUrl
+    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
+  const videoUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
+  const motionVideoUrl = `${apiUrl}/api/v1/media/${photo.id}/motion-video${tokenQuery}`;
+
   return (
     <div 
       className="fixed inset-0 z-[99999] bg-black/95 flex items-center justify-center p-2 md:p-6 backdrop-blur-md animate-fadeIn"
@@ -465,14 +555,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
           <button
             onClick={() => setShowSidebar(!showSidebar)}
-            className="p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
-            title={showSidebar ? "Expand to Fullscreen (Hide Sidebar)" : "Show Info Sidebar"}
+            className={`p-2.5 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer ${
+              showSidebar
+                ? 'bg-indigo-600 text-white shadow-indigo-500/30 ring-2 ring-indigo-400/50'
+                : 'bg-black/60 text-white hover:bg-black/90'
+            }`}
+            title={showSidebar ? "Hide Info Sidebar (i)" : "Show Info & EXIF (i)"}
           >
-            <Maximize2 className="w-4 h-4" />
+            <Info className="w-4 h-4" />
           </button>
           <button
             onClick={onClose}
-            className="p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm"
+            className="p-2.5 bg-black/60 text-white rounded-full hover:bg-black/90 transition shadow-lg backdrop-blur-sm cursor-pointer"
             title="Close (Esc)"
           >
             <X className="w-5 h-5" />
@@ -488,25 +582,150 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           onMouseMove={handleMouseMove}
           style={{ cursor: isAddingFace ? 'crosshair' : zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         >
+          {/* AI Enhancement Studio Floating Control Dock */}
+          {isEnhancing && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-slate-900/95 backdrop-blur-md border border-indigo-500/40 px-3 py-2 rounded-2xl flex flex-wrap items-center gap-2 text-white shadow-2xl animate-fadeIn max-w-[95%]">
+              <div className="flex items-center gap-1.5 pr-2 border-r border-slate-700 text-xs font-bold text-indigo-400">
+                <Wand2 className="w-4 h-4" />
+                <span className="hidden sm:inline">AI Studio</span>
+              </div>
+
+              {/* Preset Selector */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleSelectPreset('auto_magic')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    selectedPreset === 'auto_magic'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                  title="Dual-Domain CLAHE + Auto White Balance"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Auto Magic</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectPreset('shadow_fix')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    selectedPreset === 'shadow_fix'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                  title="Backlight Recovery & Dark Shadow Lifter"
+                >
+                  <Sun className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Shadow Lifter</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectPreset('dehaze')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    selectedPreset === 'dehaze'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                  title="Dark Channel Prior Atmospheric De-Hazing"
+                >
+                  <Mountain className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>De-Haze</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectPreset('super_res')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                    selectedPreset === 'super_res'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                  title="2x ESRGAN Neural Super-Resolution Upscaler"
+                >
+                  <Maximize2 className="w-3.5 h-3.5 text-sky-400" />
+                  <span>2x Super-Res</span>
+                </button>
+              </div>
+
+              <div className="h-5 w-px bg-slate-700 hidden sm:block" />
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleSaveEnhancedCopy}
+                  disabled={isSavingEnhancedCopy}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow transition cursor-pointer"
+                  title="Save a new enhanced copy to your library"
+                >
+                  {isSavingEnhancedCopy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" />
+                  )}
+                  <span>Save Copy</span>
+                </button>
+
+                <a
+                  href={`${apiUrl}/api/v1/media/${photo.id}/enhance?preset=${selectedPreset}${typeof window !== 'undefined' && localStorage.getItem('memorypics_token') ? `&token=${localStorage.getItem('memorypics_token')}` : ''}`}
+                  download={`enhanced_${selectedPreset}_${photo.filename}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition"
+                  title="Download Enhanced WebP"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setIsEnhancing(false)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition cursor-pointer"
+                  title="Close AI Studio"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Enhancement Saved Success Notification Toast */}
+          {enhancedSuccessMsg && (
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-emerald-600 text-white text-xs px-4 py-2 rounded-full shadow-2xl font-semibold animate-fadeIn flex items-center gap-2">
+              <Check className="w-4 h-4" />
+              <span>{enhancedSuccessMsg}</span>
+            </div>
+          )}
+
           {/* Previous Photo Button */}
           {hasPrev && onNavigatePrev && (
             <button
-              onClick={onNavigatePrev}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-2.5 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-xl"
-              title="Previous Photo (Left Arrow)"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigatePrev();
+              }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-3 bg-black/75 hover:bg-indigo-600 text-white rounded-full backdrop-blur-md transition-all shadow-2xl border border-white/20 hover:border-indigo-400 cursor-pointer hover:scale-110 active:scale-95 group"
+              title="Previous Photo (Left Arrow key)"
             >
-              <ChevronLeft className="w-5 h-5" />
+              <ChevronLeft className="w-6 h-6 group-hover:-translate-x-0.5 transition-transform" />
             </button>
           )}
 
           {/* Next Photo Button */}
           {hasNext && onNavigateNext && (
             <button
-              onClick={onNavigateNext}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-2.5 bg-black/60 hover:bg-black/90 text-white rounded-full backdrop-blur-md transition shadow-xl"
-              title="Next Photo (Right Arrow)"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigateNext();
+              }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-3 bg-black/75 hover:bg-indigo-600 text-white rounded-full backdrop-blur-md transition-all shadow-2xl border border-white/20 hover:border-indigo-400 cursor-pointer hover:scale-110 active:scale-95 group"
+              title="Next Photo (Right Arrow key)"
             >
-              <ChevronRight className="w-5 h-5" />
+              <ChevronRight className="w-6 h-6 group-hover:translate-x-0.5 transition-transform" />
             </button>
           )}
 
@@ -523,7 +742,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <div className="flex flex-col items-center gap-3">
                 <video
                   ref={videoRef}
-                  src={`${apiUrl}/api/v1/media/${photo.id}/view`}
+                  src={videoUrl}
                   controls
                   autoPlay
                   className="max-h-[75vh] max-w-full rounded-xl shadow-2xl bg-black"
@@ -564,21 +783,87 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               </div>
             ) : isPlayingMotion && photo?.has_motion_photo ? (
               <video
-                src={`${apiUrl}/api/v1/media/${photo.id}/motion-video`}
+                src={motionVideoUrl}
                 autoPlay
                 loop
                 playsInline
                 controls
                 className="max-h-[85vh] max-w-full object-contain rounded-lg shadow-2xl"
               />
+            ) : isEnhancing ? (
+              <div
+                ref={sliderContainerRef}
+                className="relative inline-block max-h-[85vh] max-w-full select-none cursor-ew-resize rounded-lg overflow-hidden shadow-2xl"
+                onMouseDown={(e) => {
+                  setIsDraggingSlider(true);
+                  handleSliderMove(e.clientX);
+                }}
+                onTouchStart={(e) => {
+                  setIsDraggingSlider(true);
+                  if (e.touches[0]) handleSliderMove(e.touches[0].clientX);
+                }}
+              >
+                {/* Before (Original) Base Image */}
+                <img
+                  src={displayImageUrl}
+                  alt="Original"
+                  className="max-h-[85vh] max-w-full object-contain pointer-events-none select-none block"
+                  draggable={false}
+                />
+
+                {/* After (Enhanced) Overlay with clipPath */}
+                <img
+                  key={`${photo.id}-${selectedPreset}`}
+                  src={`${apiUrl}/api/v1/media/${photo.id}/enhance?preset=${selectedPreset}${typeof window !== 'undefined' && localStorage.getItem('memorypics_token') ? `&token=${localStorage.getItem('memorypics_token')}` : ''}`}
+                  alt="Enhanced"
+                  onLoad={() => setIsEnhanceLoading(false)}
+                  onError={() => setIsEnhanceLoading(false)}
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+                  style={{
+                    clipPath: `polygon(${sliderPos}% 0, 100% 0, 100% 100%, ${sliderPos}% 100%)`,
+                  }}
+                  draggable={false}
+                />
+
+                {/* Slider Divider Line */}
+                <div
+                  className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_12px_rgba(0,0,0,0.9)] pointer-events-none"
+                  style={{ left: `${sliderPos}%` }}
+                >
+                  {/* Circular Drag Handle */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-900/90 text-white border-2 border-white shadow-2xl flex items-center justify-center pointer-events-auto cursor-ew-resize hover:scale-110 transition-transform">
+                    <span className="text-[10px] font-bold tracking-tighter select-none">◀▶</span>
+                  </div>
+                </div>
+
+                {/* Labels: Original & Enhanced */}
+                <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] font-medium text-white border border-white/10 pointer-events-none shadow-lg">
+                  Original
+                </div>
+                <div className="absolute top-3 right-3 bg-indigo-600/85 backdrop-blur-md px-2.5 py-1 rounded-md text-[11px] font-medium text-white border border-indigo-400/30 pointer-events-none flex items-center gap-1.5 shadow-lg">
+                  <Wand2 className="w-3 h-3 text-indigo-200" />
+                  <span>
+                    {selectedPreset === 'auto_magic' && 'Auto Magic'}
+                    {selectedPreset === 'shadow_fix' && 'Shadow Lifter'}
+                    {selectedPreset === 'dehaze' && 'Vibrant De-Haze'}
+                    {selectedPreset === 'super_res' && '2x Super-Res'}
+                  </span>
+                </div>
+
+                {/* Loading Indicator Overlay */}
+                {isEnhanceLoading && (
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+                    <div className="p-3 bg-slate-900/90 rounded-2xl border border-indigo-500/40 flex items-center gap-3 text-white shadow-2xl">
+                      <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                      <span className="text-xs font-semibold">Applying AI Enhancement...</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <img
                 ref={imageRef}
-                src={
-                  isHighResLoaded
-                    ? `${apiUrl}/api/v1/media/${photo.id}/view`
-                    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080`
-                }
+                src={displayImageUrl}
                 alt={photo.filename}
                 onClick={handleImageClick}
                 style={{
@@ -591,7 +876,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             )}
 
             {/* Interactive Face Bounding Boxes */}
-            {showFaceBoxes && zoom === 1 && faces.map((face) => (
+            {showFaceBoxes && zoom === 1 && !isEnhancing && faces.map((face) => (
               <div
                 key={face.id}
                 style={{
@@ -607,6 +892,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 }`}
                 onClick={(e) => {
                   e.stopPropagation();
+                  setShowSidebar(true);
                   setActiveTab('faces');
                   setEditingFaceId(face.id);
                   setEditingName(face.person_name !== 'Unnamed' ? face.person_name : '');
@@ -669,6 +955,31 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             )}
 
             <div className="h-4 w-px bg-slate-700" />
+
+            {/* Quick Prev / Next Arrows in Bottom Dock */}
+            {(hasPrev || hasNext) && (
+              <>
+                <button
+                  type="button"
+                  onClick={onNavigatePrev}
+                  disabled={!hasPrev}
+                  className="p-1 hover:bg-white/10 text-slate-300 hover:text-white rounded-full transition disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                  title="Previous Photo (Left Arrow)"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNavigateNext}
+                  disabled={!hasNext}
+                  className="p-1 hover:bg-white/10 text-slate-300 hover:text-white rounded-full transition disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                  title="Next Photo (Right Arrow)"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <div className="h-4 w-px bg-slate-700" />
+              </>
+            )}
 
             {/* Live / Motion Photo Toggle */}
             {photo?.has_motion_photo && (
@@ -744,9 +1055,45 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   </button>
                 )}
 
+                {/* AI Studio Enhancer Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isEnhancing;
+                    setIsEnhancing(next);
+                    if (next) setIsEnhanceLoading(true);
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                    isEnhancing
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-md shadow-indigo-500/30'
+                      : 'text-indigo-300 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Open AI Enhancement Studio (Split-Slider, Super-Res, Shadow Recovery, De-Haze)"
+                >
+                  <Wand2 className={`w-3.5 h-3.5 ${isEnhancing ? 'animate-pulse text-white' : 'text-indigo-400'}`} />
+                  <span>AI Studio</span>
+                </button>
+
                 <div className="h-4 w-px bg-slate-700" />
               </>
             )}
+
+            {/* Info & EXIF Sidebar Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowSidebar(!showSidebar)}
+              className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                showSidebar 
+                  ? 'bg-indigo-600 text-white shadow-sm' 
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
+              }`}
+              title="Toggle Info & EXIF Sidebar (i)"
+            >
+              <Info className="w-3.5 h-3.5" />
+              <span>Info</span>
+            </button>
+
+            <div className="h-4 w-px bg-slate-700" />
 
             {/* Quality Indicator Badge */}
             <span
@@ -780,34 +1127,47 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
         {/* Multi-Tab Sidebar: Info & EXIF / Faces & People */}
         {showSidebar && (
-          <div className="w-full md:w-88 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between flex-shrink-0 z-20 animate-fadeIn">
+          <div className="w-full md:w-88 bg-slate-900 border-t md:border-t-0 md:border-l border-slate-800 flex flex-col justify-between flex-shrink-0 z-20 animate-fadeIn max-md:absolute max-md:inset-0 max-md:z-50">
             
             {/* Sidebar Tabs Header */}
-            <div className="flex border-b border-slate-800 px-4 pt-3">
-            <button
-              onClick={() => setActiveTab('info')}
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition ${
-                activeTab === 'info'
-                  ? 'border-indigo-500 text-indigo-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Info className="w-3.5 h-3.5" />
-              <span>Info & EXIF</span>
-            </button>
+            <div className="flex items-center justify-between border-b border-slate-800 px-4 pt-3">
+              <div className="flex">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('info')}
+                  className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                    activeTab === 'info'
+                      ? 'border-indigo-500 text-indigo-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Info className="w-3.5 h-3.5" />
+                  <span>Info & EXIF</span>
+                </button>
 
-            <button
-              onClick={() => setActiveTab('faces')}
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition ${
-                activeTab === 'faces'
-                  ? 'border-indigo-500 text-indigo-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>People & Faces ({faces.length})</span>
-            </button>
-          </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('faces')}
+                  className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition cursor-pointer ${
+                    activeTab === 'faces'
+                      ? 'border-indigo-500 text-indigo-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>People & Faces ({faces.length})</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowSidebar(false)}
+                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition cursor-pointer"
+                title="Hide Info Sidebar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
           {/* Tab Content Container */}
           <div className="flex-1 overflow-y-auto p-5 space-y-5 text-white">

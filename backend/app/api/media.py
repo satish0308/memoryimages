@@ -424,6 +424,91 @@ def get_motion_video(
 
     raise HTTPException(status_code=404, detail="No motion photo video found for this item")
 
+@router.get("/{media_id}/enhance")
+def get_enhanced_image(
+    media_id: int,
+    preset: str = Query("auto_magic", regex="^(auto_magic|shadow_fix|dehaze|super_res)$"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Renders an AI-enhanced version of the photo in real-time.
+    Supports Auto Magic AI, Shadow Recovery, Vibrant De-Haze, and 2x ESRGAN Super-Resolution.
+    """
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.enhancement_engine import get_enhanced_image_bytes
+    img_bytes = get_enhanced_image_bytes(media, preset=preset, db=db)
+    if not img_bytes:
+        raise HTTPException(status_code=500, detail="Failed to process image enhancement")
+
+    return Response(
+        content=img_bytes,
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "Content-Disposition": f"inline; filename=enhanced_{preset}_{media.id}.webp"
+        }
+    )
+
+@router.post("/{media_id}/enhance/save")
+def save_enhanced_image(
+    media_id: int,
+    preset: str = Query("auto_magic", regex="^(auto_magic|shadow_fix|dehaze|super_res)$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Saves the enhanced version into the user's library as a new photo.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.enhancement_engine import get_enhanced_image_bytes
+    img_bytes = get_enhanced_image_bytes(media, preset=preset, db=db, max_preview_dim=2560)
+    if not img_bytes:
+        raise HTTPException(status_code=500, detail="Failed to generate enhanced image")
+
+    ext = ".webp"
+    save_filename = f"enhanced_{preset}_{os.path.splitext(media.filename)[0]}{ext}"
+    dest_path = os.path.join(settings.MEDIA_DIR, save_filename)
+
+    with open(dest_path, "wb") as f:
+        f.write(img_bytes)
+
+    new_media = Media(
+        user_id=current_user.id,
+        filename=save_filename,
+        original_path=dest_path,
+        source_type=SourceType.LOCAL,
+        mime_type="image/webp",
+        captured_at=media.captured_at,
+        is_favorite=media.is_favorite,
+        latitude=media.latitude,
+        longitude=media.longitude,
+        location_name=media.location_name
+    )
+    db.add(new_media)
+    db.commit()
+    db.refresh(new_media)
+
+    return {
+        "status": "saved",
+        "id": new_media.id,
+        "filename": new_media.filename,
+        "preset": preset
+    }
+
 @router.get("/{media_id}/keyframe/{keyframe_id}/thumbnail")
 def get_keyframe_thumbnail(
     media_id: int,

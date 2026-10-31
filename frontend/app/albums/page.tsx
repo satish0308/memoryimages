@@ -124,6 +124,27 @@ export default function AlbumsPage() {
   const [isExportingZip, setIsExportingZip] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Lightbox Navigation inside the current collection
+  const currentPhotoIndex = selectedPhoto && selectedCollection
+    ? selectedCollection.photos.findIndex((p) => p.id === selectedPhoto.id)
+    : -1;
+  const hasPrev = currentPhotoIndex > 0;
+  const hasNext = selectedCollection
+    ? currentPhotoIndex >= 0 && currentPhotoIndex < selectedCollection.photos.length - 1
+    : false;
+
+  const navigatePrev = () => {
+    if (hasPrev && selectedCollection) {
+      setSelectedPhoto(selectedCollection.photos[currentPhotoIndex - 1]);
+    }
+  };
+
+  const navigateNext = () => {
+    if (hasNext && selectedCollection) {
+      setSelectedPhoto(selectedCollection.photos[currentPhotoIndex + 1]);
+    }
+  };
+
   // Inline edit album
   const [isEditingAlbum, setIsEditingAlbum] = useState(false);
   const [editName, setEditName] = useState('');
@@ -1105,13 +1126,38 @@ export default function AlbumsPage() {
         </div>
       )}
 
-      {/* Lightbox Modal */}
+      {/* Lightbox Modal with Next/Prev navigation & action handlers */}
       <LightboxModal
         photo={selectedPhoto}
         apiUrl={API_URL}
         onClose={() => setSelectedPhoto(null)}
-        onToggleFavorite={() => {}}
-        onDelete={() => {}}
+        onToggleFavorite={(id) => {
+          if (selectedCollection) {
+            setSelectedCollection({
+              ...selectedCollection,
+              photos: selectedCollection.photos.map((p) =>
+                p.id === id ? { ...p, is_favorite: !p.is_favorite } : p
+              ),
+            });
+          }
+          if (selectedPhoto && selectedPhoto.id === id) {
+            setSelectedPhoto({ ...selectedPhoto, is_favorite: !selectedPhoto.is_favorite });
+          }
+        }}
+        onDelete={(id) => {
+          if (selectedCollection) {
+            setSelectedCollection({
+              ...selectedCollection,
+              photo_count: Math.max(0, selectedCollection.photo_count - 1),
+              photos: selectedCollection.photos.filter((p) => p.id !== id),
+            });
+          }
+          setSelectedPhoto(null);
+        }}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        onNavigatePrev={navigatePrev}
+        onNavigateNext={navigateNext}
       />
 
       {/* Ambient Slideshow Modal */}

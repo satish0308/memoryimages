@@ -94,6 +94,10 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     }
   }
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+  const tokenParam = token ? `${item.thumbnail_url.includes('?') ? '&' : '?'}token=${token}` : '';
+  const thumbSrc = `${apiUrl}${item.thumbnail_url}${tokenParam}`;
+
   return (
     <div className="relative group">
       {/* 3D Stacked Card Effect for Burst Groups */}
@@ -113,7 +117,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         }`}
       >
         <img
-          src={`${apiUrl}${item.thumbnail_url}`}
+          src={thumbSrc}
           alt={item.filename}
           style={{ filter: filterStyle }}
           className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
@@ -125,7 +129,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         {/* Live Photo / Motion Photo Video Looping on Hover */}
         {item.has_motion_photo && isHovered && (
           <video
-            src={`${apiUrl}/api/v1/media/${item.id}/motion-video`}
+            src={`${apiUrl}/api/v1/media/${item.id}/motion-video${token ? `?token=${token}` : ''}`}
             autoPlay
             loop
             muted
