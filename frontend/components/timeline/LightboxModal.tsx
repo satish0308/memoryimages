@@ -470,6 +470,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         setShowFaceBoxes((prev) => !prev);
       } else if (e.key.toLowerCase() === 'i') {
         setShowSidebar((prev) => !prev);
+      } else if (e.key.toLowerCase() === 's') {
+        window.open(`/similar?id=${photo.id}`, '_blank');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1093,6 +1095,19 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <Info className="w-3.5 h-3.5" />
               <span>Info</span>
             </button>
+
+            {/* Find Similar Photos (New Tab) */}
+            {photo && (
+              <button
+                type="button"
+                onClick={() => window.open(`/similar?id=${photo.id}`, '_blank')}
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold text-emerald-300 hover:text-white hover:bg-emerald-500/20 transition cursor-pointer border border-emerald-500/30 shadow-sm"
+                title="Find visually, facially, and geographically similar photos in a new tab (Press S)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Similar</span>
+              </button>
+            )}
 
             <div className="h-4 w-px bg-slate-700" />
 

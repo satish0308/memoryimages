@@ -290,6 +290,30 @@ def get_media_burst(
         raise HTTPException(status_code=404, detail="No burst sequence found for this photo")
     return cluster
 
+@router.get("/{media_id}/similar")
+def get_similar_media(
+    media_id: int,
+    facet: str = Query("all", regex="^(all|visual|people|location|time)$"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Finds photos similar to the target media across 4 AI dimensions:
+    visual graphics/CLIP, same people/faces, nearby GPS locations, and same outings.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.similarity_engine import find_similar_photos
+    similar_data = find_similar_photos(db, media_id=media_id, user_id=current_user.id, facet=facet, limit=limit)
+    if not similar_data:
+        raise HTTPException(status_code=404, detail="Could not compute similarity for this photo")
+    return similar_data
+
 @router.get("/{media_id}/thumbnail")
 def get_thumbnail(
     media_id: int,

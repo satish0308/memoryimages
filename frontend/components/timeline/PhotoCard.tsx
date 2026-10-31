@@ -224,7 +224,17 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
       {/* Hover Overlay Controls */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2 pointer-events-none">
-        <div className="flex justify-end pointer-events-auto">
+        <div className="flex justify-end items-center gap-1.5 pointer-events-auto">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(`/similar?id=${item.id}`, '_blank');
+            }}
+            className="p-1.5 bg-black/40 hover:bg-emerald-600 rounded-full text-white backdrop-blur-sm transition"
+            title="Find Similar Photos (opens in new tab)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+          </button>
           <button
             onClick={(e) => onToggleFavorite(item.id, e)}
             className="p-1.5 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-sm transition"

@@ -29,6 +29,7 @@ import {
 import { PhotoCard, MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
+import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 
 interface AlbumItem {
   id: number;
@@ -123,6 +124,32 @@ export default function AlbumsPage() {
   const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Collection Group Multi-Select & Batch Delete State
+  const [collectionSelectedIds, setCollectionSelectedIds] = useState<number[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [isRemovingFromAlbum, setIsRemovingFromAlbum] = useState(false);
+
+  // Clear selection when active collection changes
+  useEffect(() => {
+    setCollectionSelectedIds([]);
+  }, [selectedCollection?.name, selectedCollection?.id]);
+
+  const handleToggleCollectionSelect = (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setCollectionSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllInCollection = () => {
+    if (!selectedCollection || selectedCollection.photos.length === 0) return;
+    if (collectionSelectedIds.length === selectedCollection.photos.length) {
+      setCollectionSelectedIds([]);
+    } else {
+      setCollectionSelectedIds(selectedCollection.photos.map((p) => p.id));
+    }
+  };
 
   // Lightbox Navigation inside the current collection
   const currentPhotoIndex = selectedPhoto && selectedCollection
@@ -391,6 +418,79 @@ export default function AlbumsPage() {
       }
     } catch (e) {
       console.error('Failed to remove photo:', e);
+    }
+  };
+
+  // Remove multiple selected photos from custom album
+  const handleBatchRemoveFromAlbum = async () => {
+    if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id || collectionSelectedIds.length === 0) return;
+    const confirmMsg = `Remove ${collectionSelectedIds.length} photo(s) from "${selectedCollection.name}"?\n(Photos will remain safe in your library).`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      setIsRemovingFromAlbum(true);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      await Promise.all(
+        collectionSelectedIds.map((mid) =>
+          fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos/${mid}`, {
+            method: 'DELETE',
+            headers,
+          })
+        )
+      );
+
+      const removedSet = new Set(collectionSelectedIds);
+      setSelectedCollection(prev => {
+        if (!prev) return null;
+        const updated = prev.photos.filter(p => !removedSet.has(p.id));
+        return { ...prev, photo_count: updated.length, photos: updated };
+      });
+      setCollectionSelectedIds([]);
+      loadData();
+    } catch (e) {
+      console.error('Failed to remove photos from album:', e);
+    } finally {
+      setIsRemovingFromAlbum(false);
+    }
+  };
+
+  // Move selected photos in collection to Trash (Soft/Hard Delete)
+  const handleExecuteBatchDelete = async (permanent: boolean) => {
+    if (collectionSelectedIds.length === 0) return;
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const res = await fetch(`${API_URL}/api/v1/media/batch-delete${tokenParam}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ media_ids: collectionSelectedIds, permanent }),
+      });
+
+      if (res.ok) {
+        const deletedSet = new Set(collectionSelectedIds);
+        if (selectedCollection) {
+          setSelectedCollection(prev => {
+            if (!prev) return null;
+            const updated = prev.photos.filter(p => !deletedSet.has(p.id));
+            return {
+              ...prev,
+              photo_count: Math.max(0, prev.photo_count - collectionSelectedIds.length),
+              photos: updated
+            };
+          });
+        }
+        setCollectionSelectedIds([]);
+        setShowBulkDeleteModal(false);
+        loadData();
+      }
+    } catch (e) {
+      console.error('Batch delete error in collection:', e);
     }
   };
 
@@ -918,28 +1018,105 @@ export default function AlbumsPage() {
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {selectedCollection.photos.map((photo) => (
-                <div key={photo.id} className="relative group">
-                  <PhotoCard
-                    item={photo}
-                    apiUrl={API_URL}
-                    onSelect={setSelectedPhoto}
-                    onToggleFavorite={() => {}}
-                    onDelete={() => {}}
-                  />
-                  {/* Remove from Album Button */}
-                  {selectedCollection.type === 'album' && (
-                    <button
-                      onClick={(e) => handleRemovePhotoFromAlbum(photo.id, e)}
-                      className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition z-10 backdrop-blur-sm"
-                      title="Remove from this album"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+            <div className="space-y-3">
+              {/* Collection Selection & Batch Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-2xl px-4 py-2.5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleSelectAllInCollection}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold transition"
+                  >
+                    <CheckSquare className="w-4 h-4 text-indigo-600" />
+                    <span>
+                      {collectionSelectedIds.length === selectedCollection.photos.length
+                        ? 'Deselect All'
+                        : `Select All (${selectedCollection.photos.length})`}
+                    </span>
+                  </button>
+
+                  {collectionSelectedIds.length > 0 && (
+                    <span className="text-xs text-slate-500 font-medium">
+                      <strong className="text-indigo-600">{collectionSelectedIds.length}</strong> photo{collectionSelectedIds.length !== 1 ? 's' : ''} selected
+                    </span>
                   )}
                 </div>
-              ))}
+
+                {collectionSelectedIds.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    {/* If custom album, offer remove from album option */}
+                    {selectedCollection.type === 'album' && (
+                      <button
+                        onClick={handleBatchRemoveFromAlbum}
+                        disabled={isRemovingFromAlbum}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition disabled:opacity-50"
+                        title="Remove selected photos from this album (photos remain in library)"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span>{isRemovingFromAlbum ? 'Removing...' : `Remove from Album (${collectionSelectedIds.length})`}</span>
+                      </button>
+                    )}
+
+                    {/* Move to Trash (Safe Soft-Delete) */}
+                    <button
+                      onClick={() => setShowBulkDeleteModal(true)}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+                      title="Move selected photos to Trash"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete ({collectionSelectedIds.length})</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Photo Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {selectedCollection.photos.map((photo) => {
+                  const isSelected = collectionSelectedIds.includes(photo.id);
+
+                  return (
+                    <div
+                      key={photo.id}
+                      className={`relative group rounded-xl transition-all ${
+                        isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
+                      }`}
+                    >
+                      <PhotoCard
+                        item={photo}
+                        apiUrl={API_URL}
+                        onSelect={setSelectedPhoto}
+                        onToggleFavorite={() => {}}
+                        onDelete={() => {}}
+                      />
+
+                      {/* Multi-Select Checkbox */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleCollectionSelect(photo.id, e)}
+                        className={`absolute top-2 left-2 w-6 h-6 rounded-full flex items-center justify-center transition z-20 ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white ring-2 ring-white shadow-md'
+                            : 'bg-black/40 text-transparent border border-white/70 hover:bg-black/70 group-hover:text-white/40'
+                        }`}
+                        title={isSelected ? 'Deselect photo' : 'Select photo'}
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </button>
+
+                      {/* Remove from Album Button */}
+                      {selectedCollection.type === 'album' && (
+                        <button
+                          onClick={(e) => handleRemovePhotoFromAlbum(photo.id, e)}
+                          className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition z-10 backdrop-blur-sm"
+                          title="Remove from this album"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -1166,6 +1343,15 @@ export default function AlbumsPage() {
         apiUrl={API_URL}
         isOpen={isSlideshowOpen}
         onClose={() => setIsSlideshowOpen(false)}
+      />
+
+      {/* Safe Bulk Delete Modal for Collections */}
+      <BulkDeleteModal
+        isOpen={showBulkDeleteModal}
+        itemCount={collectionSelectedIds.length}
+        itemType="photos"
+        onClose={() => setShowBulkDeleteModal(false)}
+        onConfirm={handleExecuteBatchDelete}
       />
     </div>
   );
