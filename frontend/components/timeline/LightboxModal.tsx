@@ -71,7 +71,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
-  const [showFaceBoxes, setShowFaceBoxes] = useState(true);
+  const [showFaceBoxes, setShowFaceBoxes] = useState(false);
   const [faces, setFaces] = useState<FaceData[]>([]);
   const [editingFaceId, setEditingFaceId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -190,6 +190,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setIsPlayingMotion(false);
     setIsEnhancing(false);
     setSliderPos(50);
+    setShowFaceBoxes(false);
   }, [photo?.id]);
 
   const handleConfirmDelete = async () => {
@@ -1147,7 +1148,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setActiveTab('faces')}
+                  onClick={() => {
+                    setActiveTab('faces');
+                    setShowFaceBoxes(true);
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold border-b-2 transition cursor-pointer ${
                     activeTab === 'faces'
                       ? 'border-indigo-500 text-indigo-400'

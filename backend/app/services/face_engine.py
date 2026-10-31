@@ -155,7 +155,7 @@ def load_media_image(media: Media, db: Session) -> Optional[Image.Image]:
 
     return None
 
-def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.65) -> List[Dict[str, float]]:
+def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.75, min_size: int = 45) -> List[Dict[str, float]]:
     """Runs UltraFace ONNX model to detect faces in an image file or in-memory PIL Image."""
     sess = get_detector_session()
     if sess is None:
@@ -196,10 +196,27 @@ def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.65) -> Lis
         results = []
         for row in picked:
             x1, y1, x2, y2, conf = row
+            if conf < conf_threshold:
+                continue
+
             bx = float(np.clip(x1, 0.0, 1.0))
             by = float(np.clip(y1, 0.0, 1.0))
             bw = float(np.clip(x2 - bx, 0.01, 1.0 - bx))
             bh = float(np.clip(y2 - by, 0.01, 1.0 - by))
+
+            # 1. Pixel dimension and relative dimension validation
+            pixel_w = bw * orig_w
+            pixel_h = bh * orig_h
+            if pixel_w < min_size or pixel_h < min_size:
+                continue
+            if bw < 0.030 or bh < 0.030:
+                continue
+
+            # 2. Pixel aspect ratio validation: human faces are roughly 0.48 <= w/h <= 1.48
+            pixel_aspect = pixel_w / max(pixel_h, 1.0)
+            if pixel_aspect < 0.48 or pixel_aspect > 1.48:
+                continue
+
             results.append({
                 "box_x": round(bx, 4),
                 "box_y": round(by, 4),
@@ -218,16 +235,25 @@ def extract_arcface_embedding(face_crop: Image.Image) -> Optional[np.ndarray]:
     if sess is None:
         return None
     try:
+        if face_crop.width < 35 or face_crop.height < 35:
+            return None
+
         crop_112 = face_crop.convert("RGB").resize((112, 112), Image.Resampling.LANCZOS)
         arr = np.array(crop_112).astype("float32")
         arr = (arr - 127.5) / 128.0
         arr = np.expand_dims(arr, axis=0)
 
         output = sess.run(None, {"input_1": arr})[0]
-        embedding = output[0]
-        norm = np.linalg.norm(embedding)
-        if norm > 1e-6:
-            embedding = embedding / norm
+        raw_embedding = output[0]
+        norm = float(np.linalg.norm(raw_embedding))
+
+        # Texture artifact rejection: on genuine human faces, ArcFace raw norm is between 1.8 and 6.0.
+        # Water ripples, rocks, ground noise, and foliage produce saturated norms > 6.5.
+        if norm < 1.5 or norm > 6.5:
+            logger.debug(f"Rejected non-face crop with abnormal ArcFace activation norm: {norm:.2f}")
+            return None
+
+        embedding = raw_embedding / norm
         return embedding
     except Exception as e:
         logger.warning(f"ArcFace embedding extraction error: {e}")
@@ -352,8 +378,17 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
         cy = int((d["box_y"] + d["box_h"] / 2.0) * H)
         half = int(max(d["box_w"] * W, d["box_h"] * H) * 0.65)
         crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+        
+        # Verify crop size and ArcFace validation
+        if crop.width < 45 or crop.height < 45:
+            continue
+
         emb = extract_arcface_embedding(crop)
-        emb_str = ",".join(f"{x:.5f}" for x in emb) if emb is not None else None
+        # If crop is not a genuine human face (rejected by ArcFace norm), do not save it!
+        if emb is None:
+            continue
+
+        emb_str = ",".join(f"{x:.5f}" for x in emb)
 
         face = FaceDetection(
             media_id=media.id,
