@@ -533,23 +533,33 @@ export default function AlbumsPage() {
     }
   };
 
-  // Download entire album as ZIP
-  const handleExportAlbumZip = async () => {
+  // Download entire album or selected photos as ZIP with parallel streaming
+  const handleExportAlbumZip = async (presetOrEvent?: 'original' | 'optimized' | React.MouseEvent) => {
+    const preset = (presetOrEvent === 'original' || presetOrEvent === 'optimized') ? presetOrEvent : 'optimized';
     if (!selectedCollection || selectedCollection.photos.length === 0) return;
     try {
       setIsExportingZip(true);
-      const mediaIds = selectedCollection.photos.map(p => p.id);
-      const res = await fetch(`${API_URL}/api/v1/media/bulk-download`, {
+      const mediaIds = collectionSelectedIds.length > 0
+        ? collectionSelectedIds
+        : selectedCollection.photos.map(p => p.id);
+
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const res = await fetch(`${API_URL}/api/v1/media/bulk-download${tokenParam}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media_ids: mediaIds })
+        headers,
+        body: JSON.stringify({ media_ids: mediaIds, preset })
       });
       if (res.ok) {
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${selectedCollection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_collection.zip`;
+        const tag = preset === 'optimized' ? '_optimized' : '_master';
+        a.download = `${selectedCollection.name.replace(/[^a-zA-Z0-9_-]/g, '_')}${tag}.zip`;
         document.body.appendChild(a);
         a.click();
         a.remove();

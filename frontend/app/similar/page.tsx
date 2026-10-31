@@ -13,6 +13,7 @@ import {
   Download, 
   Play, 
   Check, 
+  X,
   Trash2, 
   ExternalLink,
   Camera,
@@ -238,18 +239,50 @@ function SimilarPhotosContent() {
     }
   };
 
+  const handleBack = () => {
+    if (typeof window !== 'undefined') {
+      // If there is history in this tab from this site, go back
+      if (window.history.length > 1 && document.referrer && document.referrer.includes(window.location.host)) {
+        router.back();
+        return;
+      }
+      // If opened in a new tab or direct link, navigate directly to timeline
+      router.push('/');
+    } else {
+      router.push('/');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 sm:px-8 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => router.back()}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition"
-            title="Go back"
+            onClick={handleBack}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl transition shadow-sm border border-slate-700"
+            title="Return to Timeline / Gallery"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-4 h-4 text-slate-300" />
+            <span className="text-xs font-semibold">Back to Gallery</span>
           </button>
+
+          <button
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.close();
+                // If browser blocks closing, navigate to home
+                router.push('/');
+              }
+            }}
+            className="p-2 bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition border border-slate-700/60 text-xs hidden sm:flex items-center gap-1"
+            title="Close this discovery tab"
+          >
+            <X className="w-4 h-4" />
+            <span className="text-[11px]">Close Tab</span>
+          </button>
+
+          <div className="h-5 w-px bg-slate-800 hidden sm:block" />
 
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-indigo-600 flex items-center justify-center text-white shadow-md">

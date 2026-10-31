@@ -452,3 +452,16 @@ def delete_album(
     db.delete(album)
     db.commit()
     return {"status": "album_deleted", "id": album_id}
+
+@router.post("/export-zip")
+def export_album_zip(
+    req: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    from app.api.media import bulk_download, BulkDownloadRequest
+    download_req = BulkDownloadRequest(
+        media_ids=req.get("media_ids", []),
+        preset=req.get("preset", "original")
+    )
+    return bulk_download(download_req, current_user=current_user, db=db)

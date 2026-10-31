@@ -160,10 +160,15 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const handleBulkDownload = async () => {
     try {
       setLoadingAction('download');
-      const res = await fetch(`${apiUrl}/api/v1/media/bulk-download`, {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const res = await fetch(`${apiUrl}/api/v1/media/bulk-download${tokenParam}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media_ids: selectedIds }),
+        headers,
+        body: JSON.stringify({ media_ids: selectedIds, preset: 'optimized' }),
       });
       if (res.ok) {
         const blob = await res.blob();
