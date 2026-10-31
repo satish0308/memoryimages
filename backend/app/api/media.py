@@ -285,7 +285,7 @@ def get_media_burst(
         raise HTTPException(status_code=403, detail="Access denied")
 
     from app.services.burst_engine import get_burst_for_media
-    cluster = get_burst_for_media(db, media_id)
+    cluster = get_burst_for_media(db, media_id, user_id=current_user.id)
     if not cluster:
         raise HTTPException(status_code=404, detail="No burst sequence found for this photo")
     return cluster

@@ -77,18 +77,35 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
   const [resolving, setResolving] = useState(false);
   const [viewMode, setViewMode] = useState<'single' | 'grid'>('single');
 
+  const getAuthUrl = (urlPath: string) => {
+    if (!urlPath) return '';
+    const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+    const fullUrl = urlPath.startsWith('http') ? urlPath : `${apiUrl}${urlPath}`;
+    if (!token) return fullUrl;
+    const separator = fullUrl.includes('?') ? '&' : '?';
+    return `${fullUrl}${separator}token=${encodeURIComponent(token)}`;
+  };
+
   const fetchBurstData = useCallback(async () => {
     if (!leadItem) return;
     try {
       setLoading(true);
-      const res = await fetch(`${apiUrl}/api/v1/media/${leadItem.id}/burst`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+      const res = await fetch(`${apiUrl}/api/v1/media/${leadItem.id}/burst${tokenParam}`, {
+        headers,
+      });
       if (res.ok) {
         const data: BurstClusterData = await res.json();
         setCluster(data);
         setSelectedKeepId(data.best_shot_id);
         setActivePreviewId(data.best_shot_id);
       } else {
-        // Fallback: If not found as cluster, create a single item representation
+        // Fallback: If not found as cluster, set to null
         setCluster(null);
       }
     } catch (e) {
@@ -161,9 +178,15 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
 
     try {
       setResolving(true);
-      const res = await fetch(`${apiUrl}/api/v1/triage/bursts/resolve`, {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+      const res = await fetch(`${apiUrl}/api/v1/triage/bursts/resolve${tokenParam}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           keep_media_id: selectedKeepId,
           delete_media_ids: deleteIds,
@@ -247,13 +270,34 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
           </div>
         )}
 
+        {/* Empty / Not Found State */}
+        {!loading && !cluster && (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-4 p-8 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-amber-400">
+              <Layers className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white mb-1">No Active Duplicate Sequence</h3>
+              <p className="text-xs text-slate-400 max-w-sm">
+                This photo is not currently part of a detected burst or duplicate group, or it has already been cleaned.
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
         {/* Content Body */}
         {!loading && cluster && viewMode === 'single' && currentItem && (
           <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
             {/* Left/Center: Large Photo Viewport */}
             <div className="flex-1 relative bg-black/60 flex items-center justify-center overflow-hidden group">
               <img
-                src={`${apiUrl}${currentItem.preview_url}`}
+                src={getAuthUrl(currentItem.preview_url)}
                 alt={currentItem.filename}
                 className="max-h-full max-w-full object-contain transition-all"
               />
@@ -457,7 +501,7 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
                   >
                     <div className="relative aspect-square bg-black overflow-hidden">
                       <img
-                        src={`${apiUrl}${item.preview_url}`}
+                        src={getAuthUrl(item.preview_url)}
                         alt={item.filename}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                         loading="lazy"
@@ -527,7 +571,7 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
                   }`}
                 >
                   <img
-                    src={`${apiUrl}${item.thumbnail_url}`}
+                    src={getAuthUrl(item.thumbnail_url)}
                     alt={item.filename}
                     className="w-full h-full object-cover"
                   />
@@ -551,13 +595,17 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
         <div className="p-4 sm:p-5 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
           <div className="text-xs text-slate-400 flex items-center gap-2">
             <HardDrive className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            <span>
-              Keeping 1 shot, soft-deleting{' '}
-              <strong className="text-white">{(cluster?.count || 1) - 1}</strong> redundant shots will free{' '}
-              <strong className="text-emerald-400 font-mono">
-                {cluster?.reclaimable_mb.toFixed(2)} MB
-              </strong>
-            </span>
+            {cluster && cluster.count > 1 ? (
+              <span>
+                Keeping 1 shot, soft-deleting{' '}
+                <strong className="text-white">{(cluster.count || 1) - 1}</strong> redundant shots will free{' '}
+                <strong className="text-emerald-400 font-mono">
+                  {(cluster.reclaimable_mb ?? 0).toFixed(2)} MB
+                </strong>
+              </span>
+            ) : (
+              <span>Photo selected</span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -569,19 +617,21 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
               Cancel
             </button>
 
-            <button
-              type="button"
-              onClick={handleResolve}
-              disabled={resolving || !cluster || cluster.items.length <= 1}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg transition disabled:opacity-50 hover:scale-[1.02]"
-            >
-              <Trash2 className="w-4 h-4" />
-              <span>
-                {resolving
-                  ? 'Cleaning...'
-                  : `Keep Shot #${selectedKeepId} & Trash Remaining ${(cluster?.count || 1) - 1} Shots`}
-              </span>
-            </button>
+            {cluster && cluster.count > 1 && (
+              <button
+                type="button"
+                onClick={handleResolve}
+                disabled={resolving || !selectedKeepId}
+                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg transition disabled:opacity-50 hover:scale-[1.02]"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>
+                  {resolving
+                    ? 'Cleaning...'
+                    : `Keep Shot #${selectedKeepId} & Trash Remaining ${(cluster.count || 1) - 1} Shots`}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </div>

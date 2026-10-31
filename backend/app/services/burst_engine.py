@@ -236,14 +236,150 @@ def detect_burst_clusters(
 
     return formatted_clusters
 
-def get_burst_for_media(db: Session, media_id: int) -> Optional[Dict[str, Any]]:
+def get_burst_for_media(db: Session, media_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Returns the burst/duplicate cluster containing the specified media ID, or None."""
-    clusters = detect_burst_clusters(db)
-    for c in clusters:
-        for it in c["items"]:
-            if it["id"] == media_id:
-                return c
-    return None
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        return None
+    uid = user_id if user_id is not None else media.user_id
+
+    # 1. Gather localized candidates for lightning-fast (<30ms) cluster extraction
+    candidate_ids = {media.id}
+    candidates = [media]
+
+    if media.captured_at:
+        w_start = media.captured_at - timedelta(seconds=20)
+        w_end = media.captured_at + timedelta(seconds=20)
+        time_matches = db.query(Media).filter(
+            Media.user_id == uid,
+            Media.is_deleted == False,
+            Media.is_archived == False,
+            Media.captured_at >= w_start,
+            Media.captured_at <= w_end
+        ).all()
+        for m in time_matches:
+            if m.id not in candidate_ids:
+                candidate_ids.add(m.id)
+                candidates.append(m)
+
+    if media.perceptual_hash:
+        phash_matches = db.query(Media).filter(
+            Media.user_id == uid,
+            Media.is_deleted == False,
+            Media.is_archived == False,
+            Media.perceptual_hash == media.perceptual_hash
+        ).all()
+        for m in phash_matches:
+            if m.id not in candidate_ids:
+                candidate_ids.add(m.id)
+                candidates.append(m)
+
+    if len(candidates) <= 1:
+        # Fallback to full cluster scan if localized didn't yield anything
+        clusters = detect_burst_clusters(db, user_id=uid)
+        for c in clusters:
+            for it in c["items"]:
+                if it["id"] == media_id:
+                    return c
+        return None
+
+    # Sort chronologically
+    candidates.sort(key=lambda m: m.captured_at or media.captured_at)
+
+    # Build graph
+    adj: Dict[int, Set[int]] = {m.id: set() for m in candidates}
+    for i in range(len(candidates)):
+        m1 = candidates[i]
+        for j in range(i + 1, len(candidates)):
+            m2 = candidates[j]
+            # Time delta check
+            if m1.captured_at and m2.captured_at:
+                delta = abs((m2.captured_at - m1.captured_at).total_seconds())
+                dist = phash_distance(m1.perceptual_hash, m2.perceptual_hash)
+                same_cam = (m1.camera_model and m1.camera_model == m2.camera_model)
+                if delta <= 2.5 or (delta <= 4.0 and (dist <= 12 or same_cam)):
+                    adj[m1.id].add(m2.id)
+                    adj[m2.id].add(m1.id)
+            # pHash duplicate check
+            dist = phash_distance(m1.perceptual_hash, m2.perceptual_hash)
+            if dist <= 6:
+                adj[m1.id].add(m2.id)
+                adj[m2.id].add(m1.id)
+
+    # Traverse from target media_id
+    if not adj.get(media.id):
+        clusters = detect_burst_clusters(db, user_id=uid)
+        for c in clusters:
+            for it in c["items"]:
+                if it["id"] == media_id:
+                    return c
+        return None
+
+    component_ids = set()
+    queue = [media.id]
+    while queue:
+        curr = queue.pop(0)
+        if curr not in component_ids:
+            component_ids.add(curr)
+            for neighbor in adj.get(curr, []):
+                if neighbor not in component_ids:
+                    queue.append(neighbor)
+
+    if len(component_ids) <= 1:
+        return None
+
+    c_items = [m for m in candidates if m.id in component_ids]
+    c_items.sort(key=lambda m: m.captured_at or media.captured_at)
+
+    # Determine cluster type
+    is_burst = False
+    for i in range(len(c_items) - 1):
+        if c_items[i].captured_at and c_items[i+1].captured_at:
+            if abs((c_items[i+1].captured_at - c_items[i].captured_at).total_seconds()) <= 4.0:
+                is_burst = True
+                break
+    cluster_type = 'burst' if is_burst else 'duplicate'
+
+    # Score items & rank
+    scored_items = []
+    for item in c_items:
+        q = calculate_photo_quality(item)
+        scored_items.append({
+            'id': item.id,
+            'filename': item.filename,
+            'file_size': item.file_size or 0,
+            'width': item.width or 0,
+            'height': item.height or 0,
+            'captured_at': item.captured_at.isoformat() if item.captured_at else None,
+            'camera_model': item.camera_model,
+            'perceptual_hash': item.perceptual_hash,
+            'thumbnail_url': f'/api/v1/media/{item.id}/thumbnail?size=256',
+            'preview_url': f'/api/v1/media/{item.id}/thumbnail?size=1080',
+            **q,
+            'is_best_shot': False
+        })
+    scored_items.sort(key=lambda x: x['composite_score'], reverse=True)
+    best_shot_id = scored_items[0]['id']
+    for item in scored_items:
+        if item['id'] == best_shot_id:
+            item['is_best_shot'] = True
+
+    reclaimable_bytes = sum(it['file_size'] for it in scored_items if it['id'] != best_shot_id)
+    duration = 0.0
+    if c_items[0].captured_at and c_items[-1].captured_at:
+        duration = abs((c_items[-1].captured_at - c_items[0].captured_at).total_seconds())
+
+    return {
+        'id': f'{cluster_type}_{c_items[0].id}_{c_items[-1].id}',
+        'cluster_type': cluster_type,
+        'count': len(scored_items),
+        'duration_seconds': round(duration, 2),
+        'best_shot_id': best_shot_id,
+        'captured_at': c_items[0].captured_at.isoformat() if c_items[0].captured_at else None,
+        'reclaimable_bytes': reclaimable_bytes,
+        'reclaimable_mb': round(reclaimable_bytes / (1024 * 1024), 2),
+        'items': scored_items
+    }
 
 def resolve_burst_cluster(db: Session, keep_media_id: int, delete_media_ids: List[int]) -> Dict[str, Any]:
     """
