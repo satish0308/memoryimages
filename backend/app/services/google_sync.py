@@ -19,6 +19,7 @@ from app.models.media import Media, SourceType
 from app.services.scanner import scan_file, scan_file_in_memory
 from app.services.settings_service import get_storage_mode, is_local_storage_approved
 from app.services.drive_cache import cache_drive_thumbnail_link
+from app.services.triage_engine import classify_media_item
 
 logger = logging.getLogger(__name__)
 
@@ -245,113 +246,176 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                 relinked_count += relinked
                 db.commit()
 
-        # Query for non-trashed images in Google Drive (up to 100 per sync trigger)
-        query = "mimeType contains 'image/' and trashed = false"
-        results = service.files().list(
-            q=query,
-            pageSize=100,
-            fields="files(id, name, mimeType, size, thumbnailLink)"
-        ).execute()
-        items = results.get("files", [])
+        # Preload all existing source_ids for O(1) set lookup
+        existing_ids = set(
+            row[0] for row in db.query(Media.source_id).filter(
+                Media.source_type == SourceType.GOOGLE_DRIVE,
+                Media.source_id != None
+            ).all()
+        )
 
+        # Query for all non-trashed images and videos in Google Drive using high-throughput pageSize=1000
+        query = "(mimeType contains 'image/' or mimeType contains 'video/') and trashed = false"
+        page_token = None
+        new_media_batch = []
         synced_count = 0
         already_count = 0
-        
-        for item in items:
-            file_id = item["id"]
-            name = item["name"]
-            thumb_link = item.get("thumbnailLink")
-            mime_type = item.get("mimeType", "")
-            file_size = int(item.get("size", 0) or 0)
+        total_discovered = 0
+        max_import_per_sync = 5000
 
-            if thumb_link:
-                cache_drive_thumbnail_link(file_id, thumb_link)
-            
-            # Check if this Google Drive file ID has already been ingested
-            existing = db.query(Media).filter(
-                Media.source_type == SourceType.GOOGLE_DRIVE,
-                Media.source_id == file_id
-            ).first()
-            if existing:
-                already_count += 1
-                if effective_user_id and existing.user_id != effective_user_id:
-                    existing.user_id = effective_user_id
-                    relinked_count += 1
-                if thumb_link and not existing.thumbnail_256_path:
-                    existing.thumbnail_256_path = thumb_link
-                continue
+        while True:
+            list_kwargs = {
+                "q": query,
+                "pageSize": 1000,
+                "fields": "nextPageToken, files(id, name, mimeType, size, createdTime, thumbnailLink, imageMediaMetadata, videoMediaMetadata)"
+            }
+            if page_token:
+                list_kwargs["pageToken"] = page_token
 
-            # Skip oversized files (>15MB) or non-images to guarantee snappy sync completion
-            if file_size > 15 * 1024 * 1024 or not mime_type.startswith("image/"):
-                continue
+            results = service.files().list(**list_kwargs).execute()
+            files = results.get("files", [])
+            total_discovered += len(files)
 
-            # Limit downloads to 10 new photos per trigger to prevent HTTP timeout
-            if synced_count >= 10:
-                continue
+            for f in files:
+                file_id = f["id"]
+                thumb_link = f.get("thumbnailLink")
+                if thumb_link:
+                    cache_drive_thumbnail_link(file_id, thumb_link)
 
-            request = service.files().get_media(fileId=file_id)
+                if file_id in existing_ids:
+                    already_count += 1
+                    continue
 
-            if storage_mode == "in_memory" or not local_approved:
-                # Strictly in-memory process: zero local disk writes or volume mount usage
-                mem_buf = io.BytesIO()
-                downloader = MediaIoBaseDownload(mem_buf, request, chunksize=1024 * 1024)
-                done = False
-                while not done:
-                    _, done = downloader.next_chunk()
-                mem_buf.seek(0)
+                name = f.get("name", "untitled.jpg")
+                mime_type = f.get("mimeType", "image/jpeg")
+                file_size = int(f.get("size", 0) or 0)
 
-                media = scan_file_in_memory(
-                    db=db,
-                    buffer=mem_buf,
+                img_meta = f.get("imageMediaMetadata") or {}
+                vid_meta = f.get("videoMediaMetadata") or {}
+                try:
+                    width = int(img_meta.get("width") or vid_meta.get("width") or 0)
+                except Exception:
+                    width = 0
+                try:
+                    height = int(img_meta.get("height") or vid_meta.get("height") or 0)
+                except Exception:
+                    height = 0
+                camera_make = img_meta.get("cameraMake")
+                camera_model = img_meta.get("cameraModel")
+                try:
+                    iso = int(img_meta.get("isoSpeed")) if img_meta.get("isoSpeed") is not None else None
+                except Exception:
+                    iso = None
+                try:
+                    focal_length = float(img_meta.get("focalLength")) if img_meta.get("focalLength") is not None else None
+                except Exception:
+                    focal_length = None
+                exposure_time = str(img_meta.get("exposureTime")) if img_meta.get("exposureTime") is not None else None
+
+                captured_at = None
+                time_str = img_meta.get("time")
+                if time_str:
+                    try:
+                        captured_at = datetime.strptime(time_str[:19], "%Y:%m:%d %H:%M:%S")
+                    except Exception:
+                        pass
+                if not captured_at and f.get("createdTime"):
+                    try:
+                        captured_at = datetime.fromisoformat(f["createdTime"].replace("Z", "+00:00")).replace(tzinfo=None)
+                    except Exception:
+                        pass
+                if not captured_at:
+                    captured_at = datetime.utcnow()
+
+                category, confidence, expires_at = classify_media_item(
                     filename=name,
+                    width=width,
+                    height=height,
+                    camera_make=camera_make,
+                    camera_model=camera_model,
+                    captured_at=captured_at
+                )
+
+                duration_seconds = None
+                if vid_meta and vid_meta.get("durationMillis"):
+                    try:
+                        duration_seconds = float(vid_meta["durationMillis"]) / 1000.0
+                    except Exception:
+                        pass
+
+                media_obj = Media(
+                    filename=name,
+                    original_path=f"gdrive://{file_id}/{name}",
+                    file_size=file_size,
+                    mime_type=mime_type,
+                    width=width,
+                    height=height,
+                    category=category,
+                    triage_confidence=confidence,
+                    expires_at=expires_at,
+                    camera_make=camera_make,
+                    camera_model=camera_model,
+                    iso=iso,
+                    focal_length=focal_length,
+                    exposure_time=exposure_time,
+                    duration_seconds=duration_seconds,
+                    captured_at=captured_at,
+                    thumbnail_256_path=f"gdrive_cdn://{file_id}" if thumb_link else None,
                     source_type=SourceType.GOOGLE_DRIVE,
                     source_id=file_id,
-                    thumbnail_link=thumb_link,
                     user_id=effective_user_id
                 )
-                if media:
-                    synced_count += 1
-            else:
-                # Approved local storage: save to local directory and scan
-                dest_dir = os.path.join(settings.MEDIA_DIR, "google_drive")
-                os.makedirs(dest_dir, exist_ok=True)
-                safe_name = f"{file_id}_{name}"
-                file_dest = os.path.join(dest_dir, safe_name)
+                new_media_batch.append(media_obj)
+                existing_ids.add(file_id)
+                synced_count += 1
 
-                with open(file_dest, "wb") as f:
-                    downloader = MediaIoBaseDownload(f, request)
-                    done = False
-                    while not done:
-                        _, done = downloader.next_chunk()
+                if len(new_media_batch) >= 1000:
+                    db.bulk_save_objects(new_media_batch)
+                    db.commit()
+                    new_media_batch = []
 
-                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id, user_id=effective_user_id)
-                if media:
-                    synced_count += 1
-                
-        source.status = SyncStatus.IDLE
-        source.items_count = len(items)
-        source.last_synced_at = datetime.utcnow()
-        db.commit()
+                if synced_count >= max_import_per_sync:
+                    break
+
+            if synced_count >= max_import_per_sync:
+                break
+
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+
+        if new_media_batch:
+            db.bulk_save_objects(new_media_batch)
+            db.commit()
 
         total_active_user_media = db.query(Media).filter(
             Media.user_id == effective_user_id,
             Media.is_deleted == False
-        ).count() if effective_user_id else len(items)
+        ).count() if effective_user_id else total_discovered
 
+        source.status = SyncStatus.IDLE
+        source.items_count = total_active_user_media
+        source.last_synced_at = datetime.utcnow()
+        db.commit()
+
+        has_more = bool(page_token and synced_count >= max_import_per_sync)
         if synced_count > 0:
-            msg = f"Sync complete: imported {synced_count} new photos from Google Drive ({total_active_user_media} total in library)!"
+            msg = f"Sync complete: imported {synced_count} photos from Google Drive ({total_active_user_media} total in library)!"
+            if has_more:
+                msg += " (Click Sync again to import next batch)"
         elif relinked_count > 0:
             msg = f"Sync complete: successfully verified and linked {relinked_count} photos to your library ({total_active_user_media} total)!"
         else:
-            msg = f"Sync complete: all {len(items)} photos verified up to date in your library ({total_active_user_media} total)!"
+            msg = f"Sync complete: all {total_active_user_media} photos verified up to date in your library!"
 
         return {
             "status": "completed",
             "synced_photos": synced_count,
             "already_synced": already_count,
             "relinked_photos": relinked_count,
-            "total_in_drive": len(items),
+            "total_discovered": total_discovered,
             "total_library_photos": total_active_user_media,
+            "has_more": has_more,
             "source_id": source.id,
             "message": msg
         }
