@@ -19,9 +19,11 @@ connect_args = {}
 engine_kwargs = {"pool_pre_ping": True}
 
 if is_sqlite:
-    connect_args = {"check_same_thread": False}
+    from sqlalchemy.pool import NullPool
+    connect_args = {"check_same_thread": False, "timeout": 30}
+    engine_kwargs.update({"poolclass": NullPool})
 elif is_postgres:
-    engine_kwargs.update({"pool_size": 10, "max_overflow": 20})
+    engine_kwargs.update({"pool_size": 20, "max_overflow": 40})
 
 engine = create_engine(
     settings.DATABASE_URL,
