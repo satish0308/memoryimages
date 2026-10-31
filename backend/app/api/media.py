@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import zipfile
 import shutil
 from datetime import datetime
@@ -133,6 +134,10 @@ def get_timeline(
             "is_favorite": item.is_favorite,
             "is_blurry": item.is_blurry,
             "blurriness_score": item.blurriness_score,
+            "blur_type": getattr(item, "blur_type", "sharp") or "sharp",
+            "is_bokeh": getattr(item, "is_bokeh", False) or False,
+            "is_enhanced": getattr(item, "is_enhanced", False) or False,
+            "enhancement_data": item.enhancement_data,
             "file_size": item.file_size,
             "camera_make": item.camera_make,
             "camera_model": item.camera_model,
@@ -390,11 +395,107 @@ def regenerate_all_thumbnails(db: Session = Depends(get_db)):
                 p.thumbnail_1080_path = res["thumbnail_1080_path"]
                 p.blurriness_score = res["blurriness_score"]
                 p.is_blurry = res["is_blurry"]
+                if "blur_type" in res:
+                    p.blur_type = res["blur_type"]
+                if "is_bokeh" in res:
+                    p.is_bokeh = res["is_bokeh"]
                 updated += 1
             except Exception:
                 pass
     db.commit()
     return {"status": "completed", "updated_photos": updated}
+
+class EnhanceMediaRequest(BaseModel):
+    brightness: Optional[float] = None
+    contrast: Optional[float] = None
+    saturation: Optional[float] = None
+    shadows_lift_pct: Optional[int] = None
+    css_filter: Optional[str] = None
+
+class BatchEnhanceRequest(BaseModel):
+    media_ids: List[int]
+
+@router.get("/{media_id}/enhance-params")
+def get_media_enhance_params(media_id: int, db: Session = Depends(get_db)):
+    """
+    Computes optimal auto-enhancement parameters and subject-aware quality score.
+    """
+    from app.services.quality_engine import evaluate_and_update_media_quality, calculate_auto_enhance_params, load_media_image
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    image = load_media_image(media, db, prefer_preview=True)
+    if image:
+        enhance_params = calculate_auto_enhance_params(image)
+    else:
+        enhance_params = {
+            "auto_recommended": True,
+            "brightness": 1.12,
+            "contrast": 1.10,
+            "saturation": 1.08,
+            "shadows_lift_pct": 15,
+            "css_filter": "brightness(1.12) contrast(1.10) saturate(1.08)"
+        }
+
+    return {
+        "media_id": media.id,
+        "blur_type": getattr(media, "blur_type", "sharp") or "sharp",
+        "is_bokeh": getattr(media, "is_bokeh", False) or False,
+        "is_blurry": media.is_blurry or False,
+        "is_enhanced": getattr(media, "is_enhanced", False) or False,
+        "enhance_params": enhance_params,
+        "saved_enhancement": json.loads(media.enhancement_data) if media.enhancement_data else None
+    }
+
+@router.post("/{media_id}/apply-enhance")
+def apply_enhance_to_media(
+    media_id: int,
+    req: Optional[EnhanceMediaRequest] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Persists non-destructive auto-enhancement recipe (brightness, contrast, saturation, shadows) to media.
+    """
+    from app.services.quality_engine import apply_media_enhancement
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    params = req.dict(exclude_none=True) if req else None
+    return apply_media_enhancement(media, db, params)
+
+@router.post("/{media_id}/revert-enhance")
+def revert_enhance_media(media_id: int, db: Session = Depends(get_db)):
+    """Reverts photo to original natural state."""
+    from app.services.quality_engine import revert_media_enhancement
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    return revert_media_enhancement(media, db)
+
+@router.post("/batch-enhance")
+def batch_enhance_media(req: BatchEnhanceRequest, db: Session = Depends(get_db)):
+    """Applies auto-enhancement to multiple media items in batch."""
+    from app.services.quality_engine import apply_media_enhancement
+    items = db.query(Media).filter(Media.id.in_(req.media_ids)).all()
+    enhanced_count = 0
+    for it in items:
+        try:
+            apply_media_enhancement(it, db)
+            enhanced_count += 1
+        except Exception:
+            pass
+    return {"status": "success", "enhanced_count": enhanced_count}
+
+@router.post("/quality/analyze-all")
+def run_library_quality_analysis(force: bool = False, db: Session = Depends(get_db)):
+    """
+    Analyzes all photos in the library to identify bokeh portraits, motion shake, and pocket shots.
+    """
+    from app.services.quality_engine import run_library_quality_scan
+    return run_library_quality_scan(db, force=force)
 
 @router.get("/{media_id}/download")
 def download_original(media_id: int, db: Session = Depends(get_db)):

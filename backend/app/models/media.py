@@ -37,6 +37,10 @@ class Media(Base):
     triage_confidence = Column(Float, default=0.0)
     blurriness_score = Column(Float, default=0.0)
     is_blurry = Column(Boolean, default=False)
+    blur_type = Column(String(32), default="sharp", index=True)
+    is_bokeh = Column(Boolean, default=False, index=True)
+    is_enhanced = Column(Boolean, default=False, index=True)
+    enhancement_data = Column(Text, nullable=True)
     
     # Timestamps & Expiry
     captured_at = Column(DateTime, default=datetime.utcnow, index=True)

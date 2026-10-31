@@ -40,6 +40,9 @@ interface TriageOverview {
   expiring_screenshots: number;
   total_bills_receipts: number;
   total_blurry: number;
+  total_pocket_shots?: number;
+  total_motion_blur?: number;
+  total_bokeh?: number;
   total_memes: number;
   reclaimable_bytes: number;
   reclaimable_mb: number;
@@ -70,7 +73,11 @@ interface BlurryItem {
   filename: string;
   captured_at: string;
   file_size: number;
+  blur_type?: string;
   blurriness_score?: number;
+  is_blurry?: boolean;
+  is_bokeh?: boolean;
+  is_enhanced?: boolean;
   thumbnail_url: string;
 }
 
@@ -113,6 +120,8 @@ export default function TriagePage() {
   const [loading, setLoading] = useState(true);
   const [billSearchQuery, setBillSearchQuery] = useState('');
   const [screenshotFilter, setScreenshotFilter] = useState<'all' | 'expired' | 'recent'>('all');
+  const [blurFilter, setBlurFilter] = useState<'all' | 'motion_blur' | 'out_of_focus' | 'black_pocket'>('all');
+  const [isCleaningPockets, setIsCleaningPockets] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isResolvingAll, setIsResolvingAll] = useState(false);
 
@@ -171,23 +180,38 @@ export default function TriagePage() {
   const fetchBlurry = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/media?limit=200`);
+      const url = blurFilter !== 'all'
+        ? `${API_URL}/api/v1/triage/blurry?blur_type=${blurFilter}`
+        : `${API_URL}/api/v1/triage/blurry`;
+      const res = await fetch(url);
       if (res.ok) {
-        const data = await res.json();
-        const blurry = (data.items || []).filter((i: any) => i.is_blurry);
-        setBlurryPhotos(
-          blurry.map((i: any) => ({
-            ...i,
-            thumbnail_url: `/api/v1/media/${i.id}/thumbnail?size=256`,
-          }))
-        );
+        setBlurryPhotos(await res.json());
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, blurFilter]);
+
+  const handleCleanPocketShots = async () => {
+    try {
+      setIsCleaningPockets(true);
+      const res = await fetch(`${API_URL}/api/v1/triage/pocket-shots/cleanup`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(`Cleaned ${data.count} accidental dark / pocket shots`);
+        fetchOverview();
+        fetchBlurry();
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsCleaningPockets(false);
+    }
+  };
 
   const fetchLargeFiles = useCallback(async () => {
     try {
@@ -919,8 +943,26 @@ export default function TriagePage() {
       {/* Tab 4: Blurry Shots Review */}
       {activeTab === 'blurry' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
+          {/* Bokeh Preservation Notice */}
+          <div className="bg-gradient-to-r from-purple-900/30 via-indigo-900/20 to-slate-900/30 border border-purple-500/30 rounded-2xl p-3.5 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2.5 text-purple-200">
+              <span className="text-base">✨</span>
+              <div>
+                <p className="font-semibold text-purple-300">Subject-Aware Bokeh & Portrait Protection</p>
+                <p className="text-slate-400 text-[11px]">
+                  Artistic shallow depth-of-field portraits are automatically distinguished from accidental blur and preserved safely in Memories.
+                </p>
+              </div>
+            </div>
+            {overview && (overview.total_bokeh ?? 0) > 0 && (
+              <span className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-1 rounded-full font-bold text-xs">
+                {overview.total_bokeh} Portraits Preserved
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={toggleSelectAll}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
@@ -928,15 +970,69 @@ export default function TriagePage() {
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4 text-slate-400" />}
                 <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
               </button>
-              <span className="text-xs text-slate-500">
-                {blurryPhotos.length} low-sharpness photos flagged
-              </span>
+
+              {/* Sub-Filters */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                <button
+                  onClick={() => setBlurFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    blurFilter === 'all'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  All ({blurryPhotos.length})
+                </button>
+                <button
+                  onClick={() => setBlurFilter('motion_blur')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    blurFilter === 'motion_blur'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  💨 Motion Shake
+                </button>
+                <button
+                  onClick={() => setBlurFilter('out_of_focus')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    blurFilter === 'out_of_focus'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  🔍 Out of Focus
+                </button>
+                <button
+                  onClick={() => setBlurFilter('black_pocket')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    blurFilter === 'black_pocket'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  🌑 Dark / Pocket
+                </button>
+              </div>
             </div>
+
+            {/* Quick 1-Click Action for accidental pocket shots */}
+            {overview && (overview.total_pocket_shots ?? 0) > 0 && (
+              <button
+                onClick={handleCleanPocketShots}
+                disabled={isCleaningPockets}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-semibold border border-rose-500/30 transition shadow-sm"
+                title="1-Click Soft Delete of pitch-black pocket / lens-cap shots"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clean {overview.total_pocket_shots} Dark Pocket Shots</span>
+              </button>
+            )}
           </div>
 
           {blurryPhotos.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No blurry photos detected in library! All images meet sharpness thresholds.
+              No photos found matching this quality filter! All images meet sharpness thresholds.
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -955,6 +1051,9 @@ export default function TriagePage() {
                         captured_at: b.captured_at,
                         is_favorite: false,
                         is_blurry: true,
+                        blur_type: b.blur_type,
+                        is_bokeh: b.is_bokeh,
+                        is_enhanced: b.is_enhanced,
                         thumbnail_url: b.thumbnail_url,
                       })
                     }
@@ -972,7 +1071,11 @@ export default function TriagePage() {
                     {/* Sharpness Badge & Checkbox */}
                     <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
                       <span className="bg-amber-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
-                        Sharpness: {b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}
+                        {b.blur_type === 'motion_blur'
+                          ? '💨 Motion Shake'
+                          : b.blur_type === 'black_pocket'
+                          ? '🌑 Dark Shot'
+                          : `Sharpness: ${b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}`}
                       </span>
                       <div
                         onClick={(e) => toggleSelect(b.id, e)}

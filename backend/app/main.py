@@ -45,6 +45,14 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN color_hex VARCHAR(7)"))
                 if "duration_seconds" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN duration_seconds FLOAT"))
+                if "blur_type" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN blur_type VARCHAR(32) DEFAULT 'sharp'"))
+                if "is_bokeh" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN is_bokeh BOOLEAN DEFAULT FALSE"))
+                if "is_enhanced" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN is_enhanced BOOLEAN DEFAULT FALSE"))
+                if "enhancement_data" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN enhancement_data TEXT"))
                 conn.commit()
     except Exception as e:
         print(f"Schema upgrade notice: {e}")

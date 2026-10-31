@@ -33,7 +33,9 @@ def calculate_photo_quality(media: Media) -> Dict[str, Any]:
     raw_blur = float(media.blurriness_score or 0.0)
     # Scaled so that blurriness_score 250 -> 100
     sharpness = min(100.0, max(5.0, raw_blur / 2.5))
-    if media.is_blurry:
+    if getattr(media, "is_bokeh", False):
+        sharpness = max(sharpness, 85.0)  # Portrait mode bokeh has sharp subject focus
+    elif media.is_blurry:
         sharpness *= 0.35  # Severe penalty for photos marked blurry
 
     # 2. Expression & Smile score
@@ -76,6 +78,8 @@ def calculate_photo_quality(media: Media) -> Dict[str, Any]:
         "raw_blurriness": round(raw_blur, 1),
         "is_smiling": bool(media.is_smiling),
         "is_blurry": bool(media.is_blurry),
+        "is_bokeh": bool(getattr(media, "is_bokeh", False)),
+        "blur_type": getattr(media, "blur_type", "sharp") or "sharp",
         "is_favorite": bool(media.is_favorite),
     }
 

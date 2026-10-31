@@ -43,6 +43,11 @@ export interface MediaItem {
   is_burst_lead?: boolean;
   burst_score?: number | null;
   burst_type?: 'burst' | 'duplicate' | null;
+  // Subject-Aware Bokeh & Quality Engine
+  blur_type?: string | null;
+  is_bokeh?: boolean;
+  is_enhanced?: boolean;
+  enhancement_data?: string | null;
 }
 
 interface PhotoCardProps {
@@ -68,6 +73,20 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 }) => {
   const isBurst = Boolean(item.burst_count && item.burst_count > 1);
 
+  let filterStyle: string | undefined = undefined;
+  if (item.is_enhanced) {
+    if (item.enhancement_data) {
+      try {
+        const parsed = JSON.parse(item.enhancement_data);
+        if (parsed.css_filter) filterStyle = parsed.css_filter;
+      } catch {
+        filterStyle = 'brightness(1.12) contrast(1.08) saturate(1.08)';
+      }
+    } else {
+      filterStyle = 'brightness(1.12) contrast(1.08) saturate(1.08)';
+    }
+  }
+
   return (
     <div className="relative group">
       {/* 3D Stacked Card Effect for Burst Groups */}
@@ -87,6 +106,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         <img
           src={`${apiUrl}${item.thumbnail_url}`}
           alt={item.filename}
+          style={{ filter: filterStyle }}
           className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
             isSelected ? 'brightness-95' : ''
           }`}
@@ -111,7 +131,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       </button>
 
       {/* Category & Status Pills */}
-      <div className={`absolute top-2 left-9 flex gap-1 transition-opacity ${isSelected ? 'opacity-90' : ''}`}>
+      <div className={`absolute top-2 left-9 flex flex-wrap gap-1 transition-opacity ${isSelected ? 'opacity-90' : ''}`}>
         {item.category === 'screenshot' && (
           <span className="bg-blue-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
             Screenshot
@@ -128,9 +148,20 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             <span>{item.matched_timestamp_label ? `At ${item.matched_timestamp_label}` : 'Video'}</span>
           </span>
         )}
-        {item.is_blurry && (
+        {item.is_bokeh && (
+          <span className="bg-purple-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm" title="Artistic Bokeh / Portrait Depth-of-Field">
+            <span>🎨</span>
+            <span>Portrait</span>
+          </span>
+        )}
+        {item.is_enhanced && (
+          <span className="bg-amber-400 text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-0.5 shadow-sm" title="1-Click Auto-Enhanced">
+            <span>✨</span>
+          </span>
+        )}
+        {item.is_blurry && !item.is_bokeh && (
           <span className="bg-amber-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
-            Blurry
+            {item.blur_type === 'motion_blur' ? '💨 Shake' : item.blur_type === 'black_pocket' ? '🌑 Dark' : 'Blurry'}
           </span>
         )}
         {item.mood && !item.is_video && (

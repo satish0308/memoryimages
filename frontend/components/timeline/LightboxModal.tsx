@@ -79,6 +79,19 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [locLon, setLocLon] = useState<string>(photo?.longitude != null ? photo.longitude.toString() : '');
   const [savingLoc, setSavingLoc] = useState(false);
 
+  // 1-Click Auto-Enhance state
+  const [isEnhanced, setIsEnhanced] = useState(photo?.is_enhanced || false);
+  const [isHoldingCompare, setIsHoldingCompare] = useState(false);
+  const [enhanceParams, setEnhanceParams] = useState<{
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    shadows_lift_pct?: number;
+    css_filter: string;
+    auto_recommended?: boolean;
+  } | null>(null);
+  const [isSavingEnhance, setIsSavingEnhance] = useState(false);
+
   const dragStart = useRef({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -97,6 +110,66 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setCurrentCategory(photo.category);
     }
   }, [photo?.id, photo?.category]);
+
+  // Sync auto-enhance state when photo changes
+  useEffect(() => {
+    if (!photo) return;
+    setIsEnhanced(photo.is_enhanced || false);
+    setIsHoldingCompare(false);
+
+    if (photo.enhancement_data) {
+      try {
+        const parsed = JSON.parse(photo.enhancement_data);
+        setEnhanceParams(parsed);
+      } catch {
+        setEnhanceParams(null);
+      }
+    } else {
+      setEnhanceParams(null);
+    }
+
+    if (!photo.is_video) {
+      fetch(`${apiUrl}/api/v1/media/${photo.id}/enhance-params`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.enhance_params) {
+            setEnhanceParams((prev) => prev || data.enhance_params);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [photo?.id, apiUrl]);
+
+  const handleToggleEnhance = async () => {
+    if (!photo) return;
+    const nextState = !isEnhanced;
+    setIsEnhanced(nextState);
+
+    try {
+      setIsSavingEnhance(true);
+      if (nextState) {
+        await fetch(`${apiUrl}/api/v1/media/${photo.id}/apply-enhance`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(enhanceParams || {}),
+        });
+        photo.is_enhanced = true;
+      } else {
+        await fetch(`${apiUrl}/api/v1/media/${photo.id}/revert-enhance`, {
+          method: 'POST',
+        });
+        photo.is_enhanced = false;
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSavingEnhance(false);
+    }
+  };
+
+  const currentFilter = isEnhanced && !isHoldingCompare
+    ? (enhanceParams?.css_filter || 'brightness(1.15) contrast(1.10) saturate(1.08)')
+    : 'none';
 
   // Reset zoom, pan, and high-res state whenever a new photo is opened
   useEffect(() => {
@@ -480,6 +553,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 }
                 alt={photo.filename}
                 onClick={handleImageClick}
+                style={{
+                  filter: currentFilter,
+                  transition: 'filter 0.2s ease-in-out',
+                }}
                 className="max-h-[85vh] max-w-full object-contain rounded-lg"
                 draggable={false}
               />
@@ -586,6 +663,44 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
             <div className="h-4 w-px bg-slate-700" />
 
+            {/* Auto-Enhance Engine */}
+            {photo && !photo.is_video && (
+              <>
+                <button
+                  onClick={handleToggleEnhance}
+                  disabled={isSavingEnhance}
+                  className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition ${
+                    isEnhanced
+                      ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-400/20'
+                      : 'text-amber-300 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="1-Click Auto-Enhance (Dynamic Range, Balanced Contrast & Vibrancy)"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isEnhanced ? 'text-slate-950 fill-slate-950' : 'text-amber-400'}`} />
+                  <span>{isEnhanced ? 'Enhanced' : 'Auto-Enhance'}</span>
+                </button>
+
+                {isEnhanced && (
+                  <button
+                    onMouseDown={() => setIsHoldingCompare(true)}
+                    onMouseUp={() => setIsHoldingCompare(false)}
+                    onTouchStart={() => setIsHoldingCompare(true)}
+                    onTouchEnd={() => setIsHoldingCompare(false)}
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition border select-none ${
+                      isHoldingCompare
+                        ? 'bg-rose-600 text-white border-rose-500'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                    title="Hold down to preview un-enhanced original"
+                  >
+                    {isHoldingCompare ? 'Original' : 'Hold Compare'}
+                  </button>
+                )}
+
+                <div className="h-4 w-px bg-slate-700" />
+              </>
+            )}
+
             {/* Quality Indicator Badge */}
             <span
               className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border transition-all ${
@@ -688,10 +803,36 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                     </select>
                   </div>
 
-                  {photo.is_blurry && (
+                  {photo.is_bokeh && (
+                    <div className="flex items-center justify-between text-purple-400 font-medium pt-1 border-t border-slate-700/50">
+                      <span>Focus & Depth</span>
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <span>🎨</span>
+                        <span>Portrait Bokeh (Sharp Subject)</span>
+                      </span>
+                    </div>
+                  )}
+
+                  {photo.is_blurry && !photo.is_bokeh && (
                     <div className="flex items-center justify-between text-amber-400 font-medium pt-1 border-t border-slate-700/50">
                       <span>Quality</span>
-                      <span>Flagged as Blurry</span>
+                      <span className="text-[11px]">
+                        {photo.blur_type === 'motion_blur'
+                          ? '💨 Camera Motion Shake'
+                          : photo.blur_type === 'black_pocket'
+                          ? '🌑 Accidental Dark / Pocket'
+                          : '🔍 Out of Focus'}
+                      </span>
+                    </div>
+                  )}
+
+                  {isEnhanced && (
+                    <div className="flex items-center justify-between text-amber-300 font-medium pt-1 border-t border-slate-700/50">
+                      <span>Lighting & Tone</span>
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <span>✨</span>
+                        <span>Auto-Enhanced {enhanceParams?.shadows_lift_pct ? `(+${enhanceParams.shadows_lift_pct}% shadows)` : ''}</span>
+                      </span>
                     </div>
                   )}
                 </div>

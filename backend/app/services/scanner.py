@@ -351,6 +351,10 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         media.perceptual_hash = thumb_data["perceptual_hash"]
         media.blurriness_score = thumb_data["blurriness_score"]
         media.is_blurry = thumb_data["is_blurry"]
+        if "blur_type" in thumb_data:
+            media.blur_type = thumb_data["blur_type"]
+        if "is_bokeh" in thumb_data:
+            media.is_bokeh = thumb_data["is_bokeh"]
         db.commit()
     except Exception as e:
         print(f"Error generating thumbnail for {file_path}: {e}")

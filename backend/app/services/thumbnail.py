@@ -65,9 +65,19 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
         # Calculate perceptual hash (pHash)
         phash_val = str(imagehash.phash(img_rgb))
         
-        # Calculate blurriness
-        blur_score = calculate_blurriness(img_rgb)
-        is_blurry = blur_score < 80.0
+        # Calculate subject-aware quality, bokeh & blur characteristics
+        try:
+            from app.services.quality_engine import analyze_image_quality
+            q_res = analyze_image_quality(img_rgb)
+            blur_score = q_res["sharpness_score"]
+            is_blurry = q_res["is_blurry"]
+            blur_type = q_res["blur_type"]
+            is_bokeh = q_res["is_bokeh"]
+        except Exception:
+            blur_score = calculate_blurriness(img_rgb)
+            is_blurry = blur_score < 80.0
+            blur_type = "sharp" if not is_blurry else "out_of_focus"
+            is_bokeh = False
         
         # Preserve ICC profile if present to avoid washed out colors
         icc_profile = img.info.get("icc_profile")
@@ -95,5 +105,7 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
         "height": height,
         "perceptual_hash": phash_val,
         "blurriness_score": round(blur_score, 2),
-        "is_blurry": is_blurry
+        "is_blurry": is_blurry,
+        "blur_type": blur_type,
+        "is_bokeh": is_bokeh
     }

@@ -47,6 +47,22 @@ def get_triage_overview(db: Session = Depends(get_db)):
     
     total_blurry = db.query(Media).filter(
         Media.is_blurry == True,
+        Media.is_bokeh == False,
+        Media.is_deleted == False
+    ).count()
+
+    total_pocket_shots = db.query(Media).filter(
+        Media.blur_type == "black_pocket",
+        Media.is_deleted == False
+    ).count()
+
+    total_motion_blur = db.query(Media).filter(
+        Media.blur_type == "motion_blur",
+        Media.is_deleted == False
+    ).count()
+
+    total_bokeh = db.query(Media).filter(
+        Media.is_bokeh == True,
         Media.is_deleted == False
     ).count()
     
@@ -60,7 +76,7 @@ def get_triage_overview(db: Session = Depends(get_db)):
         (
             (Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)
         ) | (
-            Media.is_blurry == True
+            (Media.is_blurry == True) & (Media.is_bokeh == False)
         ) | (
             Media.category == MediaCategory.MEME_JUNK
         ),
@@ -72,6 +88,9 @@ def get_triage_overview(db: Session = Depends(get_db)):
         "expiring_screenshots": expiring_screenshots,
         "total_bills_receipts": total_bills,
         "total_blurry": total_blurry,
+        "total_pocket_shots": total_pocket_shots,
+        "total_motion_blur": total_motion_blur,
+        "total_bokeh": total_bokeh,
         "total_memes": total_memes,
         "reclaimable_bytes": clutter_size,
         "reclaimable_mb": round(clutter_size / (1024 * 1024), 2)
@@ -289,4 +308,52 @@ def resolve_all_duplicates(db: Session = Depends(get_db)):
     (highest sharpness, smile, resolution) and soft-deletes redundant copies.
     """
     return resolve_all_bursts(db)
+
+@router.get("/blurry")
+def get_blurry_photos(
+    blur_type: Optional[str] = Query(None, regex="^(all|motion_blur|out_of_focus|black_pocket|blown_white)$"),
+    db: Session = Depends(get_db)
+):
+    """
+    Lists photos flagged as blurry or poor quality, safely distinguishing:
+    - Camera motion shake (anisotropic streaks)
+    - Out of focus (missed focal plane)
+    - Accidental pocket / pitch-black shots
+    Artistic bokeh / portrait photos are intentionally excluded.
+    """
+    query = db.query(Media).filter(
+        Media.is_blurry == True,
+        Media.is_bokeh == False,
+        Media.is_deleted == False
+    )
+
+    if blur_type and blur_type != "all":
+        query = query.filter(Media.blur_type == blur_type)
+
+    items = query.order_by(desc(Media.captured_at)).all()
+
+    return [{
+        "id": item.id,
+        "filename": item.filename,
+        "captured_at": item.captured_at,
+        "file_size": item.file_size,
+        "blur_type": getattr(item, "blur_type", "out_of_focus") or "out_of_focus",
+        "blurriness_score": item.blurriness_score,
+        "is_blurry": item.is_blurry,
+        "is_bokeh": getattr(item, "is_bokeh", False) or False,
+        "is_enhanced": getattr(item, "is_enhanced", False) or False,
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+    } for item in items]
+
+@router.post("/pocket-shots/cleanup")
+def cleanup_pocket_shots(db: Session = Depends(get_db)):
+    """
+    Soft-deletes all pitch black / pocket shots while respecting zero-data-loss policy.
+    """
+    updated = db.query(Media).filter(
+        Media.blur_type == "black_pocket",
+        Media.is_deleted == False
+    ).update({"is_deleted": True}, synchronize_session=False)
+    db.commit()
+    return {"status": "success", "count": updated}
 
