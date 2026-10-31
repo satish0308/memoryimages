@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Heart, Trash2, Check, Play, Layers, Award, Sparkles } from 'lucide-react';
+import { getCachedThumbnailUrl, prefetchAndCacheThumbnail } from '@/utils/thumbnailCache';
 
 export interface MediaItem {
   id: number;
@@ -98,6 +99,31 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   const tokenParam = token ? `${item.thumbnail_url.includes('?') ? '&' : '?'}token=${token}` : '';
   const thumbSrc = `${apiUrl}${item.thumbnail_url}${tokenParam}`;
 
+  const [displaySrc, setDisplaySrc] = useState<string>(thumbSrc);
+
+  useEffect(() => {
+    let isMounted = true;
+    setDisplaySrc(thumbSrc);
+
+    // Check IndexedDB client cache for instant 0ms render
+    getCachedThumbnailUrl(item.id, 256).then((cached) => {
+      if (isMounted && cached) {
+        setDisplaySrc(cached);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id, thumbSrc]);
+
+  const handleImageLoaded = () => {
+    // If loaded from network, pre-warm IndexedDB cache in background
+    if (displaySrc === thumbSrc && typeof window !== 'undefined') {
+      prefetchAndCacheThumbnail(thumbSrc, item.id, 256);
+    }
+  };
+
   return (
     <div className="relative group">
       {/* 3D Stacked Card Effect for Burst Groups */}
@@ -117,9 +143,10 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         }`}
       >
         <img
-          src={thumbSrc}
+          src={displaySrc}
           alt={item.filename}
           style={{ filter: filterStyle }}
+          onLoad={handleImageLoaded}
           className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
             isSelected ? 'brightness-95' : ''
           }`}

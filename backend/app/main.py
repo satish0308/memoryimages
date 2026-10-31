@@ -64,6 +64,10 @@ def check_and_upgrade_schema(db_engine):
             with db_engine.connect() as conn:
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE albums ADD COLUMN user_id INTEGER"))
+                if "is_dynamic" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN is_dynamic BOOLEAN DEFAULT FALSE"))
+                if "rules" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN rules TEXT"))
                 conn.execute(text("UPDATE albums SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 

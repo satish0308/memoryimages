@@ -644,6 +644,7 @@ class EnhanceMediaRequest(BaseModel):
 
 class BatchEnhanceRequest(BaseModel):
     media_ids: List[int]
+    preset: Optional[str] = "auto_magic"
 
 @router.get("/{media_id}/enhance-params")
 def get_media_enhance_params(
@@ -723,7 +724,7 @@ def batch_enhance_media(
     db: Session = Depends(get_db)
 ):
     """Applies auto-enhancement to multiple user media items in batch."""
-    from app.services.quality_engine import apply_media_enhancement
+    from app.services.quality_engine import apply_media_enhancement, revert_media_enhancement
     items = db.query(Media).filter(
         Media.id.in_(req.media_ids),
         Media.user_id == current_user.id
@@ -731,11 +732,28 @@ def batch_enhance_media(
     enhanced_count = 0
     for it in items:
         try:
-            apply_media_enhancement(it, db)
+            if req.preset == "revert":
+                revert_media_enhancement(it, db)
+            else:
+                apply_media_enhancement(it, db, preset=req.preset)
             enhanced_count += 1
-        except Exception:
-            pass
-    return {"status": "success", "enhanced_count": enhanced_count}
+        except Exception as e:
+            logger.warning(f"Error enhancing media {it.id}: {e}")
+    db.commit()
+    return {"status": "success", "enhanced_count": enhanced_count, "preset": req.preset}
+
+@router.post("/pregenerate-thumbnails")
+def trigger_pregenerate_thumbnails(
+    current_user: User = Depends(get_current_user)
+):
+    """Enqueues a background worker task to pre-generate missing 1080p WebP renditions."""
+    from app.services.task_queue import TaskQueue
+    task = TaskQueue.enqueue(
+        task_type="pregenerate_1080p_renditions",
+        payload={"user_id": current_user.id},
+        name="Pre-generate 1080p WebP Renditions"
+    )
+    return {"status": "enqueued", "task": task}
 
 @router.post("/quality/analyze-all")
 def run_library_quality_analysis(

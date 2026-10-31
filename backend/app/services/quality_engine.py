@@ -402,24 +402,49 @@ def run_library_quality_scan(db: Session, force: bool = False) -> Dict[str, Any]
 def apply_media_enhancement(
     media: Media,
     db: Session,
-    params: Optional[Dict[str, Any]] = None
+    params: Optional[Dict[str, Any]] = None,
+    preset: Optional[str] = "auto_magic"
 ) -> Dict[str, Any]:
     """
     Saves non-destructive auto-enhancement parameters on the media record.
+    Supports presets: 'auto_magic', 'shadow_lift', 'dehaze', and custom params.
     """
     if params is None:
-        image = load_media_image(media, db, prefer_preview=True)
-        if image:
-            params = calculate_auto_enhance_params(image)
-        else:
+        if preset == "shadow_lift":
             params = {
                 "auto_recommended": True,
-                "brightness": 1.12,
-                "contrast": 1.10,
-                "saturation": 1.08,
-                "shadows_lift_pct": 15,
-                "css_filter": "brightness(1.12) contrast(1.10) saturate(1.08)"
+                "preset": "shadow_lift",
+                "brightness": 1.18,
+                "contrast": 1.08,
+                "saturation": 1.05,
+                "shadows_lift_pct": 30,
+                "css_filter": "brightness(1.18) contrast(1.08) saturate(1.05)"
             }
+        elif preset == "dehaze":
+            params = {
+                "auto_recommended": True,
+                "preset": "dehaze",
+                "brightness": 1.04,
+                "contrast": 1.25,
+                "saturation": 1.15,
+                "shadows_lift_pct": 10,
+                "css_filter": "brightness(1.04) contrast(1.25) saturate(1.15)"
+            }
+        else:
+            image = load_media_image(media, db, prefer_preview=True)
+            if image:
+                params = calculate_auto_enhance_params(image)
+                params["preset"] = "auto_magic"
+            else:
+                params = {
+                    "auto_recommended": True,
+                    "preset": "auto_magic",
+                    "brightness": 1.12,
+                    "contrast": 1.10,
+                    "saturation": 1.08,
+                    "shadows_lift_pct": 18,
+                    "css_filter": "brightness(1.12) contrast(1.10) saturate(1.08)"
+                }
 
     media.is_enhanced = True
     media.enhancement_data = json.dumps(params)

@@ -1,8 +1,9 @@
+import json
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 
 from app.database import get_db
 from app.models.user import User
@@ -18,14 +19,76 @@ class CreateAlbumRequest(BaseModel):
     name: str
     description: Optional[str] = None
     media_ids: Optional[List[int]] = None
+    is_dynamic: Optional[bool] = False
+    rules: Optional[Dict[str, Any]] = None
 
 class UpdateAlbumRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     cover_media_id: Optional[int] = None
+    rules: Optional[Dict[str, Any]] = None
 
 class AddPhotosToAlbumRequest(BaseModel):
     media_ids: List[int]
+
+def resolve_dynamic_album_photos(album: Album, db: Session, user_id: int) -> List[Media]:
+    """Resolves live photos matching the dynamic smart album's saved query rules."""
+    if not album.rules:
+        return []
+    try:
+        rules = json.loads(album.rules) if isinstance(album.rules, str) else album.rules
+    except Exception:
+        return []
+
+    query = db.query(Media).filter(
+        Media.user_id == user_id,
+        Media.is_deleted == False,
+        Media.is_archived == False
+    )
+
+    # 1. Search query (semantic or keyword)
+    search_text = rules.get("query") or rules.get("search_text")
+    if search_text:
+        term = f"%{search_text}%"
+        query = query.filter(
+            or_(
+                Media.filename.ilike(term),
+                Media.location_name.ilike(term),
+                Media.caption.ilike(term) if hasattr(Media, "caption") else False
+            )
+        )
+
+    # 2. Person filter (Face detection linking)
+    person_ids = rules.get("person_ids")
+    if person_ids:
+        for pid in person_ids:
+            face_subquery = db.query(FaceDetection.media_id).filter(FaceDetection.person_id == pid).subquery()
+            query = query.filter(Media.id.in_(face_subquery))
+
+    # 3. Category filter
+    category = rules.get("category")
+    if category:
+        query = query.filter(Media.category == category)
+
+    # 4. Favorite only
+    if rules.get("is_favorite") is True:
+        query = query.filter(Media.is_favorite == True)
+
+    # 5. Rating filter
+    if rules.get("min_rating"):
+        query = query.filter(Media.rating >= rules["min_rating"])
+
+    # 6. Date Range
+    if rules.get("start_date"):
+        query = query.filter(Media.captured_at >= rules["start_date"])
+    if rules.get("end_date"):
+        query = query.filter(Media.captured_at <= rules["end_date"])
+
+    # 7. City / Location
+    if rules.get("city"):
+        query = query.filter(Media.location_name.ilike(f"%{rules['city']}%"))
+
+    return query.order_by(desc(Media.captured_at)).limit(500).all()
 
 def _perform_auto_curate(db: Session, user_id: int) -> List[Album]:
     """Helper to auto-generate smart albums based on places and events for a specific user."""
@@ -275,13 +338,28 @@ def list_albums(
     results = []
     
     for a in albums:
-        user_media = [m for m in a.media if m.user_id == current_user.id and not m.is_deleted]
-        photo_count = len(user_media)
-        cover_id = a.cover_media_id or (user_media[0].id if user_media else None)
+        if getattr(a, "is_dynamic", False):
+            dyn_photos = resolve_dynamic_album_photos(a, db, user_id=current_user.id)
+            photo_count = len(dyn_photos)
+            cover_id = a.cover_media_id or (dyn_photos[0].id if dyn_photos else None)
+        else:
+            user_media = [m for m in a.media if m.user_id == current_user.id and not m.is_deleted]
+            photo_count = len(user_media)
+            cover_id = a.cover_media_id or (user_media[0].id if user_media else None)
+
+        parsed_rules = None
+        if a.rules:
+            try:
+                parsed_rules = json.loads(a.rules)
+            except Exception:
+                parsed_rules = None
+
         results.append({
             "id": a.id,
             "name": a.name,
             "description": a.description,
+            "is_dynamic": getattr(a, "is_dynamic", False),
+            "rules": parsed_rules,
             "photo_count": photo_count,
             "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None,
             "created_at": a.created_at
@@ -294,16 +372,23 @@ def create_album(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Creates a new album belonging to current user."""
+    """Creates a new custom or dynamic smart album belonging to current user."""
     album = Album(
         user_id=current_user.id,
         name=req.name.strip(),
-        description=req.description
+        description=req.description,
+        is_dynamic=bool(req.is_dynamic),
+        rules=json.dumps(req.rules) if req.rules else None
     )
     db.add(album)
     db.flush()
 
-    if req.media_ids:
+    if req.is_dynamic:
+        dyn_photos = resolve_dynamic_album_photos(album, db, user_id=current_user.id)
+        if dyn_photos and not album.cover_media_id:
+            album.cover_media_id = dyn_photos[0].id
+        photo_count = len(dyn_photos)
+    elif req.media_ids:
         photos = db.query(Media).filter(
             Media.id.in_(req.media_ids),
             Media.user_id == current_user.id
@@ -311,13 +396,17 @@ def create_album(
         album.media.extend(photos)
         if photos and not album.cover_media_id:
             album.cover_media_id = photos[0].id
+        photo_count = len(photos)
+    else:
+        photo_count = 0
 
     db.commit()
     db.refresh(album)
     return {
         "id": album.id,
         "name": album.name,
-        "photo_count": len(album.media)
+        "is_dynamic": album.is_dynamic,
+        "photo_count": photo_count
     }
 
 @router.get("/{album_id}")
@@ -333,12 +422,24 @@ def get_album_details(
     if album.user_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    user_photos = [m for m in album.media if m.user_id == current_user.id and not m.is_deleted]
+    if getattr(album, "is_dynamic", False):
+        user_photos = resolve_dynamic_album_photos(album, db, user_id=current_user.id)
+    else:
+        user_photos = [m for m in album.media if m.user_id == current_user.id and not m.is_deleted]
+
+    parsed_rules = None
+    if album.rules:
+        try:
+            parsed_rules = json.loads(album.rules)
+        except Exception:
+            parsed_rules = None
 
     return {
         "id": album.id,
         "name": album.name,
         "description": album.description,
+        "is_dynamic": getattr(album, "is_dynamic", False),
+        "rules": parsed_rules,
         "photo_count": len(user_photos),
         "photos": [{
             "id": m.id,

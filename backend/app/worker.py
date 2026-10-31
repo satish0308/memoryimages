@@ -300,6 +300,97 @@ def run_video_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             )
         return {"videos_processed": total, "keyframes": total_kfs}
 
+def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Pre-generates 1080p WebP renditions for photos that don't have them yet."""
+    import io
+    from PIL import Image, ImageOps
+    from app.models.media import Media, SourceType
+    from app.services.drive_cache import stream_google_drive_file
+
+    os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+
+    with SessionLocal() as db:
+        user_id = payload.get("user_id")
+        query = db.query(Media).filter(
+            Media.is_deleted == False,
+            Media.thumbnail_1080_path == None
+        )
+        if user_id:
+            query = query.filter(Media.user_id == user_id)
+
+        items = query.all()
+        total = len(items)
+
+        if total == 0:
+            TaskQueue.update_task(
+                task_id,
+                progress=100,
+                message="All photos already have 1080p renditions generated.",
+                result={"processed_count": 0, "total": 0}
+            )
+            return {"processed_count": 0, "total": 0}
+
+        TaskQueue.update_task(
+            task_id,
+            total_steps=total,
+            current_step=0,
+            progress=0,
+            message=f"Starting 1080p WebP pre-generation for {total} photos..."
+        )
+
+        processed = 0
+        for i, item in enumerate(items):
+            if _should_exit or TaskQueue.is_cancelled(task_id):
+                logger.info(f"Task {task_id} cancelled during 1080p pregeneration.")
+                return {"processed_count": processed, "cancelled": True}
+
+            thumb_1080_rel = f"thumb_{item.id}_1080.webp"
+            thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, thumb_1080_rel)
+
+            try:
+                img = None
+                if item.original_path and os.path.isfile(item.original_path):
+                    img = Image.open(item.original_path)
+                elif item.source_type == SourceType.GOOGLE_DRIVE and item.source_id:
+                    file_bytes = b"".join(stream_google_drive_file(item.source_id, db))
+                    img = Image.open(io.BytesIO(file_bytes))
+                elif item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
+                    img = Image.open(item.thumbnail_256_path)
+
+                if img:
+                    img = ImageOps.exif_transpose(img)
+                    img_rgb = img.convert("RGB")
+                    img_1080 = img_rgb.copy()
+                    img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
+                    img_1080.save(thumb_1080_path, "WEBP", quality=90, method=4)
+
+                    item.thumbnail_1080_path = thumb_1080_path
+                    db.commit()
+                    processed += 1
+
+            except Exception as e:
+                logger.warning(f"Failed to generate 1080p rendition for #{item.id}: {e}")
+                db.rollback()
+
+            pct = int(((i + 1) / total) * 100)
+            if i % 10 == 0 or i == total - 1:
+                TaskQueue.update_task(
+                    task_id,
+                    progress=pct,
+                    current_step=i + 1,
+                    total_steps=total,
+                    message=f"Generated 1080p WebP {i + 1}/{total} ({pct}%)"
+                )
+
+        TaskQueue.update_task(
+            task_id,
+            progress=100,
+            status="completed",
+            message=f"Successfully pre-generated {processed} 1080p renditions.",
+            result={"processed_count": processed, "total": total}
+        )
+        return {"processed_count": processed, "total": total}
+
 DISPATCH_TABLE = {
     "clip_index_all": run_clip_indexing,
     "face_detect_all": run_face_detection,
@@ -309,6 +400,7 @@ DISPATCH_TABLE = {
     "s3_sync_library": run_s3_sync,
     "mood_analysis_all": run_mood_analysis,
     "video_index_all": run_video_indexing,
+    "pregenerate_1080p_renditions": run_pregenerate_1080p_renditions,
 }
 
 

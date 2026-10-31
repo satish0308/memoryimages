@@ -37,6 +37,8 @@ interface AlbumItem {
   description: string | null;
   photo_count: number;
   cover_thumbnail_url: string | null;
+  is_dynamic?: boolean;
+  rules?: any;
   created_at: string;
 }
 
@@ -88,6 +90,8 @@ interface SelectedCollectionState {
   id?: number | string;
   name: string;
   description?: string | null;
+  is_dynamic?: boolean;
+  rules?: any;
   photo_count: number;
   photos: MediaItem[];
 }
@@ -111,6 +115,9 @@ export default function AlbumsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [newAlbumDesc, setNewAlbumDesc] = useState('');
+  const [isDynamicAlbum, setIsDynamicAlbum] = useState(false);
+  const [dynamicQuery, setDynamicQuery] = useState('');
+  const [dynamicOnlyFavs, setDynamicOnlyFavs] = useState(false);
   const [isCurating, setIsCurating] = useState(false);
   
   // Photo Picker Modal state
@@ -218,6 +225,8 @@ export default function AlbumsPage() {
           id: data.id,
           name: data.name,
           description: data.description,
+          is_dynamic: data.is_dynamic,
+          rules: data.rules,
           photo_count: data.photo_count,
           photos: data.photos
         });
@@ -339,21 +348,36 @@ export default function AlbumsPage() {
     }
   };
 
-  // Create custom album
+  // Create custom or dynamic smart album
   const handleCreateAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlbumName.trim()) return;
 
     try {
+      const payload: any = {
+        name: newAlbumName.trim(),
+        description: newAlbumDesc.trim() || null,
+        is_dynamic: isDynamicAlbum,
+      };
+      if (isDynamicAlbum) {
+        payload.rules = {
+          query: dynamicQuery.trim() || undefined,
+          is_favorite: dynamicOnlyFavs || undefined,
+        };
+      }
+
       const res = await fetch(`${API_URL}/api/v1/albums`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newAlbumName.trim(), description: newAlbumDesc.trim() || null })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         const created = await res.json();
         setNewAlbumName('');
         setNewAlbumDesc('');
+        setIsDynamicAlbum(false);
+        setDynamicQuery('');
+        setDynamicOnlyFavs(false);
         setShowCreateModal(false);
         await loadData();
         openAlbum(created.id);
@@ -975,6 +999,14 @@ export default function AlbumsPage() {
                           </div>
                         )}
 
+                        {/* Dynamic Smart Album Badge */}
+                        {album.is_dynamic && (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 bg-indigo-600/90 backdrop-blur-md text-white rounded-full text-[9px] font-bold flex items-center gap-1 shadow-sm border border-indigo-400/40">
+                            <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+                            <span>Smart AI</span>
+                          </span>
+                        )}
+
                         {/* Photo Count Badge */}
                         <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/60 backdrop-blur-md text-white rounded-full text-[10px] font-semibold">
                           {album.photo_count} photo{album.photo_count !== 1 ? 's' : ''}
@@ -1145,18 +1177,77 @@ export default function AlbumsPage() {
               Create New Album
             </h3>
             <div className="space-y-3">
+              {/* Album Type Selector */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setIsDynamicAlbum(false)}
+                  className={`py-1.5 px-2 text-xs font-semibold rounded-lg transition ${
+                    !isDynamicAlbum
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  📁 Standard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDynamicAlbum(true)}
+                  className={`py-1.5 px-2 text-xs font-semibold rounded-lg flex items-center justify-center gap-1 transition ${
+                    isDynamicAlbum
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-900'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3 text-amber-300" />
+                  <span>⚡ Smart AI</span>
+                </button>
+              </div>
+
               <div>
                 <label className="text-xs font-semibold text-slate-700">Album Name</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Summer Vacation, Road Trip"
+                  placeholder={isDynamicAlbum ? "e.g. Sunset Landscapes, Weekend Fun" : "e.g. Summer Vacation, Road Trip"}
                   value={newAlbumName}
                   onChange={(e) => setNewAlbumName(e.target.value)}
                   className="w-full mt-1 px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   autoFocus
                 />
               </div>
+
+              {isDynamicAlbum && (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl space-y-2 animate-fadeIn">
+                  <div>
+                    <label className="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-indigo-600" />
+                      <span>AI Query Rules (Self-Updating)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. beach, Bengaluru, outdoor party, smiles"
+                      value={dynamicQuery}
+                      onChange={(e) => setDynamicQuery(e.target.value)}
+                      className="w-full mt-1 px-3 py-1.5 text-xs bg-white border border-indigo-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800"
+                    />
+                    <p className="text-[10px] text-indigo-700 mt-1">
+                      Any new photo uploaded matching these keywords/location will auto-join this album.
+                    </p>
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer pt-1">
+                    <input
+                      type="checkbox"
+                      checked={dynamicOnlyFavs}
+                      onChange={(e) => setDynamicOnlyFavs(e.target.checked)}
+                      className="w-3.5 h-3.5 text-indigo-600 rounded focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-indigo-900 font-medium">⭐ Only include Favorite shots</span>
+                  </label>
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-semibold text-slate-700">Description (Optional)</label>
                 <textarea

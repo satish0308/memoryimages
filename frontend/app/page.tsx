@@ -697,6 +697,10 @@ export default function PhotosPage() {
           fetchTimeline();
           clearSelection();
         }}
+        onBatchEnhanced={() => {
+          fetchTimeline();
+          clearSelection();
+        }}
       />
 
       {/* Moment & Outing Story Detail Modal */}

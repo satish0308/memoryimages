@@ -30,6 +30,7 @@ interface BulkActionBarProps {
   onBatchCategoryUpdated?: () => void;
   onAlbumAdded?: () => void;
   onBatchLocationUpdated?: () => void;
+  onBatchEnhanced?: () => void;
 }
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
@@ -41,11 +42,13 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onBatchCategoryUpdated,
   onAlbumAdded,
   onBatchLocationUpdated,
+  onBatchEnhanced,
 }) => {
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [showEnhanceMenu, setShowEnhanceMenu] = useState(false);
   const [customLocName, setCustomLocName] = useState('');
   const [customLat, setCustomLat] = useState('');
   const [customLon, setCustomLon] = useState('');
@@ -188,6 +191,36 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     }
   };
 
+  // Bulk AI Photo Enhancement
+  const handleBatchEnhance = async (preset: string = 'auto_magic') => {
+    try {
+      setLoadingAction('enhance');
+      setShowEnhanceMenu(false);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const res = await fetch(`${apiUrl}/api/v1/media/batch-enhance${tokenParam}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          media_ids: selectedIds,
+          preset: preset,
+        }),
+      });
+
+      if (res.ok) {
+        if (onBatchEnhanced) onBatchEnhanced();
+        onClearSelection();
+      }
+    } catch (e) {
+      console.error('Batch enhance error:', e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   // Bulk Category Update
   const handleBatchCategory = async (category: string) => {
     try {
@@ -236,6 +269,75 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           )}
           <span>Export ZIP</span>
         </button>
+
+        {/* Bulk AI Enhance Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowEnhanceMenu(!showEnhanceMenu);
+              setShowAlbumMenu(false);
+              setShowCategoryMenu(false);
+              setShowLocationModal(false);
+            }}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            title="Auto-enhance lighting, shadows, and clarity across selected photos"
+          >
+            {loadingAction === 'enhance' ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            )}
+            <span>AI Enhance</span>
+            <ChevronUp className={`w-3 h-3 transition-transform ${showEnhanceMenu ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showEnhanceMenu && (
+            <div className="absolute bottom-full mb-2 left-0 w-60 bg-slate-800 border border-slate-700 rounded-xl p-2 shadow-2xl space-y-1 z-50 animate-fadeIn">
+              <p className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
+                AI Enhancement ({selectedIds.length} photos)
+              </p>
+              <button
+                onClick={() => handleBatchEnhance('auto_magic')}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
+              >
+                <span>🪄</span>
+                <div>
+                  <p className="font-semibold text-slate-200">Auto Magic Balance</p>
+                  <p className="text-[10px] text-slate-400">Gray-World AWB + CLAHE contrast</p>
+                </div>
+              </button>
+              <button
+                onClick={() => handleBatchEnhance('shadow_lift')}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
+              >
+                <span>☀️</span>
+                <div>
+                  <p className="font-semibold text-slate-200">Shadow Recovery</p>
+                  <p className="text-[10px] text-slate-400">Brightens backlit & dark faces</p>
+                </div>
+              </button>
+              <button
+                onClick={() => handleBatchEnhance('dehaze')}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
+              >
+                <span>🌫️</span>
+                <div>
+                  <p className="font-semibold text-slate-200">De-Haze & Clear Sky</p>
+                  <p className="text-[10px] text-slate-400">Removes atmospheric fog</p>
+                </div>
+              </button>
+              <div className="h-px bg-slate-700 my-1" />
+              <button
+                onClick={() => handleBatchEnhance('revert')}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-rose-300 flex items-center gap-2 transition"
+              >
+                <span>↩️</span>
+                <span>Revert to Original (Reset)</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Add to Album Dropdown */}
         <div className="relative">

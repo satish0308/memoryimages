@@ -30,6 +30,7 @@ TASK_NAMES = {
     "s3_sync_library": "MinIO S3 Library Sync",
     "mood_analysis_all": "AI Emotion, Mood & Color Analysis",
     "video_index_all": "Video Keyframe AI Search Indexing",
+    "pregenerate_1080p_renditions": "Background 1080p WebP Pre-Generation",
 }
 
 def get_redis_client():
