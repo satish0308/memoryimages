@@ -77,14 +77,14 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
   const [resolving, setResolving] = useState(false);
   const [viewMode, setViewMode] = useState<'single' | 'grid'>('single');
 
-  const getAuthUrl = (urlPath: string) => {
+  const getAuthUrl = useCallback((urlPath: string) => {
     if (!urlPath) return '';
     const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
     const fullUrl = urlPath.startsWith('http') ? urlPath : `${apiUrl}${urlPath}`;
     if (!token) return fullUrl;
     const separator = fullUrl.includes('?') ? '&' : '?';
     return `${fullUrl}${separator}token=${encodeURIComponent(token)}`;
-  };
+  }, [apiUrl]);
 
   const fetchBurstData = useCallback(async () => {
     if (!leadItem) return;
@@ -154,6 +154,22 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, cluster, activePreviewId, onClose]);
+
+  // Pre-load adjacent high-res photos for instant arrow scrubbing
+  useEffect(() => {
+    if (!cluster || viewMode !== 'single' || !activePreviewId) return;
+    if (typeof window === 'undefined') return;
+    const currIdx = cluster.items.findIndex((i) => i.id === activePreviewId);
+    if (currIdx === -1) return;
+    const nextIdx = (currIdx + 1) % cluster.items.length;
+    const prevIdx = (currIdx - 1 + cluster.items.length) % cluster.items.length;
+    [cluster.items[nextIdx], cluster.items[prevIdx]].forEach((it) => {
+      if (it && it.preview_url) {
+        const img = new window.Image();
+        img.src = getAuthUrl(it.preview_url);
+      }
+    });
+  }, [cluster, activePreviewId, viewMode, getAuthUrl]);
 
   if (!isOpen || !leadItem) return null;
 
@@ -296,10 +312,19 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
           <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
             {/* Left/Center: Large Photo Viewport */}
             <div className="flex-1 relative bg-black/60 flex items-center justify-center overflow-hidden group">
+              {/* Instant low-res backdrop while high-res 1080p stream loads */}
               <img
+                src={getAuthUrl(currentItem.thumbnail_url)}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-contain filter blur-md opacity-40 scale-105 pointer-events-none transition-opacity"
+              />
+
+              <img
+                key={currentItem.id}
                 src={getAuthUrl(currentItem.preview_url)}
                 alt={currentItem.filename}
-                className="max-h-full max-w-full object-contain transition-all"
+                className="relative max-h-full max-w-full object-contain transition-all z-10"
               />
 
               {/* Prev / Next Chevrons */}
@@ -501,7 +526,7 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
                   >
                     <div className="relative aspect-square bg-black overflow-hidden">
                       <img
-                        src={getAuthUrl(item.preview_url)}
+                        src={getAuthUrl(item.thumbnail_url)}
                         alt={item.filename}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                         loading="lazy"
