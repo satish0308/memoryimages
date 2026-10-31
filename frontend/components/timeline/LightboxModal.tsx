@@ -80,6 +80,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [savingLoc, setSavingLoc] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isPlayingMotion, setIsPlayingMotion] = useState(false);
 
   // 1-Click Auto-Enhance state
   const [isEnhanced, setIsEnhanced] = useState(photo?.is_enhanced || false);
@@ -110,6 +111,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   useEffect(() => {
     setShowDeleteConfirm(false);
     setIsDeleting(false);
+    setIsPlayingMotion(false);
   }, [photo?.id]);
 
   const handleConfirmDelete = async () => {
@@ -560,6 +562,15 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   </div>
                 )}
               </div>
+            ) : isPlayingMotion && photo?.has_motion_photo ? (
+              <video
+                src={`${apiUrl}/api/v1/media/${photo.id}/motion-video`}
+                autoPlay
+                loop
+                playsInline
+                controls
+                className="max-h-[85vh] max-w-full object-contain rounded-lg shadow-2xl"
+              />
             ) : (
               <img
                 ref={imageRef}
@@ -658,6 +669,25 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             )}
 
             <div className="h-4 w-px bg-slate-700" />
+
+            {/* Live / Motion Photo Toggle */}
+            {photo?.has_motion_photo && (
+              <>
+                <button
+                  onClick={() => setIsPlayingMotion(!isPlayingMotion)}
+                  className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold transition ${
+                    isPlayingMotion
+                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/30'
+                      : 'text-amber-400 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Toggle Live Motion Video Playback"
+                >
+                  <span className={`w-2 h-2 rounded-full ${isPlayingMotion ? 'bg-white animate-ping' : 'bg-amber-400'}`} />
+                  <span>LIVE</span>
+                </button>
+                <div className="h-4 w-px bg-slate-700" />
+              </>
+            )}
 
             {/* Face Bounding Box Toggle */}
             <button

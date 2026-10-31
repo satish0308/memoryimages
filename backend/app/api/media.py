@@ -173,6 +173,8 @@ def get_timeline(
             "color_hex": item.color_hex,
             "is_video": (item.mime_type or "").startswith("video/"),
             "duration_seconds": item.duration_seconds,
+            "has_motion_photo": bool(getattr(item, "has_motion_photo", False)),
+            "motion_video_url": f"/api/v1/media/{item.id}/motion-video" if getattr(item, "has_motion_photo", False) else None,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
             "burst_count": burst_count,
@@ -361,6 +363,66 @@ def get_thumbnail(
             pass
 
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on storage")
+
+@router.get("/{media_id}/motion-video")
+def get_motion_video(
+    media_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Streams the micro-video clip for Google Motion Photos, Samsung Motion Photos, or paired Apple Live Photos.
+    """
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    # 1. Local file extraction or paired video (.mov, .mp4)
+    if media.original_path and os.path.isfile(media.original_path):
+        base, _ = os.path.splitext(media.original_path)
+        for ext in [".mov", ".MOV", ".mp4", ".MP4"]:
+            paired = base + ext
+            if os.path.isfile(paired):
+                return FileResponse(paired, media_type="video/mp4", headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"})
+
+        try:
+            with open(media.original_path, "rb") as f:
+                content = f.read()
+                ftyp_idx = content.find(b"ftyp")
+                if ftyp_idx >= 4:
+                    box_start = ftyp_idx - 4
+                    box_size = int.from_bytes(content[box_start:ftyp_idx], byteorder="big")
+                    if 16 <= box_size <= 64:
+                        mp4_data = content[box_start:]
+                        if len(mp4_data) > 1000:
+                            return Response(content=mp4_data, media_type="video/mp4", headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"})
+        except Exception:
+            pass
+
+    # 2. Google Drive streaming
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id:
+        try:
+            from app.services.drive_cache import download_drive_file_to_memory
+            buf = download_drive_file_to_memory(media.source_id, db)
+            if buf:
+                content = buf.getvalue()
+                ftyp_idx = content.find(b"ftyp")
+                if ftyp_idx >= 4:
+                    box_start = ftyp_idx - 4
+                    box_size = int.from_bytes(content[box_start:ftyp_idx], byteorder="big")
+                    if 16 <= box_size <= 64:
+                        mp4_data = content[box_start:]
+                        if len(mp4_data) > 1000:
+                            return Response(content=mp4_data, media_type="video/mp4", headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"})
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=404, detail="No motion photo video found for this item")
 
 @router.get("/{media_id}/keyframe/{keyframe_id}/thumbnail")
 def get_keyframe_thumbnail(

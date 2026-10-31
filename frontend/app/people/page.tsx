@@ -28,6 +28,8 @@ import { useTaskQueue } from '@/context/TaskQueueContext';
 interface PersonItem {
   id: number;
   name: string;
+  is_pet?: boolean;
+  pet_type?: string | null;
   photo_count: number;
   faces_count: number;
   avatar_url: string | null;
@@ -37,6 +39,7 @@ interface PersonItem {
 interface PeopleStats {
   total_faces: number;
   total_people: number;
+  total_pets?: number;
   tagged_faces: number;
   unassigned_faces: number;
   photos_with_faces: number;
@@ -68,6 +71,7 @@ export default function PeoplePage() {
   const [stats, setStats] = useState<PeopleStats | null>(null);
   const [unnamedFaces, setUnnamedFaces] = useState<UnnamedFaceItem[]>([]);
   const [activeTab, setActiveTab] = useState<'people' | 'unnamed'>('people');
+  const [filterType, setFilterType] = useState<'all' | 'people' | 'pets'>('all');
 
   // Loading & Action states
   const [loading, setLoading] = useState(true);
@@ -104,7 +108,7 @@ export default function PeoplePage() {
     try {
       setLoading(true);
       const [peopleRes, statsRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/people`),
+        fetch(`${API_URL}/api/v1/people?filter_type=${filterType}`),
         fetch(`${API_URL}/api/v1/people/stats`)
       ]);
       if (peopleRes.ok) setPeople(await peopleRes.json());
@@ -114,7 +118,7 @@ export default function PeoplePage() {
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, filterType]);
 
   const fetchUnnamedFaces = useCallback(async () => {
     try {
@@ -174,14 +178,43 @@ export default function PeoplePage() {
     }
   };
 
-  // Run AI Auto-Clustering via Background Worker
+  // Run AI Auto-Clustering with ArcFace 512-d embeddings
   const handleAutoCluster = async () => {
-    dispatchTask('face_cluster_all', {}, 'Vision Person Face Clustering');
+    try {
+      setIsClustering(true);
+      setStatusMessage('Auto-clustering faces with ArcFace 512-d biometrics...');
+      const res = await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST' });
+      if (res.ok) {
+        fetchPeople();
+        setStatusMessage('ArcFace clustering complete!');
+        setTimeout(() => setStatusMessage(null), 3500);
+      }
+    } catch (e) {
+      console.error(e);
+      setStatusMessage('Clustering failed.');
+    } finally {
+      setIsClustering(false);
+    }
   };
 
-  // Scan library photos for faces via Background Worker
+  // Scan library photos for human faces and household pets
   const handleScanFaces = async () => {
-    dispatchTask('face_detect_all', {}, 'UltraFace Face Detection');
+    try {
+      setIsScanning(true);
+      setStatusMessage('Scanning library photos with UltraFace, ArcFace & YOLOv8 for pets...');
+      const res = await fetch(`${API_URL}/api/v1/people/scan-faces?max_photos=250`, { method: 'POST' });
+      if (res.ok) {
+        await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST' });
+        setStatusMessage('Deep scan & clustering complete!');
+        fetchPeople();
+        setTimeout(() => setStatusMessage(null), 4000);
+      }
+    } catch (e) {
+      console.error(e);
+      setStatusMessage('Scan failed.');
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   // Assign name to an unnamed face
@@ -353,6 +386,16 @@ export default function PeoplePage() {
               <span>Photos with Faces</span>
             </div>
 
+            {stats.total_pets !== undefined && stats.total_pets > 0 && (
+              <>
+                <span className="text-slate-300">•</span>
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-bold text-amber-600 dark:text-amber-400">{stats.total_pets}</span>
+                  <span>Pets (🐾 Dogs & Cats)</span>
+                </div>
+              </>
+            )}
+
             {statusMessage && (
               <div className="ml-auto flex items-center gap-1.5 text-xs text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 animate-fade-in">
                 <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
@@ -393,6 +436,40 @@ export default function PeoplePage() {
       {/* Tab 1: Identified People Grid */}
       {activeTab === 'people' && (
         <>
+          {/* Sub-Filters: All | People | Pets */}
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              onClick={() => setFilterType('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                filterType === 'all'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              All ({people.length})
+            </button>
+            <button
+              onClick={() => setFilterType('people')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                filterType === 'people'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              People ({people.filter(p => !p.is_pet).length})
+            </button>
+            <button
+              onClick={() => setFilterType('pets')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                filterType === 'pets'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              <span>🐾 Pets ({people.filter(p => p.is_pet).length})</span>
+            </button>
+          </div>
+
           {people.length === 0 && !loading && (
             <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-12 text-center max-w-md mx-auto space-y-4">
               <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
@@ -490,6 +567,15 @@ export default function PeoplePage() {
                           {person.name}
                         </h4>
                         <Edit2 className="w-3 h-3 text-slate-400 opacity-0 group-hover/name:opacity-100 transition" />
+                      </div>
+                    )}
+
+                    {person.is_pet && (
+                      <div className="mt-1 flex justify-center">
+                        <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                          <span>🐾</span>
+                          <span>{person.pet_type?.toUpperCase() || 'PET'}</span>
+                        </span>
                       </div>
                     )}
 

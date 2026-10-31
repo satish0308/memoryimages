@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { Heart, Trash2, Check, Play, Layers, Award } from 'lucide-react';
+import React, { useState } from 'react';
+import { Heart, Trash2, Check, Play, Layers, Award, Sparkles } from 'lucide-react';
 
 export interface MediaItem {
   id: number;
@@ -51,6 +51,9 @@ export interface MediaItem {
   // Storage source tracking
   source_type?: string;
   source_id?: string | null;
+  // Motion Photos / Live Photos
+  has_motion_photo?: boolean;
+  motion_video_url?: string | null;
 }
 
 interface PhotoCardProps {
@@ -75,6 +78,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   onOpenBurst,
 }) => {
   const isBurst = Boolean(item.burst_count && item.burst_count > 1);
+  const [isHovered, setIsHovered] = useState(false);
 
   let filterStyle: string | undefined = undefined;
   if (item.is_enhanced) {
@@ -102,6 +106,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 
       <div
         onClick={() => onSelect(item)}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
         className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition ${
           isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
         }`}
@@ -115,6 +121,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           }`}
           loading="lazy"
         />
+
+        {/* Live Photo / Motion Photo Video Looping on Hover */}
+        {item.has_motion_photo && isHovered && (
+          <video
+            src={`${apiUrl}/api/v1/media/${item.id}/motion-video`}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover z-10 animate-fadeIn"
+          />
+        )}
 
       {/* Select Checkbox Button (Top Left) */}
       <button
@@ -149,6 +167,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           <span className="bg-rose-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm">
             <Play className="w-2.5 h-2.5 fill-white" />
             <span>{item.matched_timestamp_label ? `At ${item.matched_timestamp_label}` : 'Video'}</span>
+          </span>
+        )}
+        {item.has_motion_photo && (
+          <span className="bg-amber-500/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm" title="Live / Motion Photo">
+            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            <span>LIVE</span>
           </span>
         )}
         {item.is_bokeh && (

@@ -11,6 +11,8 @@ class Person(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     name = Column(String(128), nullable=False, default="Unnamed Person")
     is_hidden = Column(Boolean, default=False)
+    is_pet = Column(Boolean, default=False)
+    pet_type = Column(String(32), nullable=True) # "dog", "cat", etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

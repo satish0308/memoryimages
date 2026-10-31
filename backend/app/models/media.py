@@ -81,6 +81,7 @@ class Media(Base):
     dominant_color = Column(String(32), nullable=True, index=True)
     color_hex = Column(String(7), nullable=True)
     duration_seconds = Column(Float, nullable=True)
+    has_motion_photo = Column(Boolean, default=False, index=True)
 
     # Relationships
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)

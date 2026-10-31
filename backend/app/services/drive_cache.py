@@ -89,9 +89,12 @@ def fetch_google_drive_thumbnail_bytes(file_id: str, db: Session, size: int = 25
 
     try:
         import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         resp = requests.get(
             cdn_url,
             timeout=8,
+            verify=False,
             headers={
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
                 "Accept": "image/webp,image/apng,image/*,*/*;q=0.8"

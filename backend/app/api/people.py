@@ -1,8 +1,11 @@
+import logging
 from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Response, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models.user import User
@@ -13,7 +16,9 @@ from app.services.face_engine import (
     process_faces_for_media, 
     index_all_library_faces,
     get_face_crop_image,
-    auto_cluster_faces
+    auto_cluster_faces,
+    load_media_image,
+    extract_arcface_embedding
 )
 
 router = APIRouter()
@@ -37,17 +42,24 @@ class UpdateFaceTagRequest(BaseModel):
 
 @router.get("")
 def list_people(
+    filter_type: str = Query("all", regex="^(all|people|pets)$"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists identified people for current user along with their distinct photo count and avatar crop."""
+    """Lists identified people & pets for current user along with photo counts and avatar crops."""
     if not current_user:
         return []
 
-    people = db.query(Person).filter(
+    query = db.query(Person).filter(
         Person.user_id == current_user.id,
         Person.is_hidden == False
-    ).all()
+    )
+    if filter_type == "people":
+        query = query.filter(Person.is_pet == False)
+    elif filter_type == "pets":
+        query = query.filter(Person.is_pet == True)
+
+    people = query.all()
     results = []
     
     for p in people:
@@ -67,6 +79,8 @@ def list_people(
         results.append({
             "id": p.id,
             "name": p.name,
+            "is_pet": bool(p.is_pet),
+            "pet_type": p.pet_type,
             "photo_count": len(unique_media_ids),
             "faces_count": len(faces),
             "avatar_url": f"/api/v1/people/{p.id}/avatar" if first_face else None,
@@ -79,11 +93,12 @@ def get_people_stats(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Returns face detection and people statistics for current user."""
+    """Returns face detection, people, and pets statistics for current user."""
     if not current_user:
         return {
             "total_faces": 0,
             "total_people": 0,
+            "total_pets": 0,
             "tagged_faces": 0,
             "unassigned_faces": 0,
             "photos_with_faces": 0
@@ -96,7 +111,8 @@ def get_people_stats(
         .filter(Media.user_id == uid, Media.is_deleted == False)
         .count()
     )
-    total_people = db.query(Person).filter(Person.user_id == uid, Person.is_hidden == False).count()
+    total_people = db.query(Person).filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == False).count()
+    total_pets = db.query(Person).filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == True).count()
     tagged_faces = (
         db.query(FaceDetection)
         .join(Media, FaceDetection.media_id == Media.id)
@@ -112,6 +128,7 @@ def get_people_stats(
     return {
         "total_faces": total_faces,
         "total_people": total_people,
+        "total_pets": total_pets,
         "tagged_faces": tagged_faces,
         "unassigned_faces": total_faces - tagged_faces,
         "photos_with_faces": photos_with_faces
@@ -160,9 +177,35 @@ def trigger_auto_cluster(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Auto-clusters detected faces into Person groups."""
-    res = auto_cluster_faces(db)
+    """Auto-clusters detected faces into Person groups using ArcFace 512-d embeddings."""
+    res = auto_cluster_faces(db, user_id=current_user.id)
     return res
+
+@router.post("/scan-faces")
+def scan_faces(
+    max_photos: int = Query(250, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Deep scans library photos for human faces (UltraFace + ArcFace) and household pets (YOLOv8)."""
+    return index_all_library_faces(db, user_id=current_user.id, max_photos=max_photos)
+
+@router.delete("/faces/{face_id}")
+def delete_face_detection(
+    face_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Deletes an incorrect or unwanted face detection."""
+    face = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(
+        FaceDetection.id == face_id,
+        (Media.user_id == current_user.id) | (current_user.is_admin == True)
+    ).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Face detection not found")
+    db.delete(face)
+    db.commit()
+    return {"status": "deleted", "id": face_id}
 
 @router.get("/faces/{face_id}/crop")
 def get_face_crop(
@@ -404,6 +447,22 @@ def add_face_tag(
             db.commit()
             db.refresh(person)
 
+    # Compute ArcFace embedding for newly tagged face
+    emb_str = None
+    try:
+        img = load_media_image(media, db)
+        if img:
+            W, H = img.size
+            cx = int((req.box_x + req.box_w / 2.0) * W)
+            cy = int((req.box_y + req.box_h / 2.0) * H)
+            half = int(max(req.box_w * W, req.box_h * H) * 0.65)
+            crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+            emb = extract_arcface_embedding(crop)
+            if emb is not None:
+                emb_str = ",".join(f"{x:.5f}" for x in emb)
+    except Exception as e:
+        logger.warning(f"Could not compute ArcFace embedding for face tag: {e}")
+
     face = FaceDetection(
         media_id=media.id,
         person_id=person.id if person else None,
@@ -411,7 +470,8 @@ def add_face_tag(
         box_y=req.box_y,
         box_w=req.box_w,
         box_h=req.box_h,
-        confidence=1.0
+        confidence=1.0,
+        embedding_str=emb_str
     )
     db.add(face)
     db.commit()
@@ -461,6 +521,22 @@ def update_face_tag(
         db.refresh(person)
 
     face.person_id = person.id
+    if not face.embedding_str:
+        try:
+            m = db.query(Media).filter(Media.id == face.media_id).first()
+            if m:
+                img = load_media_image(m, db)
+                if img:
+                    W, H = img.size
+                    cx = int((face.box_x + face.box_w / 2.0) * W)
+                    cy = int((face.box_y + face.box_h / 2.0) * H)
+                    half = int(max(face.box_w * W, face.box_h * H) * 0.65)
+                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    emb = extract_arcface_embedding(crop)
+                    if emb is not None:
+                        face.embedding_str = ",".join(f"{x:.5f}" for x in emb)
+        except Exception:
+            pass
     db.commit()
     return {"id": face.id, "person_id": person.id, "person_name": person.name}
 
