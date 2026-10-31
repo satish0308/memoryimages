@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional
 from pydantic import BaseModel
@@ -7,7 +8,7 @@ from sqlalchemy import func, desc
 
 from app.database import get_db
 from app.models.user import User
-from app.models.media import Media, MediaCategory
+from app.models.media import Media, MediaCategory, SourceType
 from app.api.auth import get_current_user, get_optional_current_user
 from app.services.burst_engine import (
     detect_burst_clusters,
@@ -19,6 +20,7 @@ router = APIRouter()
 
 class BatchActionRequest(BaseModel):
     media_ids: List[int]
+    permanent: bool = False
 
 class SnoozeRequest(BaseModel):
     media_ids: List[int]
@@ -167,6 +169,8 @@ def get_screenshots(
             "days_left": days_left,
             "is_expired": is_expired,
             "file_size": item.file_size,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
             "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
         })
     return results
@@ -191,6 +195,8 @@ def get_bills_and_receipts(
         "captured_at": item.captured_at,
         "file_size": item.file_size,
         "extracted_text": item.extracted_text,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 
@@ -298,13 +304,42 @@ def batch_delete(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Soft-deletes user clutter in batch."""
-    updated = db.query(Media).filter(
+    """Deletes user clutter in batch, supporting both soft trash and permanent cloud deletion."""
+    items = db.query(Media).filter(
         Media.id.in_(req.media_ids),
         Media.user_id == current_user.id
-    ).update({"is_deleted": True}, synchronize_session=False)
+    ).all()
+
+    from app.services.google_sync import delete_file_from_google_drive
+    from concurrent.futures import ThreadPoolExecutor
+
+    gdrive_items = [m for m in items if m.source_type == SourceType.GOOGLE_DRIVE and m.source_id]
+    if gdrive_items:
+        def _del_g(m):
+            delete_file_from_google_drive(db, m.source_id, current_user.id, permanent=req.permanent)
+        with ThreadPoolExecutor(max_workers=min(len(gdrive_items), 8)) as executor:
+            list(executor.map(_del_g, gdrive_items))
+
+    for item in items:
+        if item.source_type == SourceType.S3_MINIO and item.source_id and req.permanent:
+            try:
+                from app.services.s3_storage import delete_s3_object
+                delete_s3_object(item.source_id)
+            except Exception:
+                pass
+
+        if req.permanent:
+            if item.original_path and os.path.isfile(item.original_path):
+                try:
+                    os.remove(item.original_path)
+                except Exception:
+                    pass
+            db.delete(item)
+        else:
+            item.is_deleted = True
+
     db.commit()
-    return {"status": "deleted", "count": updated}
+    return {"status": "deleted", "count": len(items), "permanent": req.permanent}
 
 @router.get("/memes")
 def get_memes_and_graphics(
@@ -325,6 +360,8 @@ def get_memes_and_graphics(
         "filename": item.filename,
         "captured_at": item.captured_at,
         "file_size": item.file_size,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 
@@ -354,6 +391,8 @@ def get_large_storage_files(
         "width": item.width,
         "height": item.height,
         "captured_at": item.captured_at,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 
@@ -432,6 +471,8 @@ def get_blurry_photos(
         "is_blurry": item.is_blurry,
         "is_bokeh": getattr(item, "is_bokeh", False) or False,
         "is_enhanced": getattr(item, "is_enhanced", False) or False,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 

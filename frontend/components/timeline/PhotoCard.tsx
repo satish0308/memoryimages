@@ -48,6 +48,9 @@ export interface MediaItem {
   is_bokeh?: boolean;
   is_enhanced?: boolean;
   enhancement_data?: string | null;
+  // Storage source tracking
+  source_type?: string;
+  source_id?: string | null;
 }
 
 interface PhotoCardProps {

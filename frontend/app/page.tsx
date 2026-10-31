@@ -16,6 +16,7 @@ import { OnThisDaySection } from '@/components/flashbacks/OnThisDaySection';
 import { SmartFilterDrawer, SmartFilters, DEFAULT_SMART_FILTERS } from '@/components/timeline/SmartFilterDrawer';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
+import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 
 export default function PhotosPage() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -41,6 +42,7 @@ export default function PhotosPage() {
   // Smart Duplicates & Burst Collapse state
   const [collapseBursts, setCollapseBursts] = useState(true);
   const [inspectingBurstLead, setInspectingBurstLead] = useState<MediaItem | null>(null);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -158,20 +160,18 @@ export default function PhotosPage() {
     }
   };
 
-  const handleBatchDelete = async () => {
+  const handleBatchDelete = () => {
     if (selectedIds.length === 0) return;
-    if (
-      !confirm(
-        `Move ${selectedIds.length} photos to trash? (Zero auto-deletion policy: photos remain until you explicitly delete)`
-      )
-    ) {
-      return;
-    }
+    setShowBulkDeleteModal(true);
+  };
+
+  const executeBatchDelete = async (permanent: boolean) => {
+    if (selectedIds.length === 0) return;
     try {
       const res = await fetch(`${API_URL}/api/v1/media/batch-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media_ids: selectedIds }),
+        body: JSON.stringify({ media_ids: selectedIds, permanent }),
       });
       if (res.ok) {
         setTimeline((prev) =>
@@ -721,7 +721,18 @@ export default function PhotosPage() {
         apiUrl={API_URL}
         onClose={() => setSelectedPhoto(null)}
         onToggleFavorite={toggleFavorite}
-        onDelete={deletePhoto}
+        onDelete={(id) => {
+          setTimeline((prev) =>
+            prev.map((group) => ({
+              ...group,
+              items: group.items.filter((item) => item.id !== id),
+            })).filter((group) => group.items.length > 0)
+          );
+          setSelectedPhoto(null);
+          if (searchResults) {
+            setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
+          }
+        }}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
         hasPrev={hasPrev}
@@ -756,6 +767,15 @@ export default function PhotosPage() {
         onResolved={() => {
           fetchTimeline();
         }}
+      />
+
+      {/* Safe vs Permanent Bulk Delete Modal */}
+      <BulkDeleteModal
+        isOpen={showBulkDeleteModal}
+        itemCount={selectedIds.length}
+        itemType="photos"
+        onClose={() => setShowBulkDeleteModal(false)}
+        onConfirm={executeBatchDelete}
       />
     </div>
   );

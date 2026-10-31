@@ -19,6 +19,7 @@ from app.api.auth import get_current_user, get_optional_current_user
 from app.services.scanner import scan_file, extract_exif, reverse_geocode
 from app.services.settings_service import get_storage_mode, get_setting
 from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file, fetch_google_drive_thumbnail_bytes
+from app.services.google_sync import delete_file_from_google_drive
 from app.config import settings
 
 logger = logging.getLogger("memorypics.api.media")
@@ -172,6 +173,8 @@ def get_timeline(
             "color_hex": item.color_hex,
             "is_video": (item.mime_type or "").startswith("video/"),
             "duration_seconds": item.duration_seconds,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
             "burst_count": burst_count,
             "burst_id": burst_id,
             "burst_media_ids": burst_media_ids,
@@ -703,6 +706,22 @@ def delete_media(
     if media.user_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
         
+    deleted_from_source = False
+    if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id:
+        deleted_from_source = delete_file_from_google_drive(
+            db=db,
+            file_id=media.source_id,
+            user_id=current_user.id,
+            permanent=permanent
+        )
+    elif media.source_type == SourceType.S3_MINIO and media.source_id:
+        try:
+            from app.services.s3_storage import delete_s3_object
+            delete_s3_object(media.source_id)
+            deleted_from_source = True
+        except Exception as e:
+            logger.warning(f"Failed to delete S3 object: {e}")
+
     if permanent:
         if media.original_path and os.path.isfile(media.original_path):
             try:
@@ -714,7 +733,13 @@ def delete_media(
         media.is_deleted = True
         
     db.commit()
-    return {"status": "deleted", "id": media_id, "permanent": permanent}
+    return {
+        "status": "deleted",
+        "id": media_id,
+        "permanent": permanent,
+        "deleted_from_source": deleted_from_source,
+        "source_type": media.source_type
+    }
 
 class BatchFavoriteRequest(BaseModel):
     media_ids: List[int]
@@ -762,28 +787,40 @@ def batch_delete_media(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Soft deletes or permanently deletes selected user media items."""
-    if req.permanent:
-        items = db.query(Media).filter(
-            Media.id.in_(req.media_ids),
-            Media.user_id == current_user.id
-        ).all()
-        for item in items:
+    """Soft deletes or permanently deletes selected user media items, propagating deletion to cloud sources."""
+    items = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
+    ).all()
+    
+    from concurrent.futures import ThreadPoolExecutor
+    gdrive_items = [m for m in items if m.source_type == SourceType.GOOGLE_DRIVE and m.source_id]
+    if gdrive_items:
+        def _del_g(m):
+            delete_file_from_google_drive(db, m.source_id, current_user.id, permanent=req.permanent)
+        with ThreadPoolExecutor(max_workers=min(len(gdrive_items), 8)) as executor:
+            list(executor.map(_del_g, gdrive_items))
+
+    for item in items:
+        if item.source_type == SourceType.S3_MINIO and item.source_id and req.permanent:
+            try:
+                from app.services.s3_storage import delete_s3_object
+                delete_s3_object(item.source_id)
+            except Exception:
+                pass
+
+        if req.permanent:
             if item.original_path and os.path.isfile(item.original_path):
                 try:
                     os.remove(item.original_path)
                 except Exception:
                     pass
             db.delete(item)
-        db.commit()
-        return {"status": "success", "count": len(items), "permanent": True}
-    else:
-        updated = db.query(Media).filter(
-            Media.id.in_(req.media_ids),
-            Media.user_id == current_user.id
-        ).update({"is_deleted": True}, synchronize_session=False)
-        db.commit()
-        return {"status": "success", "count": updated, "permanent": False}
+        else:
+            item.is_deleted = True
+
+    db.commit()
+    return {"status": "success", "count": len(items), "permanent": req.permanent}
 
 class BulkDownloadRequest(BaseModel):
     media_ids: List[int]
@@ -961,56 +998,70 @@ def propagate_cluster_locations(
     return {
         "status": "success",
         "updated_count": updated_count,
+        "propagated_count": updated_count,
         "anchor_count": len(anchors)
     }
 
 @router.post("/rescan-geotags")
 def rescan_all_geotags(
+    propagate: bool = Query(True, description="Propagate location from anchors to same-outing photos"),
+    propagate_hours: float = Query(3.0, description="Max hours gap for outing location propagation"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Deep-scans current user's photos for GPS EXIF."""
+    """
+    Comprehensive GPS sync:
+    1. Scans local files for embedded EXIF GPS tags.
+    2. Scans Google Drive photos via 128KB in-memory header range streams.
+    3. Resolves location names instantly using offline GeoNames KD-Tree.
+    4. Automatically propagates locations to temporal photo clusters (Canon DSLRs, non-GPS shots).
+    """
     from PIL import Image
-    photos = db.query(Media).filter(
+    from app.services.google_sync import scan_google_drive_geotags, propagate_locations_to_clusters
+    from app.services.scanner import extract_exif
+
+    # 1. Scan local files
+    local_photos = db.query(Media).filter(
         Media.user_id == current_user.id,
+        Media.source_type == SourceType.LOCAL,
+        Media.latitude == None,
         Media.is_deleted == False
     ).all()
-    updated_photos = []
-    
-    for p in photos:
-        if not p.original_path or not os.path.isfile(p.original_path):
-            continue
-        try:
-            with Image.open(p.original_path) as img:
-                exif = extract_exif(img, file_path=p.original_path)
-                if exif.get("latitude") is not None and exif.get("longitude") is not None:
-                    p.latitude = exif["latitude"]
-                    p.longitude = exif["longitude"]
-                    p.location_name = exif.get("location_name")
-                if exif.get("camera_make"):
-                    p.camera_make = exif["camera_make"]
-                if exif.get("camera_model"):
-                    p.camera_model = exif["camera_model"]
-                if exif.get("iso"):
-                    p.iso = exif["iso"]
-                if exif.get("focal_length"):
-                    p.focal_length = exif["focal_length"]
-                if exif.get("exposure_time"):
-                    p.exposure_time = exif["exposure_time"]
-                updated_photos.append({
-                    "id": p.id,
-                    "filename": p.filename,
-                    "latitude": p.latitude,
-                    "longitude": p.longitude,
-                    "location_name": p.location_name
-                })
-        except Exception:
-            pass
-            
-    db.commit()
+    local_geotagged = 0
+    for p in local_photos:
+        if p.original_path and os.path.isfile(p.original_path):
+            try:
+                with Image.open(p.original_path) as img:
+                    exif = extract_exif(img, file_path=p.original_path)
+                    if exif.get("latitude") is not None and exif.get("longitude") is not None:
+                        p.latitude = exif["latitude"]
+                        p.longitude = exif["longitude"]
+                        p.location_name = exif.get("location_name")
+                        local_geotagged += 1
+            except Exception:
+                pass
+    if local_geotagged > 0:
+        db.commit()
+
+    # 2. Scan Google Drive photos in-memory
+    gdrive_res = scan_google_drive_geotags(
+        db=db,
+        user_id=current_user.id,
+        max_photos=2500,
+        propagate_hours=propagate_hours if propagate else 0.0
+    )
+
+    # 3. Overall count of geotagged photos
+    total_geotagged = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.latitude != None,
+        Media.is_deleted == False
+    ).count()
+
     return {
         "status": "success",
-        "total_scanned": len(photos),
-        "geotagged_found": len([p for p in updated_photos if p["latitude"] is not None]),
-        "items": [p for p in updated_photos if p["latitude"] is not None]
+        "local_geotagged": local_geotagged,
+        "gdrive_result": gdrive_res,
+        "total_geotagged": total_geotagged,
+        "total_library_geotagged": total_geotagged
     }

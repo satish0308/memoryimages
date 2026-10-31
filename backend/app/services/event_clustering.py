@@ -68,7 +68,8 @@ def _create_event_payload(cluster: List[Media]) -> Dict[str, Any]:
     # Check for location
     location_names = [m.location_name for m in cluster if m.location_name]
     if location_names:
-        title = f"{location_names[0]} {time_of_day}"
+        city = location_names[0].split(",")[0].strip()
+        title = f"{city} • {time_of_day}"
     else:
         title = f"{day_str} ({time_of_day})"
 

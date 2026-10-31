@@ -343,6 +343,21 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     except Exception:
                         pass
 
+                # Extract location if Google Drive metadata contains it
+                loc = img_meta.get("location") or vid_meta.get("location")
+                latitude = None
+                longitude = None
+                location_name = None
+                if loc and isinstance(loc, dict):
+                    try:
+                        latitude = float(loc.get("latitude")) if loc.get("latitude") is not None else None
+                        longitude = float(loc.get("longitude")) if loc.get("longitude") is not None else None
+                        if latitude is not None and longitude is not None:
+                            from app.services.scanner import reverse_geocode
+                            location_name = reverse_geocode(latitude, longitude)
+                    except Exception:
+                        pass
+
                 media_obj = Media(
                     filename=name,
                     original_path=f"gdrive://{file_id}/{name}",
@@ -359,6 +374,9 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     focal_length=focal_length,
                     exposure_time=exposure_time,
                     duration_seconds=duration_seconds,
+                    latitude=latitude,
+                    longitude=longitude,
+                    location_name=location_name,
                     captured_at=captured_at,
                     thumbnail_256_path=f"gdrive_cdn://{file_id}" if thumb_link else None,
                     source_type=SourceType.GOOGLE_DRIVE,
@@ -387,6 +405,13 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
         if new_media_batch:
             db.bulk_save_objects(new_media_batch)
             db.commit()
+
+        # Automatic post-sync GPS extraction & outing propagation for new photos
+        if synced_count > 0 and effective_user_id:
+            try:
+                scan_google_drive_geotags(db=db, user_id=effective_user_id, max_photos=synced_count + 100, propagate_hours=3.0)
+            except Exception as e:
+                logger.warning(f"Post-sync GPS extraction notice: {e}")
 
         total_active_user_media = db.query(Media).filter(
             Media.user_id == effective_user_id,
@@ -425,3 +450,176 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
         source.error_message = str(e)
         db.commit()
         return {"status": "error", "message": str(e)}
+
+def delete_file_from_google_drive(db: Session, file_id: str, user_id: int, permanent: bool = False) -> bool:
+    """Deletes or trashes a file directly in Google Drive for the specified user."""
+    try:
+        source = db.query(SyncSource).filter(
+            SyncSource.user_id == user_id,
+            SyncSource.sync_type == SyncType.GOOGLE_DRIVE
+        ).first()
+        if not source or not source.oauth_tokens_json:
+            logger.warning(f"No Google Drive credentials found for user {user_id}")
+            return False
+
+        import google.auth.transport.requests
+        creds_info = json.loads(source.oauth_tokens_json)
+        credentials = Credentials(
+            token=creds_info.get("token"),
+            refresh_token=creds_info.get("refresh_token"),
+            token_uri=creds_info.get("token_uri"),
+            client_id=creds_info.get("client_id"),
+            client_secret=creds_info.get("client_secret"),
+            scopes=creds_info.get("scopes")
+        )
+        if credentials.expired and credentials.refresh_token:
+            req_refresh = google.auth.transport.requests.Request()
+            credentials.refresh(req_refresh)
+            source.oauth_tokens_json = credentials.to_json()
+            db.commit()
+
+        service = build("drive", "v3", credentials=credentials)
+        if permanent:
+            service.files().delete(fileId=file_id).execute()
+        else:
+            service.files().update(fileId=file_id, body={"trashed": True}).execute()
+        logger.info(f"Successfully deleted/trashed file {file_id} (permanent={permanent}) in Google Drive for user {user_id}")
+        return True
+    except Exception as e:
+        err_str = str(e).lower()
+        if "404" in err_str or "not found" in err_str or "filenotfound" in err_str:
+            logger.info(f"File {file_id} already absent in Google Drive: {e}")
+            return True
+        logger.error(f"Failed to delete file {file_id} from Google Drive: {e}")
+        return False
+
+def scan_google_drive_geotags(db: Session, user_id: int, max_photos: int = 2500, propagate_hours: float = 3.0) -> Dict[str, Any]:
+    """
+    Scans Google Drive photos for embedded GPS EXIF tags using lightweight 128KB in-memory range streaming.
+    Resolves locations offline using GeoNames KD-Tree and optionally propagates to temporal photo clusters.
+    """
+    from app.services.scanner import extract_gps_from_bytes, reverse_geocode
+    from concurrent.futures import ThreadPoolExecutor
+    import urllib.request
+    import google.auth.transport.requests
+    from sqlalchemy import case
+
+    source = db.query(SyncSource).filter(
+        SyncSource.user_id == user_id,
+        SyncSource.sync_type == SyncType.GOOGLE_DRIVE
+    ).first()
+    if not source:
+        source = db.query(SyncSource).filter(SyncSource.sync_type == SyncType.GOOGLE_DRIVE).first()
+    if not source or not source.oauth_tokens_json:
+        return {"status": "error", "message": "No Google Drive credentials found for user", "newly_geotagged": 0}
+
+    creds_info = json.loads(source.oauth_tokens_json)
+    creds = Credentials(
+        token=creds_info.get("token"),
+        refresh_token=creds_info.get("refresh_token"),
+        token_uri=creds_info.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=creds_info.get("client_id"),
+        client_secret=creds_info.get("client_secret")
+    )
+    req = google.auth.transport.requests.Request()
+    creds.refresh(req)
+
+    # Query un-geotagged Google Drive photos, prioritizing smartphone photos
+    photos = db.query(Media).filter(
+        Media.user_id == user_id,
+        Media.source_type == SourceType.GOOGLE_DRIVE,
+        Media.latitude == None,
+        Media.is_deleted == False
+    ).order_by(
+        case(
+            (Media.camera_make.in_(['vivo', 'Xiaomi', 'samsung', 'Apple', 'motorola', 'OnePlus', 'Google']), 1),
+            else_=2
+        ),
+        Media.captured_at.desc()
+    ).limit(max_photos).all()
+
+    if not photos:
+        return {"status": "success", "message": "All Google Drive photos already scanned or geotagged", "newly_geotagged": 0}
+
+    def fetch_gps_header(p_id: int, source_id: str):
+        url = f"https://www.googleapis.com/drive/v3/files/{source_id}?alt=media"
+        h_req = urllib.request.Request(url, headers={"Authorization": f"Bearer {creds.token}", "Range": "bytes=0-131071"})
+        try:
+            with urllib.request.urlopen(h_req, timeout=6) as resp:
+                data = resp.read()
+            coords = extract_gps_from_bytes(data)
+            if coords:
+                loc_name = reverse_geocode(coords[0], coords[1])
+                return p_id, coords[0], coords[1], loc_name
+        except Exception:
+            pass
+        return None
+
+    results = []
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(fetch_gps_header, p.id, p.source_id) for p in photos]
+        for fut in futures:
+            res = fut.result()
+            if res:
+                results.append(res)
+
+    for p_id, lat, lon, loc_name in results:
+        db.query(Media).filter(Media.id == p_id).update({
+            "latitude": lat,
+            "longitude": lon,
+            "location_name": loc_name
+        })
+    db.commit()
+
+    propagated = 0
+    if propagate_hours and propagate_hours > 0 and len(results) > 0:
+        propagated = propagate_locations_to_clusters(db, user_id=user_id, max_gap_hours=propagate_hours)
+
+    return {
+        "status": "success",
+        "total_scanned": len(photos),
+        "newly_geotagged": len(results),
+        "propagated": propagated
+    }
+
+def propagate_locations_to_clusters(db: Session, user_id: int, max_gap_hours: float = 3.0) -> int:
+    """Propagates location from geotagged anchor photos to un-geotagged photos taken during same outing/cluster."""
+    anchors = db.query(Media).filter(
+        Media.user_id == user_id,
+        Media.latitude != None,
+        Media.longitude != None,
+        Media.captured_at != None,
+        Media.is_deleted == False
+    ).all()
+
+    if not anchors:
+        return 0
+
+    non_geo = db.query(Media).filter(
+        Media.user_id == user_id,
+        Media.latitude == None,
+        Media.captured_at != None,
+        Media.is_deleted == False
+    ).all()
+
+    max_gap_seconds = max_gap_hours * 3600.0
+    updated_count = 0
+
+    for item in non_geo:
+        best_anchor = None
+        min_gap = max_gap_seconds
+        for anc in anchors:
+            gap = abs((item.captured_at - anc.captured_at).total_seconds())
+            if gap <= min_gap:
+                min_gap = gap
+                best_anchor = anc
+
+        if best_anchor:
+            item.latitude = best_anchor.latitude
+            item.longitude = best_anchor.longitude
+            item.location_name = best_anchor.location_name
+            updated_count += 1
+
+    if updated_count > 0:
+        db.commit()
+    return updated_count

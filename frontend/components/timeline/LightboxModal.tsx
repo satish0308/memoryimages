@@ -78,6 +78,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [locLat, setLocLat] = useState<string>(photo?.latitude != null ? photo.latitude.toString() : '');
   const [locLon, setLocLon] = useState<string>(photo?.longitude != null ? photo.longitude.toString() : '');
   const [savingLoc, setSavingLoc] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // 1-Click Auto-Enhance state
   const [isEnhanced, setIsEnhanced] = useState(photo?.is_enhanced || false);
@@ -104,12 +106,27 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     }
   }, [photo?.id, photo?.matched_timestamp]);
 
-  // Sync category state when photo changes
+  // Reset delete confirm modal when switching photos
   useEffect(() => {
-    if (photo) {
-      setCurrentCategory(photo.category);
+    setShowDeleteConfirm(false);
+    setIsDeleting(false);
+  }, [photo?.id]);
+
+  const handleConfirmDelete = async () => {
+    if (!photo) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        onDelete(photo.id);
+        setShowDeleteConfirm(false);
+      }
+    } catch (err) {
+      console.error('Failed to delete photo:', err);
+    } finally {
+      setIsDeleting(false);
     }
-  }, [photo?.id, photo?.category]);
+  };
 
   // Sync auto-enhance state when photo changes
   useEffect(() => {
@@ -717,6 +734,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               {isHighResLoaded ? 'Original HD' : 'Loading HD...'}
             </span>
           </div>
+
+          {/* Floating Bottom-Right Quick Action: Delete Photo */}
+          <div className="absolute bottom-4 right-4 z-30 flex items-center gap-2">
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-slate-900/90 hover:bg-rose-950/90 backdrop-blur-md border border-slate-700/80 hover:border-rose-500/60 text-slate-200 hover:text-rose-200 shadow-2xl transition group text-xs font-semibold cursor-pointer"
+              title="Delete Photo (removes from library and Google Drive)"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400 group-hover:scale-110 transition" />
+              <span>Delete</span>
+            </button>
+          </div>
         </div>
 
         {/* Multi-Tab Sidebar: Info & EXIF / Faces & People */}
@@ -1259,9 +1288,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <Heart className={`w-4 h-4 ${photo.is_favorite ? 'fill-red-500' : ''}`} />
             </button>
             <button
-              onClick={() => onDelete(photo.id)}
+              onClick={() => setShowDeleteConfirm(true)}
               className="p-2 rounded-lg border border-slate-700 hover:bg-red-950/50 hover:text-red-400 text-slate-400 transition"
-              title="Delete"
+              title="Delete Photo"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -1269,6 +1298,48 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         </div>
         )}
       </div>
+
+      {/* Delete Confirmation Modal Overlay */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mx-auto shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Delete Photo?</h3>
+              <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+                {photo.source_type === 'google_drive'
+                  ? 'This will remove the photo from MyMemoryPics and move it to trash in your Google Drive.'
+                  : 'This will remove the photo from your library and storage.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="flex-1 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <span>Deleting...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Photo</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

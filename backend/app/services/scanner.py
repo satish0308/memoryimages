@@ -24,11 +24,35 @@ SUPPORTED_EXTENSIONS = {
 _GEOCODE_CACHE: Dict[Tuple[float, float], str] = {}
 
 def reverse_geocode(lat: float, lon: float) -> Optional[str]:
-    """Reverse geocodes GPS coordinates into a city/region name with in-memory caching."""
+    """Reverse geocodes GPS coordinates into a city/region name with offline GeoNames KD-Tree + online fallback."""
     cache_key = (round(lat, 3), round(lon, 3))
     if cache_key in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[cache_key]
 
+    # 1. High-speed offline reverse geocoder (Instant, zero network requests, handles India/global)
+    try:
+        import reverse_geocoder as rg
+        results = rg.search([(lat, lon)], verbose=False)
+        if results:
+            r = results[0]
+            city = r.get("name")
+            admin1 = r.get("admin1")  # State/Province
+            country_code = r.get("cc")
+            country_names = {
+                "IN": "India", "US": "United States", "GB": "United Kingdom",
+                "CA": "Canada", "AU": "Australia", "DE": "Germany", "FR": "France",
+                "AE": "UAE", "SG": "Singapore", "JP": "Japan"
+            }
+            country = country_names.get(country_code, country_code)
+            parts = [p for p in [city, admin1, country] if p]
+            if parts:
+                name = ", ".join(parts)
+                _GEOCODE_CACHE[cache_key] = name
+                return name
+    except Exception:
+        pass
+
+    # 2. Online Nominatim fallback if offline geocoder misses
     try:
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=12"
         req = urllib.request.Request(url, headers={"User-Agent": "MyMemoryPics/1.0 (contact@memorypics.local)"})

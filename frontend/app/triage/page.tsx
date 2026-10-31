@@ -24,7 +24,12 @@ import {
   Zap,
   Image as ImageIcon,
   Smile,
-  Maximize2
+  Maximize2,
+  Calendar,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Layers
 } from 'lucide-react';
 
 import { 
@@ -33,6 +38,7 @@ import {
 } from '@/components/triage/DuplicateResolverModal';
 import { BillInspectorModal } from '@/components/triage/BillInspectorModal';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 
 interface TriageOverview {
@@ -57,6 +63,8 @@ interface ScreenshotItem {
   is_expired: boolean;
   file_size: number;
   thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
 }
 
 interface BillItem {
@@ -66,6 +74,8 @@ interface BillItem {
   file_size: number;
   extracted_text?: string;
   thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
 }
 
 interface BlurryItem {
@@ -79,6 +89,8 @@ interface BlurryItem {
   is_bokeh?: boolean;
   is_enhanced?: boolean;
   thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
 }
 
 interface LargeFileItem {
@@ -91,6 +103,8 @@ interface LargeFileItem {
   height: number;
   captured_at: string;
   thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
 }
 
 interface MemeItem {
@@ -99,6 +113,96 @@ interface MemeItem {
   captured_at: string;
   file_size: number;
   thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
+}
+
+export type TimeGrouping = 'week' | 'month' | 'year' | 'all';
+
+interface TriageTimeGroup<T> {
+  key: string;
+  label: string;
+  items: T[];
+  totalBytes: number;
+}
+
+function groupItemsByTime<T extends { id: number; captured_at: string; file_size?: number }>(
+  items: T[],
+  grouping: TimeGrouping
+): TriageTimeGroup<T>[] {
+  if (grouping === 'all') {
+    const totalBytes = items.reduce((acc, i) => acc + (i.file_size || 0), 0);
+    return [{
+      key: 'all',
+      label: 'All Items',
+      items,
+      totalBytes,
+    }];
+  }
+
+  const map = new Map<string, { label: string; items: T[]; totalBytes: number }>();
+
+  for (const item of items) {
+    let key = 'undated';
+    let label = 'Undated / Unknown';
+
+    if (item.captured_at) {
+      const normalizedDateStr = item.captured_at.includes('T')
+        ? item.captured_at
+        : item.captured_at.replace(' ', 'T');
+      const d = new Date(normalizedDateStr);
+
+      if (!isNaN(d.getTime())) {
+        if (grouping === 'year') {
+          key = `${d.getFullYear()}`;
+          label = `${d.getFullYear()}`;
+        } else if (grouping === 'month') {
+          key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        } else if (grouping === 'week') {
+          const day = d.getDay();
+          const diffToMonday = d.getDate() - day + (day === 0 ? -6 : 1);
+          const monday = new Date(d);
+          monday.setDate(diffToMonday);
+          monday.setHours(0, 0, 0, 0);
+
+          const sunday = new Date(monday);
+          sunday.setDate(monday.getDate() + 6);
+
+          const monMonth = monday.toLocaleDateString('en-US', { month: 'short' });
+          const sunMonth = sunday.toLocaleDateString('en-US', { month: 'short' });
+          const yearStr = sunday.getFullYear();
+
+          key = monday.toISOString().slice(0, 10);
+          if (monMonth === sunMonth) {
+            label = `${monMonth} ${monday.getDate()} – ${sunday.getDate()}, ${yearStr}`;
+          } else {
+            label = `${monMonth} ${monday.getDate()} – ${sunMonth} ${sunday.getDate()}, ${yearStr}`;
+          }
+        }
+      }
+    }
+
+    if (!map.has(key)) {
+      map.set(key, { label, items: [], totalBytes: 0 });
+    }
+    const group = map.get(key)!;
+    group.items.push(item);
+    group.totalBytes += (item.file_size || 0);
+  }
+
+  const sortedKeys = Array.from(map.keys()).sort((a, b) => {
+    if (a === 'undated') return 1;
+    if (b === 'undated') return -1;
+    return b.localeCompare(a);
+  });
+
+  return sortedKeys.map((k) => ({
+    key: k,
+    label: map.get(k)!.label,
+    items: map.get(k)!.items,
+    totalBytes: map.get(k)!.totalBytes,
+  }));
 }
 
 type TriageTab = 'screenshots' | 'bills' | 'duplicates' | 'blurry' | 'large_files' | 'memes';
@@ -124,6 +228,38 @@ export default function TriagePage() {
   const [isCleaningPockets, setIsCleaningPockets] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isResolvingAll, setIsResolvingAll] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+
+  // Time Grouping & Collapse States
+  const [timeGrouping, setTimeGrouping] = useState<TimeGrouping>('month');
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set());
+  const [expandedGroupLimits, setExpandedGroupLimits] = useState<Record<string, number>>({});
+
+  const toggleSelectGroup = (groupIds: number[]) => {
+    const isAllGroupSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+    if (isAllGroupSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !groupIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...groupIds])));
+    }
+  };
+
+  const toggleGroupCollapse = (key: string) => {
+    setCollapsedGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const collapseAllGroups = (keys: string[]) => {
+    setCollapsedGroupKeys(new Set(keys));
+  };
+
+  const expandAllGroups = () => {
+    setCollapsedGroupKeys(new Set());
+  };
 
   // Modals
   const [activeCompareCluster, setActiveCompareCluster] = useState<DuplicateCluster | null>(null);
@@ -346,30 +482,34 @@ export default function TriagePage() {
     }
   };
 
-  // Safe manual batch delete (Zero auto-deletion policy)
-  const handleBatchDelete = async () => {
+  // Safe manual batch delete (Supports Soft Trash & Permanent Cloud Delete)
+  const handleBatchDelete = () => {
     if (selectedIds.length === 0) return;
-    if (
-      !confirm(
-        `Move ${selectedIds.length} items to trash? (Zero Auto-Deletion Guarantee: Items remain safely restorable).`
-      )
-    )
-      return;
+    setShowBulkDeleteModal(true);
+  };
+
+  const executeBatchDelete = async (permanent: boolean) => {
+    if (selectedIds.length === 0) return;
     try {
       const res = await fetch(`${API_URL}/api/v1/triage/batch-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ media_ids: selectedIds }),
+        body: JSON.stringify({ media_ids: selectedIds, permanent }),
       });
       if (res.ok) {
-        setStatusMessage(`Moved ${selectedIds.length} items to trash.`);
+        setStatusMessage(
+          permanent
+            ? `Permanently deleted ${selectedIds.length} items from MyMemoryPics and Google Drive.`
+            : `Moved ${selectedIds.length} items to trash (safely restorable).`
+        );
         setSelectedIds([]);
         refreshCurrentTab();
         fetchOverview();
-        setTimeout(() => setStatusMessage(null), 3500);
+        setTimeout(() => setStatusMessage(null), 4000);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Batch delete error:', e);
+      setStatusMessage('Failed to delete selected items.');
     }
   };
 
@@ -425,6 +565,23 @@ export default function TriagePage() {
     if (screenshotFilter === 'recent') return screenshots.filter((s) => !s.is_expired);
     return screenshots;
   }, [screenshots, screenshotFilter]);
+
+  // Time-grouped collections for Week / Month / Year triage views
+  const memeGroups = useMemo(() => {
+    return groupItemsByTime(memes, timeGrouping);
+  }, [memes, timeGrouping]);
+
+  const screenshotGroups = useMemo(() => {
+    return groupItemsByTime(filteredScreenshots, timeGrouping);
+  }, [filteredScreenshots, timeGrouping]);
+
+  const blurryGroups = useMemo(() => {
+    return groupItemsByTime(blurryPhotos, timeGrouping);
+  }, [blurryPhotos, timeGrouping]);
+
+  const largeFileGroups = useMemo(() => {
+    return groupItemsByTime(largeFiles, timeGrouping);
+  }, [largeFiles, timeGrouping]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-16">
@@ -647,35 +804,82 @@ export default function TriagePage() {
       {/* Tab 1: Screenshots Review Tray */}
       {activeTab === 'screenshots' && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4 text-slate-400" />}
                 <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 font-medium">
                 {filteredScreenshots.length} screenshots found
+                {timeGrouping !== 'all' && screenshotGroups.length > 0 && (
+                  <span className="text-blue-600 dark:text-blue-400 font-semibold ml-1">
+                    ({screenshotGroups.length} {timeGrouping === 'week' ? 'weeks' : timeGrouping === 'year' ? 'years' : 'months'})
+                  </span>
+                )}
               </span>
             </div>
 
-            {/* Age Filter Chips */}
-            <div className="flex items-center gap-1.5">
-              {(['all', 'expired', 'recent'] as const).map((filter) => (
-                <button
-                  key={filter}
-                  onClick={() => setScreenshotFilter(filter)}
-                  className={`px-3 py-1 rounded-xl text-xs font-semibold transition capitalize ${
-                    screenshotFilter === filter
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-                  }`}
-                >
-                  {filter === 'all' ? 'All Screenshots' : filter === 'expired' ? '30+ Days Old' : 'Recent'}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Age Filter Chips */}
+              <div className="flex items-center gap-1">
+                {(['all', 'expired', 'recent'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setScreenshotFilter(filter)}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition capitalize cursor-pointer ${
+                      screenshotFilter === filter
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                    }`}
+                  >
+                    {filter === 'all' ? 'All' : filter === 'expired' ? '30+ Days Old' : 'Recent'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Time Grouping Selector */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['week', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setTimeGrouping(mode)}
+                    className={`px-2 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      timeGrouping === mode
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
+
+              {timeGrouping !== 'all' && screenshotGroups.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => collapseAllGroups(screenshotGroups.map((g) => g.key))}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Collapse all sections"
+                  >
+                    Collapse All
+                  </button>
+                  <button
+                    onClick={expandAllGroups}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Expand all sections"
+                  >
+                    Expand All
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -684,64 +888,165 @@ export default function TriagePage() {
               No screenshots match the filter criteria. Your library is clean!
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {filteredScreenshots.map((s) => {
-                const isSelected = selectedIds.includes(s.id);
+            <div className="space-y-4">
+              {screenshotGroups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const groupIds = group.items.map((s) => s.id);
+                const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                const limit = expandedGroupLimits[group.key] || 48;
+                const visibleItems = timeGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const hasMore = visibleItems.length < group.items.length;
+
                 return (
                   <div
-                    key={s.id}
-                    onClick={() =>
-                      setInspectingPhoto({
-                        id: s.id,
-                        filename: s.filename,
-                        category: 'screenshot',
-                        width: 1080,
-                        height: 1920,
-                        captured_at: s.captured_at,
-                        is_favorite: false,
-                        is_blurry: false,
-                        thumbnail_url: s.thumbnail_url,
-                      })
-                    }
-                    className={`group relative aspect-[9/16] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
-                      isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-transparent'
-                    }`}
+                    key={group.key}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    <img
-                      src={`${API_URL}${s.thumbnail_url}`}
-                      alt={s.filename}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-
-                    {/* Top Overlay Badge & Checkbox */}
-                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span
-                        className={`text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md shadow-sm ${
-                          s.is_expired ? 'bg-amber-600 text-white' : 'bg-black/60 text-white'
-                        }`}
-                      >
-                        {s.is_expired ? '30+ days' : 'Recent'}
-                      </span>
+                    {/* Time Group Header */}
+                    {timeGrouping !== 'all' && (
                       <div
-                        onClick={(e) => toggleSelect(s.id, e)}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
-                          isSelected
-                            ? 'bg-blue-600 border-white text-white shadow-md scale-110'
-                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
-                        }`}
+                        onClick={() => toggleGroupCollapse(group.key)}
+                        className="flex items-center justify-between p-3.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition"
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-blue-500" />
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
+                          </div>
+                          <span className="text-[11px] font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 px-2.5 py-0.5 rounded-full">
+                            {group.items.length} {group.items.length === 1 ? 'screenshot' : 'screenshots'}
+                          </span>
+                          {group.totalBytes > 0 && (
+                            <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                              {(group.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          )}
+                        </div>
 
-                    {/* Bottom Vignette */}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                      <p className="text-[11px] font-semibold truncate leading-tight">{s.filename}</p>
-                      <p className="text-[9px] text-slate-300 font-mono mt-0.5">
-                        {((s.file_size || 0) / 1024).toFixed(0)} KB
-                      </p>
-                    </div>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => toggleSelectGroup(groupIds)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                              isGroupAllSelected
+                                ? 'bg-blue-600 text-white'
+                                : groupSelectedCount > 0
+                                ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-800'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                            <span>
+                              {isGroupAllSelected
+                                ? `Deselect ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`
+                                : `Select ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`}{' '}
+                              ({group.items.length})
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cards Grid */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {visibleItems.map((s) => {
+                            const isSelected = selectedIds.includes(s.id);
+                            return (
+                              <div
+                                key={s.id}
+                                onClick={() =>
+                                  setInspectingPhoto({
+                                    id: s.id,
+                                    filename: s.filename,
+                                    category: 'screenshot',
+                                    width: 1080,
+                                    height: 1920,
+                                    captured_at: s.captured_at,
+                                    is_favorite: false,
+                                    is_blurry: false,
+                                    thumbnail_url: s.thumbnail_url,
+                                    source_type: s.source_type,
+                                    source_id: s.source_id,
+                                  })
+                                }
+                                className={`group relative aspect-[9/16] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                                  isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={`${API_URL}${s.thumbnail_url}`}
+                                  alt={s.filename}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+
+                                {/* Top Overlay Badge & Checkbox */}
+                                <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                                  <span
+                                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md shadow-sm ${
+                                      s.is_expired ? 'bg-amber-600 text-white' : 'bg-black/60 text-white'
+                                    }`}
+                                  >
+                                    {s.is_expired ? '30+ days' : 'Recent'}
+                                  </span>
+                                  <div
+                                    onClick={(e) => toggleSelect(s.id, e)}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                                      isSelected
+                                        ? 'bg-blue-600 border-white text-white shadow-md scale-110'
+                                        : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </div>
+                                </div>
+
+                                {/* Bottom Vignette */}
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <p className="text-[11px] font-semibold truncate leading-tight">{s.filename}</p>
+                                  <p className="text-[9px] text-slate-300 font-mono mt-0.5">
+                                    {((s.file_size || 0) / 1024).toFixed(0)} KB
+                                  </p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Show More for Large Groups */}
+                        {hasMore && (
+                          <div className="pt-2 text-center flex items-center justify-center gap-2">
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: (prev[group.key] || 48) + 96,
+                                }))
+                              }
+                              className="px-4 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:border-blue-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                            >
+                              Show more in {group.label} ({group.items.length - visibleItems.length} remaining)
+                            </button>
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: group.items.length,
+                                }))
+                              }
+                              className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline cursor-pointer"
+                            >
+                              Show all ({group.items.length})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1055,6 +1360,8 @@ export default function TriagePage() {
                         is_bokeh: b.is_bokeh,
                         is_enhanced: b.is_enhanced,
                         thumbnail_url: b.thumbnail_url,
+                        source_type: b.source_type,
+                        source_id: b.source_id,
                       })
                     }
                     className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
@@ -1140,6 +1447,8 @@ export default function TriagePage() {
                         is_favorite: false,
                         is_blurry: false,
                         thumbnail_url: l.thumbnail_url,
+                        source_type: l.source_type,
+                        source_id: l.source_id,
                       })
                     }
                     className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
@@ -1187,16 +1496,65 @@ export default function TriagePage() {
       {/* Tab 6: Memes & Social Graphics */}
       {activeTab === 'memes' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-pink-600" /> : <Square className="w-4 h-4 text-slate-400" />}
                 <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
               </button>
-              <span className="text-xs text-slate-500">{memes.length} memes & graphics detected</span>
+              <span className="text-xs text-slate-500 font-medium">
+                {memes.length} memes & graphics detected
+                {timeGrouping !== 'all' && memeGroups.length > 0 && (
+                  <span className="text-pink-600 dark:text-pink-400 font-semibold ml-1">
+                    ({memeGroups.length} {timeGrouping === 'week' ? 'weeks' : timeGrouping === 'year' ? 'years' : 'months'})
+                  </span>
+                )}
+              </span>
+            </div>
+
+            {/* Time Grouping & Collapse Controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['week', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setTimeGrouping(mode)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      timeGrouping === mode
+                        ? 'bg-pink-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
+
+              {timeGrouping !== 'all' && memeGroups.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => collapseAllGroups(memeGroups.map((g) => g.key))}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Collapse all sections"
+                  >
+                    Collapse All
+                  </button>
+                  <button
+                    onClick={expandAllGroups}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Expand all sections"
+                  >
+                    Expand All
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1205,55 +1563,156 @@ export default function TriagePage() {
               No memes or junk graphics in your library.
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {memes.map((m) => {
-                const isSelected = selectedIds.includes(m.id);
+            <div className="space-y-4">
+              {memeGroups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const groupIds = group.items.map((m) => m.id);
+                const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                const limit = expandedGroupLimits[group.key] || 48;
+                const visibleItems = timeGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const hasMore = visibleItems.length < group.items.length;
+
                 return (
                   <div
-                    key={m.id}
-                    onClick={() =>
-                      setInspectingPhoto({
-                        id: m.id,
-                        filename: m.filename,
-                        category: 'meme_junk',
-                        width: 1080,
-                        height: 1080,
-                        captured_at: m.captured_at,
-                        is_favorite: false,
-                        is_blurry: false,
-                        thumbnail_url: m.thumbnail_url,
-                      })
-                    }
-                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
-                      isSelected ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent'
-                    }`}
+                    key={group.key}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    <img
-                      src={`${API_URL}${m.thumbnail_url}`}
-                      alt={m.filename}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-
-                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span className="bg-pink-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                        Meme
-                      </span>
+                    {/* Time Group Header */}
+                    {timeGrouping !== 'all' && (
                       <div
-                        onClick={(e) => toggleSelect(m.id, e)}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
-                          isSelected
-                            ? 'bg-pink-600 border-white text-white shadow-md scale-110'
-                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
-                        }`}
+                        onClick={() => toggleGroupCollapse(group.key)}
+                        className="flex items-center justify-between p-3.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition"
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </div>
-                    </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-4 h-4 text-pink-500" />
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
+                          </div>
+                          <span className="text-[11px] font-semibold bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300 px-2.5 py-0.5 rounded-full">
+                            {group.items.length} {group.items.length === 1 ? 'item' : 'items'}
+                          </span>
+                          {group.totalBytes > 0 && (
+                            <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                              {(group.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          )}
+                        </div>
 
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">
-                      <p className="text-[11px] font-semibold truncate leading-tight">{m.filename}</p>
-                    </div>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => toggleSelectGroup(groupIds)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                              isGroupAllSelected
+                                ? 'bg-pink-600 text-white'
+                                : groupSelectedCount > 0
+                                ? 'bg-pink-100 dark:bg-pink-950/60 text-pink-600 dark:text-pink-400 border border-pink-300 dark:border-pink-800'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                            <span>
+                              {isGroupAllSelected
+                                ? `Deselect ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`
+                                : `Select ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`}{' '}
+                              ({group.items.length})
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cards Grid */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {visibleItems.map((m) => {
+                            const isSelected = selectedIds.includes(m.id);
+                            return (
+                              <div
+                                key={m.id}
+                                onClick={() =>
+                                  setInspectingPhoto({
+                                    id: m.id,
+                                    filename: m.filename,
+                                    category: 'meme_junk',
+                                    width: 1080,
+                                    height: 1080,
+                                    captured_at: m.captured_at,
+                                    is_favorite: false,
+                                    is_blurry: false,
+                                    thumbnail_url: m.thumbnail_url,
+                                    source_type: m.source_type,
+                                    source_id: m.source_id,
+                                  })
+                                }
+                                className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                                  isSelected ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={`${API_URL}${m.thumbnail_url}`}
+                                  alt={m.filename}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+
+                                <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                                  <span className="bg-pink-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
+                                    Meme
+                                  </span>
+                                  <div
+                                    onClick={(e) => toggleSelect(m.id, e)}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                                      isSelected
+                                        ? 'bg-pink-600 border-white text-white shadow-md scale-110'
+                                        : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </div>
+                                </div>
+
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">
+                                  <p className="text-[11px] font-semibold truncate leading-tight">{m.filename}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Show More for Large Groups */}
+                        {hasMore && (
+                          <div className="pt-2 text-center flex items-center justify-center gap-2">
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: (prev[group.key] || 48) + 96,
+                                }))
+                              }
+                              className="px-4 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-pink-50 dark:hover:bg-pink-950/40 text-pink-600 dark:text-pink-400 border border-slate-200 dark:border-slate-700 hover:border-pink-300 dark:border-pink-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                            >
+                              Show more in {group.label} ({group.items.length - visibleItems.length} remaining)
+                            </button>
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: group.items.length,
+                                }))
+                              }
+                              className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline cursor-pointer"
+                            >
+                              Show all ({group.items.length})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1295,6 +1754,21 @@ export default function TriagePage() {
           refreshCurrentTab();
           fetchOverview();
         }}
+      />
+
+      {/* Safe vs Permanent Bulk Delete Modal */}
+      <BulkDeleteModal
+        isOpen={showBulkDeleteModal}
+        itemCount={selectedIds.length}
+        itemType={
+          activeTab === 'memes' ? 'memes & graphics' :
+          activeTab === 'screenshots' ? 'screenshots' :
+          activeTab === 'blurry' ? 'blurry photos' :
+          activeTab === 'bills' ? 'receipts / bills' :
+          activeTab === 'large_files' ? 'large files' : 'items'
+        }
+        onClose={() => setShowBulkDeleteModal(false)}
+        onConfirm={executeBatchDelete}
       />
     </div>
   );

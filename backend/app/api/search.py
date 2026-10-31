@@ -212,7 +212,9 @@ def search_photos(
             "mood_score": m.mood_score,
             "is_smiling": m.is_smiling,
             "dominant_color": m.dominant_color,
-            "color_hex": m.color_hex
+            "color_hex": m.color_hex,
+            "source_type": (m.source_type.value if hasattr(m.source_type, "value") else str(m.source_type)) if m.source_type else "local",
+            "source_id": m.source_id
         } for m in items]
     }
 
