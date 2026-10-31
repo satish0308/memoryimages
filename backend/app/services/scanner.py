@@ -252,6 +252,9 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     # Check if file path already exists
     existing = db.query(Media).filter(Media.original_path == file_path).first()
     if existing:
+        if user_id and existing.user_id != user_id:
+            existing.user_id = user_id
+            db.commit()
         return existing
         
     stat = os.stat(file_path)
@@ -362,7 +365,7 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         
     return media
 
-def scan_directory(db: Session, dir_path: str) -> Dict[str, Any]:
+def scan_directory(db: Session, dir_path: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     """Recursively scans a directory for photos."""
     if not os.path.isdir(dir_path):
         return {"scanned": 0, "added": 0, "error": f"Directory not found: {dir_path}"}
@@ -376,7 +379,7 @@ def scan_directory(db: Session, dir_path: str) -> Dict[str, Any]:
             if ext in SUPPORTED_EXTENSIONS:
                 scanned += 1
                 full_path = os.path.join(root, file)
-                media = scan_file(db, full_path, SourceType.LOCAL)
+                media = scan_file(db, full_path, SourceType.LOCAL, user_id=user_id)
                 if media:
                     added += 1
                     

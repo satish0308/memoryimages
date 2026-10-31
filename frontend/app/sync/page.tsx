@@ -93,7 +93,8 @@ export default function SyncPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setSyncStatus(`Successfully uploaded & ingested ${data.uploaded_count} photos to MinIO S3!`);
+        const count = data.total_uploaded ?? data.uploaded_count ?? (data.results?.length) ?? 0;
+        setSyncStatus(`Successfully uploaded & ingested ${count} photos to MinIO S3!`);
         fetchS3Status();
         fetchSources();
       } else {
@@ -118,10 +119,15 @@ export default function SyncPage() {
         body: JSON.stringify({})
       });
       const data = await res.json();
+      if (!res.ok) {
+        setScanResult({ error: data.detail || data.message || 'Scan failed' });
+        return;
+      }
       setScanResult(data);
       fetchSources();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setScanResult({ error: e?.message || 'Network error' });
     } finally {
       setScanning(false);
     }
@@ -134,10 +140,15 @@ export default function SyncPage() {
         method: 'POST'
       });
       const data = await res.json();
-      setSyncStatus(`Sync complete: imported ${data.synced_photos || 0} photos!`);
+      if (!res.ok) {
+        setSyncStatus(`Sync failed: ${data.detail || data.message || 'Server error'}`);
+        return;
+      }
+      setSyncStatus(data.message || `Sync complete: imported ${data.synced_photos || 0} photos!`);
       fetchSources();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setSyncStatus(`Sync error: ${e?.message || 'Network error'}`);
     } finally {
       setSyncingGoogle(false);
     }

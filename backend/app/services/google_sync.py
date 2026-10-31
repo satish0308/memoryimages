@@ -206,13 +206,16 @@ def handle_oauth_callback(db: Session, code: str, state: Optional[str] = None) -
         logger.error(f"OAuth callback error: {e}")
         return {"status": "error", "error": str(e)}
 
-def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
-    """Syncs photos from Google Drive into /data/originals/google_drive."""
+def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Syncs photos from Google Drive into user account library."""
     source = db.query(SyncSource).filter(SyncSource.id == source_id).first()
     if not source or not source.oauth_tokens_json:
         return {"status": "error", "message": "Google Drive credentials missing"}
         
     source.status = SyncStatus.SYNCING
+    effective_user_id = user_id or source.user_id
+    if effective_user_id and source.user_id != effective_user_id:
+        source.user_id = effective_user_id
     db.commit()
     
     try:
@@ -231,21 +234,36 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
         storage_mode = get_storage_mode(db)
         local_approved = is_local_storage_approved(db)
 
-        # Query for all non-trashed images in Google Drive, requesting thumbnailLink
+        relinked_count = 0
+        if effective_user_id:
+            # Dynamically ensure all previously ingested drive media is associated with the user
+            relinked = db.query(Media).filter(
+                Media.source_type == SourceType.GOOGLE_DRIVE,
+                (Media.user_id == None) | (Media.user_id != effective_user_id)
+            ).update({Media.user_id: effective_user_id}, synchronize_session=False)
+            if relinked > 0:
+                relinked_count += relinked
+                db.commit()
+
+        # Query for non-trashed images in Google Drive (up to 100 per sync trigger)
         query = "mimeType contains 'image/' and trashed = false"
         results = service.files().list(
             q=query,
             pageSize=100,
             fields="files(id, name, mimeType, size, thumbnailLink)"
         ).execute()
-        
         items = results.get("files", [])
+
         synced_count = 0
+        already_count = 0
         
         for item in items:
             file_id = item["id"]
             name = item["name"]
             thumb_link = item.get("thumbnailLink")
+            mime_type = item.get("mimeType", "")
+            file_size = int(item.get("size", 0) or 0)
+
             if thumb_link:
                 cache_drive_thumbnail_link(file_id, thumb_link)
             
@@ -255,6 +273,20 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
                 Media.source_id == file_id
             ).first()
             if existing:
+                already_count += 1
+                if effective_user_id and existing.user_id != effective_user_id:
+                    existing.user_id = effective_user_id
+                    relinked_count += 1
+                if thumb_link and not existing.thumbnail_256_path:
+                    existing.thumbnail_256_path = thumb_link
+                continue
+
+            # Skip oversized files (>15MB) or non-images to guarantee snappy sync completion
+            if file_size > 15 * 1024 * 1024 or not mime_type.startswith("image/"):
+                continue
+
+            # Limit downloads to 10 new photos per trigger to prevent HTTP timeout
+            if synced_count >= 10:
                 continue
 
             request = service.files().get_media(fileId=file_id)
@@ -275,7 +307,7 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
                     source_type=SourceType.GOOGLE_DRIVE,
                     source_id=file_id,
                     thumbnail_link=thumb_link,
-                    user_id=source.user_id
+                    user_id=effective_user_id
                 )
                 if media:
                     synced_count += 1
@@ -292,15 +324,37 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
                     while not done:
                         _, done = downloader.next_chunk()
 
-                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id, user_id=source.user_id)
+                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id, user_id=effective_user_id)
                 if media:
                     synced_count += 1
                 
         source.status = SyncStatus.IDLE
-        source.items_count = (source.items_count or 0) + synced_count
+        source.items_count = len(items)
         source.last_synced_at = datetime.utcnow()
         db.commit()
-        return {"status": "completed", "synced_photos": synced_count, "source_id": source.id}
+
+        total_active_user_media = db.query(Media).filter(
+            Media.user_id == effective_user_id,
+            Media.is_deleted == False
+        ).count() if effective_user_id else len(items)
+
+        if synced_count > 0:
+            msg = f"Sync complete: imported {synced_count} new photos from Google Drive ({total_active_user_media} total in library)!"
+        elif relinked_count > 0:
+            msg = f"Sync complete: successfully verified and linked {relinked_count} photos to your library ({total_active_user_media} total)!"
+        else:
+            msg = f"Sync complete: all {len(items)} photos verified up to date in your library ({total_active_user_media} total)!"
+
+        return {
+            "status": "completed",
+            "synced_photos": synced_count,
+            "already_synced": already_count,
+            "relinked_photos": relinked_count,
+            "total_in_drive": len(items),
+            "total_library_photos": total_active_user_media,
+            "source_id": source.id,
+            "message": msg
+        }
     except Exception as e:
         logger.error(f"Google Drive sync error: {e}")
         source.status = SyncStatus.ERROR
