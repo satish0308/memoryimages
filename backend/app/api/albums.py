@@ -160,6 +160,7 @@ def get_smart_collections(
     trips = []
     for t in trips_raw:
         trips.append({
+            "id": t.get("id"),
             "title": t["title"],
             "date": t["date"],
             "photo_count": t["photo_count"],

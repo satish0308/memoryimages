@@ -241,14 +241,13 @@ function SimilarPhotosContent() {
 
   const handleBack = () => {
     if (typeof window !== 'undefined') {
-      // If there is history in this tab from this site, go back
-      if (window.history.length > 1 && document.referrer && document.referrer.includes(window.location.host)) {
-        router.back();
-        return;
+      // If this discovery tab was opened from the gallery in a new tab, closing it returns directly to the gallery
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.close();
+        } catch (_) {}
       }
-      // If opened in a new tab or direct link, navigate directly to timeline
-      router.push('/');
-    } else {
+      // Guaranteed navigation fallback: if tab remains open or was opened directly, return to main gallery timeline
       router.push('/');
     }
   };

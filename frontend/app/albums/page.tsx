@@ -49,6 +49,7 @@ interface SmartPlace {
 }
 
 interface SmartTrip {
+  id?: string;
   title: string;
   date: string;
   photo_count: number;
@@ -261,7 +262,7 @@ export default function AlbumsPage() {
       const res = await fetch(`${API_URL}/api/v1/search/events`);
       if (res.ok) {
         const events = await res.json();
-        const found = events.find((e: any) => e.title === trip.title);
+        const found = events.find((e: any) => (trip.id && e.id === trip.id) || (trip.cover_id && e.cover_id === trip.cover_id) || e.title === trip.title);
         const photos = found?.items || [];
         setSelectedCollection({
           type: 'trip',
