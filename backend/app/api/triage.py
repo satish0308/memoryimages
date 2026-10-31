@@ -1,12 +1,19 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.database import get_db
+from app.models.user import User
 from app.models.media import Media, MediaCategory
+from app.api.auth import get_current_user, get_optional_current_user
+from app.services.burst_engine import (
+    detect_burst_clusters,
+    resolve_burst_cluster,
+    resolve_all_bursts
+)
 
 router = APIRouter()
 
@@ -18,61 +25,88 @@ class SnoozeRequest(BaseModel):
     days: int = 30
 
 @router.get("/overview")
-def get_triage_overview(db: Session = Depends(get_db)):
+def get_triage_overview(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Returns high-level statistics for the Triage & Cleanup dashboard:
+    Returns high-level statistics for the Triage & Cleanup dashboard strictly for current user:
     - Screenshots count and count of those expiring in the next 7 days
     - Bills & Receipts count
     - Blurry shots count
     - Estimated reclaimable disk space
     """
+    if not current_user:
+        return {
+            "total_screenshots": 0,
+            "expiring_screenshots": 0,
+            "total_bills_receipts": 0,
+            "total_blurry": 0,
+            "total_pocket_shots": 0,
+            "total_motion_blur": 0,
+            "total_bokeh": 0,
+            "total_memes": 0,
+            "reclaimable_bytes": 0,
+            "reclaimable_mb": 0.0
+        }
+
     now = datetime.utcnow()
     seven_days = now + timedelta(days=7)
+    uid = current_user.id
     
     total_screenshots = db.query(Media).filter(
+        Media.user_id == uid,
         Media.category == MediaCategory.SCREENSHOT,
         Media.is_deleted == False
     ).count()
     
     expiring_screenshots = db.query(Media).filter(
+        Media.user_id == uid,
         Media.category == MediaCategory.SCREENSHOT,
         Media.expires_at <= seven_days,
         Media.is_deleted == False
     ).count()
     
     total_bills = db.query(Media).filter(
+        Media.user_id == uid,
         Media.category == MediaCategory.DOCUMENT_BILL,
         Media.is_deleted == False
     ).count()
     
     total_blurry = db.query(Media).filter(
+        Media.user_id == uid,
         Media.is_blurry == True,
         Media.is_bokeh == False,
         Media.is_deleted == False
     ).count()
 
     total_pocket_shots = db.query(Media).filter(
+        Media.user_id == uid,
         Media.blur_type == "black_pocket",
         Media.is_deleted == False
     ).count()
 
     total_motion_blur = db.query(Media).filter(
+        Media.user_id == uid,
         Media.blur_type == "motion_blur",
         Media.is_deleted == False
     ).count()
 
     total_bokeh = db.query(Media).filter(
+        Media.user_id == uid,
         Media.is_bokeh == True,
         Media.is_deleted == False
     ).count()
     
     total_memes = db.query(Media).filter(
+        Media.user_id == uid,
         Media.category == MediaCategory.MEME_JUNK,
         Media.is_deleted == False
     ).count()
     
     # Calculate reclaimable bytes from clutter (expired screenshots + blurry + memes)
     clutter_size = db.query(func.sum(Media.file_size)).filter(
+        Media.user_id == uid,
         (
             (Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)
         ) | (
@@ -99,11 +133,15 @@ def get_triage_overview(db: Session = Depends(get_db)):
 @router.get("/screenshots")
 def get_screenshots(
     filter_expired: bool = False,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists screenshots with expiry countdown information."""
+    """Lists screenshots for current user with expiry countdown information."""
+    if not current_user:
+        return []
     now = datetime.utcnow()
     query = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.category == MediaCategory.SCREENSHOT,
         Media.is_deleted == False
     )
@@ -134,9 +172,15 @@ def get_screenshots(
     return results
 
 @router.get("/bills")
-def get_bills_and_receipts(db: Session = Depends(get_db)):
-    """Lists all detected documents, invoices, and bills."""
+def get_bills_and_receipts(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lists all detected documents, invoices, and bills for current user."""
+    if not current_user:
+        return []
     items = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.category == MediaCategory.DOCUMENT_BILL,
         Media.is_deleted == False
     ).order_by(desc(Media.captured_at)).all()
@@ -150,22 +194,18 @@ def get_bills_and_receipts(db: Session = Depends(get_db)):
         "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
     } for item in items]
 
-from app.services.burst_engine import (
-    detect_burst_clusters,
-    resolve_burst_cluster,
-    resolve_all_bursts
-)
-
 @router.get("/duplicates")
 @router.get("/bursts")
-def get_duplicate_and_burst_clusters(db: Session = Depends(get_db)):
+def get_duplicate_and_burst_clusters(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Groups items into Rapid Burst sequences and Perceptual Duplicates.
-    Every cluster is ranked using composite quality scoring (sharpness, smile, resolution)
-    with the top item flagged as AI Best Shot.
+    Groups items into Rapid Burst sequences and Perceptual Duplicates for current user.
     """
-    clusters = detect_burst_clusters(db)
-    # Ensure backwards compatibility for legacy cluster.hash field
+    if not current_user:
+        return []
+    clusters = detect_burst_clusters(db, user_id=current_user.id)
     for c in clusters:
         c["hash"] = c["id"]
     return clusters
@@ -176,35 +216,49 @@ class ResolveDuplicatesRequest(BaseModel):
 
 @router.post("/resolve-duplicates")
 @router.post("/bursts/resolve")
-def resolve_duplicates(req: ResolveDuplicatesRequest, db: Session = Depends(get_db)):
+def resolve_duplicates(
+    req: ResolveDuplicatesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Keeps the selected best shot and soft-deletes the redundant duplicate photos.
-    Adheres strictly to the safe zero auto-deletion policy with manual confirmation.
+    Ensures user cannot modify another user's photos.
     """
+    all_target_ids = [req.keep_media_id] + req.delete_media_ids
+    owned_count = db.query(Media).filter(
+        Media.id.in_(all_target_ids),
+        Media.user_id == current_user.id
+    ).count()
+    if owned_count != len(all_target_ids) and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden: Cannot resolve bursts across different accounts.")
+
     return resolve_burst_cluster(db, req.keep_media_id, req.delete_media_ids)
 
 @router.get("/bills/{media_id}/inspect")
-def inspect_bill_document(media_id: int, db: Session = Depends(get_db)):
+def inspect_bill_document(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Detailed inspection for a bill/receipt document:
-    Extracts detected amounts, date, merchant title, and itemized text.
+    Detailed inspection for a bill/receipt document owned by current user.
     """
     import re
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     text = media.extracted_text or ""
     
-    # Parse total amounts: e.g. $42.50, 150.00, EUR 99.90, etc.
     amount_matches = re.findall(r'(?:total|amount|sum|usd|\$|€|£|₹)\s*[:=]?\s*([0-9]+[.,][0-9]{2})', text, re.IGNORECASE)
     if not amount_matches:
         amount_matches = re.findall(r'[$€£₹]\s*([0-9]+[.,][0-9]{2})', text)
     
-    # Parse dates: e.g. 10/25/2024, 2024-10-25, Oct 25, 2024
     date_matches = re.findall(r'\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4})\b', text, re.IGNORECASE)
 
-    # First non-empty lines as potential merchant/header
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     merchant_name = lines[0] if lines else "Scanned Document"
 
@@ -224,28 +278,44 @@ def inspect_bill_document(media_id: int, db: Session = Depends(get_db)):
     }
 
 @router.post("/snooze")
-def snooze_screenshots(req: SnoozeRequest, db: Session = Depends(get_db)):
-    """Extends the expiry date of selected screenshots by N days."""
+def snooze_screenshots(
+    req: SnoozeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Extends the expiry date of selected user screenshots by N days."""
     new_expiry = datetime.utcnow() + timedelta(days=req.days)
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({"expires_at": new_expiry}, synchronize_session=False)
     db.commit()
     return {"status": "snoozed", "count": updated, "new_expiry": new_expiry}
 
 @router.post("/batch-delete")
-def batch_delete(req: BatchActionRequest, db: Session = Depends(get_db)):
-    """Soft-deletes or purges unwanted clutter in batch."""
+def batch_delete(
+    req: BatchActionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Soft-deletes user clutter in batch."""
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({"is_deleted": True}, synchronize_session=False)
     db.commit()
     return {"status": "deleted", "count": updated}
 
 @router.get("/memes")
-def get_memes_and_graphics(db: Session = Depends(get_db)):
-    """Lists all detected memes and social media junk."""
+def get_memes_and_graphics(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lists detected memes and social media junk for current user."""
+    if not current_user:
+        return []
     items = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.category == MediaCategory.MEME_JUNK,
         Media.is_deleted == False
     ).order_by(desc(Media.captured_at)).all()
@@ -259,10 +329,18 @@ def get_memes_and_graphics(db: Session = Depends(get_db)):
     } for item in items]
 
 @router.get("/large-files")
-def get_large_storage_files(min_mb: float = 3.0, limit: int = 50, db: Session = Depends(get_db)):
-    """Lists the largest files in the library to identify storage hogs."""
+def get_large_storage_files(
+    min_mb: float = 3.0,
+    limit: int = 50,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lists largest files in the current user's library."""
+    if not current_user:
+        return []
     min_bytes = int(min_mb * 1024 * 1024)
     items = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.file_size >= min_bytes,
         Media.is_deleted == False
     ).order_by(desc(Media.file_size)).limit(limit).all()
@@ -280,10 +358,15 @@ def get_large_storage_files(min_mb: float = 3.0, limit: int = 50, db: Session = 
     } for item in items]
 
 @router.post("/move-to-memories")
-def move_to_memories(req: BatchActionRequest, db: Session = Depends(get_db)):
-    """Reclassifies selected items as permanent memories, removing them from triage trays."""
+def move_to_memories(
+    req: BatchActionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reclassifies user items as permanent memories, removing them from triage trays."""
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({
         "category": MediaCategory.MEMORY,
         "expires_at": None
@@ -292,36 +375,43 @@ def move_to_memories(req: BatchActionRequest, db: Session = Depends(get_db)):
     return {"status": "moved_to_memories", "count": updated}
 
 @router.post("/mark-sharp")
-def mark_as_sharp(req: BatchActionRequest, db: Session = Depends(get_db)):
-    """Marks selected photos as not blurry (dismisses blur flag)."""
+def mark_as_sharp(
+    req: BatchActionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Marks selected user photos as not blurry (dismisses blur flag)."""
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({"is_blurry": False}, synchronize_session=False)
     db.commit()
     return {"status": "marked_sharp", "count": updated}
 
 @router.post("/resolve-all-duplicates")
 @router.post("/bursts/resolve-all")
-def resolve_all_duplicates(db: Session = Depends(get_db)):
+def resolve_all_duplicates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Auto-resolves all duplicate and burst clusters: keeps each cluster's AI Best Shot
-    (highest sharpness, smile, resolution) and soft-deletes redundant copies.
+    Auto-resolves all duplicate and burst clusters for current user.
     """
-    return resolve_all_bursts(db)
+    return resolve_all_bursts(db, user_id=current_user.id)
 
 @router.get("/blurry")
 def get_blurry_photos(
     blur_type: Optional[str] = Query(None, regex="^(all|motion_blur|out_of_focus|black_pocket|blown_white)$"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Lists photos flagged as blurry or poor quality, safely distinguishing:
-    - Camera motion shake (anisotropic streaks)
-    - Out of focus (missed focal plane)
-    - Accidental pocket / pitch-black shots
-    Artistic bokeh / portrait photos are intentionally excluded.
+    Lists photos flagged as blurry or poor quality for current user.
     """
+    if not current_user:
+        return []
     query = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_blurry == True,
         Media.is_bokeh == False,
         Media.is_deleted == False
@@ -346,14 +436,17 @@ def get_blurry_photos(
     } for item in items]
 
 @router.post("/pocket-shots/cleanup")
-def cleanup_pocket_shots(db: Session = Depends(get_db)):
+def cleanup_pocket_shots(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Soft-deletes all pitch black / pocket shots while respecting zero-data-loss policy.
+    Soft-deletes all pitch black / pocket shots for current user.
     """
     updated = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.blur_type == "black_pocket",
         Media.is_deleted == False
     ).update({"is_deleted": True}, synchronize_session=False)
     db.commit()
     return {"status": "success", "count": updated}
-

@@ -17,6 +17,7 @@ class SyncSource(Base):
     __tablename__ = "sync_sources"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
     name = Column(String(128), nullable=False)
     sync_type = Column(Enum(SyncType), nullable=False)
     target_path = Column(String(1024), nullable=False)  # Local directory path or Google Drive folder ID

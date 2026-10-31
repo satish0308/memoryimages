@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
@@ -16,12 +16,17 @@ def get_time_of_day(dt: datetime) -> str:
     else:
         return "Night"
 
-def cluster_events(db: Session, max_gap_hours: int = 4) -> List[Dict[str, Any]]:
+def cluster_events(db: Session, max_gap_hours: int = 4, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     Groups memory photos into spatiotemporal events / outings.
     Photos taken within `max_gap_hours` are linked together into an event.
+    Strictly isolated by user_id to prevent multi-tenant data leaks.
     """
+    if user_id is None:
+        return []
+
     photos = db.query(Media).filter(
+        Media.user_id == user_id,
         Media.category == MediaCategory.MEMORY,
         Media.is_deleted == False,
         Media.is_archived == False

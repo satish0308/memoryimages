@@ -187,6 +187,8 @@ def handle_oauth_callback(db: Session, code: str, state: Optional[str] = None) -
                 "email": user.email,
                 "is_admin": user.is_admin
             })
+            source.user_id = user.id
+            db.commit()
 
         return {
             "status": "success",
@@ -272,7 +274,8 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
                     filename=name,
                     source_type=SourceType.GOOGLE_DRIVE,
                     source_id=file_id,
-                    thumbnail_link=thumb_link
+                    thumbnail_link=thumb_link,
+                    user_id=source.user_id
                 )
                 if media:
                     synced_count += 1
@@ -289,7 +292,7 @@ def run_google_drive_sync(db: Session, source_id: int) -> Dict[str, Any]:
                     while not done:
                         _, done = downloader.next_chunk()
 
-                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id)
+                media = scan_file(db, file_dest, source_type=SourceType.GOOGLE_DRIVE, source_id=file_id, user_id=source.user_id)
                 if media:
                     synced_count += 1
                 

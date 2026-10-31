@@ -3,21 +3,25 @@ import io
 import json
 import zipfile
 import shutil
+import logging
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
 from app.database import get_db
+from app.models.user import User
 from app.models.media import Media, MediaCategory, SourceType
+from app.api.auth import get_current_user, get_optional_current_user
 from app.services.scanner import scan_file, extract_exif, reverse_geocode
 from app.services.settings_service import get_storage_mode, get_setting
 from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file, fetch_google_drive_thumbnail_bytes
 from app.config import settings
 
+logger = logging.getLogger("memorypics.api.media")
 router = APIRouter()
 
 @router.get("")
@@ -28,10 +32,20 @@ def list_media(
     is_deleted: bool = False,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """List photos with filtering and pagination."""
+    """List photos strictly scoped to the authenticated user's account."""
+    if not current_user:
+        return {
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "items": []
+        }
+
     query = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_archived == is_archived,
         Media.is_deleted == is_deleted
     )
@@ -55,16 +69,20 @@ def get_timeline(
     category: Optional[MediaCategory] = None,
     scale: str = Query("day", regex="^(day|month|year)$"),
     collapse_bursts: bool = Query(True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Returns media items grouped chronologically by Day, Month, or Year.
-    When collapse_bursts is True (default), burst sequences and near duplicates
-    are collapsed into a single card representing the AI Best Shot with a burst count badge.
+    Returns media items grouped chronologically strictly for the authenticated user.
+    Guests receive an empty list with zero photo/metadata leakage.
     """
+    if not current_user:
+        return []
+
     from app.services.burst_engine import detect_burst_clusters
 
     query = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_archived == False,
         Media.is_deleted == False
     )
@@ -77,7 +95,7 @@ def get_timeline(
     subordinate_burst_ids = set()
     burst_lead_map = {}
     if collapse_bursts:
-        clusters = detect_burst_clusters(db, category=category)
+        clusters = detect_burst_clusters(db, category=category, user_id=current_user.id)
         for c in clusters:
             best_id = c["best_shot_id"]
             burst_lead_map[best_id] = c
@@ -114,7 +132,6 @@ def get_timeline(
                 "items": []
             }
 
-        # Check if this item is the lead of a burst
         burst_info = burst_lead_map.get(item.id)
         burst_count = burst_info["count"] if burst_info else 1
         burst_id = burst_info["id"] if burst_info else None
@@ -148,7 +165,6 @@ def get_timeline(
             "longitude": item.longitude,
             "location_name": item.location_name,
             "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
-            # AI Emotion, Mood & Color
             "mood": item.mood,
             "mood_score": item.mood_score,
             "is_smiling": item.is_smiling,
@@ -156,7 +172,6 @@ def get_timeline(
             "color_hex": item.color_hex,
             "is_video": (item.mime_type or "").startswith("video/"),
             "duration_seconds": item.duration_seconds,
-            # Burst Shot Grouping
             "burst_count": burst_count,
             "burst_id": burst_id,
             "burst_media_ids": burst_media_ids,
@@ -168,23 +183,26 @@ def get_timeline(
     return list(timeline_groups.values())
 
 @router.get("/flashbacks")
-def get_flashbacks(db: Session = Depends(get_db)):
-    """
-    Returns 'On This Day' memories taken on today's calendar date in previous years.
-    """
+def get_flashbacks(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns 'On This Day' memories strictly for the current user."""
+    if not current_user:
+        return []
+
     now = datetime.utcnow()
     target_md = now.strftime("%m-%d")
     current_year = str(now.year)
     
-    # Query photos from this day/month in prior years
     items = db.query(Media).filter(
+        Media.user_id == current_user.id,
         func.strftime("%m-%d", Media.captured_at) == target_md,
         func.strftime("%Y", Media.captured_at) < current_year,
         Media.is_deleted == False,
         Media.is_archived == False
     ).order_by(desc(Media.captured_at)).all()
 
-    # Group by Year
     flashback_groups = {}
     for item in items:
         year = str(item.captured_at.year)
@@ -210,11 +228,16 @@ def get_flashbacks(db: Session = Depends(get_db)):
     return list(flashback_groups.values())
 
 @router.get("/locations")
-def get_locations(db: Session = Depends(get_db)):
-    """
-    Returns all geotagged photos grouped for interactive map exploration.
-    """
+def get_locations(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns geotagged photos strictly for current user's map exploration."""
+    if not current_user:
+        return []
+
     items = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.latitude != None,
         Media.longitude != None,
         Media.is_deleted == False
@@ -231,18 +254,31 @@ def get_locations(db: Session = Depends(get_db)):
     } for m in items]
 
 @router.get("/{media_id}")
-def get_media_detail(media_id: int, db: Session = Depends(get_db)):
+def get_media_detail(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
     return media
 
 @router.get("/{media_id}/burst")
-def get_media_burst(media_id: int, db: Session = Depends(get_db)):
-    """
-    Returns the burst sequence or duplicate cluster containing this media item,
-    including AI quality rankings, sharpness scores, and Best Shot designation.
-    """
+def get_media_burst(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns burst sequence containing this media item for authorized owner."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     from app.services.burst_engine import get_burst_for_media
     cluster = get_burst_for_media(db, media_id)
     if not cluster:
@@ -253,49 +289,44 @@ def get_media_burst(media_id: int, db: Session = Depends(get_db)):
 def get_thumbnail(
     media_id: int,
     size: str = Query("256", regex="^(256|512|1080|2048|original)$"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Serves high-performance WebP thumbnail or full uncompressed original."""
+    """Serves WebP thumbnail or full image strictly to authorized user or admin."""
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required to view media thumbnail")
+
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
     storage_mode = get_storage_mode(db)
     use_google_cdn = get_setting(db, "use_google_cdn_thumbnails", "true").lower() in ("true", "1", "yes")
 
-    # 1. Google Drive In-Memory / CDN Serving (9drive architecture: zero local disk usage)
+    # 1. Google Drive In-Memory / CDN Serving
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (use_google_cdn or storage_mode == "in_memory"):
         size_int = 2048 if size == "original" else int(size)
-        
-        # Server-side proxy with in-memory caching: guarantees NO 429 Referer block from Google
         thumb_bytes = fetch_google_drive_thumbnail_bytes(media.source_id, db, size_int)
         if thumb_bytes:
             return Response(
                 content=thumb_bytes,
                 media_type="image/jpeg",
                 headers={
-                    "Cache-Control": "public, max-age=86400",
+                    "Cache-Control": "private, max-age=86400",
                     "X-Thumbnail-Source": "google_cdn_proxy"
                 }
             )
-            
-        # Secondary fallback: redirect with strict no-referrer policy if byte fetching was unavailable
         cdn_url = get_google_drive_thumbnail_url(media.source_id, db, size_int)
         if cdn_url:
-            return RedirectResponse(
-                cdn_url,
-                status_code=307,
-                headers={"Referrer-Policy": "no-referrer"}
-            )
+            return RedirectResponse(cdn_url, status_code=307, headers={"Referrer-Policy": "no-referrer"})
 
-    # 2. Local Disk Thumbnail Serving (if cached/saved)
+    # 2. Local Disk Thumbnail Serving
     if size == "original":
         if media.original_path and os.path.isfile(media.original_path):
-            return FileResponse(
-                media.original_path,
-                media_type=media.mime_type or "image/jpeg",
-                headers={"Content-Disposition": "inline"}
-            )
+            return FileResponse(media.original_path, media_type=media.mime_type or "image/jpeg", headers={"Content-Disposition": "inline"})
             
     thumb_path = media.thumbnail_256_path if size in ("256", "512") else media.thumbnail_1080_path
     if thumb_path and os.path.isfile(thumb_path):
@@ -325,11 +356,26 @@ def get_thumbnail(
             )
         except Exception:
             pass
-    raise HTTPException(status_code=404, detail="Thumbnail or image not found on disk")
+
+    raise HTTPException(status_code=404, detail="Thumbnail or image not found on storage")
 
 @router.get("/{media_id}/keyframe/{keyframe_id}/thumbnail")
-def get_keyframe_thumbnail(media_id: int, keyframe_id: int, db: Session = Depends(get_db)):
-    """Serves WebP preview thumbnail for a video keyframe."""
+def get_keyframe_thumbnail(
+    media_id: int,
+    keyframe_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Serves WebP preview thumbnail for a video keyframe for authorized user."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     from app.models.media import VideoKeyframe
     kf = db.query(VideoKeyframe).filter(VideoKeyframe.id == keyframe_id, VideoKeyframe.media_id == media_id).first()
     if not kf or not kf.thumbnail_path or not os.path.isfile(kf.thumbnail_path):
@@ -337,19 +383,27 @@ def get_keyframe_thumbnail(media_id: int, keyframe_id: int, db: Session = Depend
     return FileResponse(
         kf.thumbnail_path,
         media_type="image/webp",
-        headers={"Cache-Control": "public, max-age=86400"}
+        headers={"Cache-Control": "private, max-age=86400"}
     )
 
 @router.get("/{media_id}/view")
-def view_original(media_id: int, db: Session = Depends(get_db)):
+def view_original(
+    media_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     """Streams full uncompressed original photo directly for pixel-perfect zoom inspection."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     storage_mode = get_storage_mode(db)
 
-    # In-memory streaming from Google Drive if in_memory mode or file not on disk
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
         try:
             return StreamingResponse(
@@ -360,7 +414,6 @@ def view_original(media_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"In-memory stream error: {e}")
 
-    # Streaming from MinIO / S3 Object Storage
     if media.source_type == SourceType.S3_MINIO and media.source_id:
         try:
             from app.services.s3_storage import stream_s3_file
@@ -382,10 +435,13 @@ def view_original(media_id: int, db: Session = Depends(get_db)):
     raise HTTPException(status_code=404, detail="Original image not found")
 
 @router.post("/regenerate-thumbnails")
-def regenerate_all_thumbnails(db: Session = Depends(get_db)):
-    """Regenerates all thumbnails with high-DPI 512px and 2560px ultra-HD tiers."""
+def regenerate_all_thumbnails(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Regenerates thumbnails for the current user."""
     from app.services.thumbnail import generate_thumbnails
-    photos = db.query(Media).filter(Media.is_deleted == False).all()
+    photos = db.query(Media).filter(Media.user_id == current_user.id, Media.is_deleted == False).all()
     updated = 0
     for p in photos:
         if p.original_path and os.path.isfile(p.original_path):
@@ -416,15 +472,19 @@ class BatchEnhanceRequest(BaseModel):
     media_ids: List[int]
 
 @router.get("/{media_id}/enhance-params")
-def get_media_enhance_params(media_id: int, db: Session = Depends(get_db)):
-    """
-    Computes optimal auto-enhancement parameters and subject-aware quality score.
-    """
-    from app.services.quality_engine import evaluate_and_update_media_quality, calculate_auto_enhance_params, load_media_image
+def get_media_enhance_params(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Computes optimal auto-enhancement parameters for user photo."""
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
+    from app.services.quality_engine import evaluate_and_update_media_quality, calculate_auto_enhance_params, load_media_image
     image = load_media_image(media, db, prefer_preview=True)
     if image:
         enhance_params = calculate_auto_enhance_params(image)
@@ -452,34 +512,48 @@ def get_media_enhance_params(media_id: int, db: Session = Depends(get_db)):
 def apply_enhance_to_media(
     media_id: int,
     req: Optional[EnhanceMediaRequest] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Persists non-destructive auto-enhancement recipe (brightness, contrast, saturation, shadows) to media.
-    """
-    from app.services.quality_engine import apply_media_enhancement
+    """Persists non-destructive auto-enhancement recipe to user media."""
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
+    from app.services.quality_engine import apply_media_enhancement
     params = req.dict(exclude_none=True) if req else None
     return apply_media_enhancement(media, db, params)
 
 @router.post("/{media_id}/revert-enhance")
-def revert_enhance_media(media_id: int, db: Session = Depends(get_db)):
-    """Reverts photo to original natural state."""
-    from app.services.quality_engine import revert_media_enhancement
+def revert_enhance_media(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reverts user photo to original natural state."""
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
+    from app.services.quality_engine import revert_media_enhancement
     return revert_media_enhancement(media, db)
 
 @router.post("/batch-enhance")
-def batch_enhance_media(req: BatchEnhanceRequest, db: Session = Depends(get_db)):
-    """Applies auto-enhancement to multiple media items in batch."""
+def batch_enhance_media(
+    req: BatchEnhanceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Applies auto-enhancement to multiple user media items in batch."""
     from app.services.quality_engine import apply_media_enhancement
-    items = db.query(Media).filter(Media.id.in_(req.media_ids)).all()
+    items = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
+    ).all()
     enhanced_count = 0
     for it in items:
         try:
@@ -490,22 +564,32 @@ def batch_enhance_media(req: BatchEnhanceRequest, db: Session = Depends(get_db))
     return {"status": "success", "enhanced_count": enhanced_count}
 
 @router.post("/quality/analyze-all")
-def run_library_quality_analysis(force: bool = False, db: Session = Depends(get_db)):
-    """
-    Analyzes all photos in the library to identify bokeh portraits, motion shake, and pocket shots.
-    """
+def run_library_quality_analysis(
+    force: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Analyzes user photos to identify bokeh portraits, motion shake, and pocket shots."""
     from app.services.quality_engine import run_library_quality_scan
     return run_library_quality_scan(db, force=force)
 
 @router.get("/{media_id}/download")
-def download_original(media_id: int, db: Session = Depends(get_db)):
+def download_original(
+    media_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     storage_mode = get_storage_mode(db)
 
-    # In-memory streaming download from Google Drive if in_memory mode or file not on disk
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
         try:
             return StreamingResponse(
@@ -528,10 +612,11 @@ def download_original(media_id: int, db: Session = Depends(get_db)):
 @router.post("/upload")
 def upload_photo(
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Directly uploads a photo into the library and triggers ingestion."""
-    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads")
+    """Directly uploads a photo into user account directory and catalogs with user_id."""
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
     os.makedirs(upload_dir, exist_ok=True)
     
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -541,31 +626,46 @@ def upload_photo(
     with open(dest_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
-    media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD)
+    media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
     if not media:
         raise HTTPException(status_code=400, detail="Uploaded file is not a supported image")
         
     return {
         "status": "success",
         "id": media.id,
+        "user_id": current_user.id,
         "category": media.category,
         "filename": media.filename
     }
 
 @router.patch("/{media_id}/favorite")
-def toggle_favorite(media_id: int, db: Session = Depends(get_db)):
+def toggle_favorite(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     media.is_favorite = not media.is_favorite
     db.commit()
     return {"id": media.id, "is_favorite": media.is_favorite}
 
 @router.patch("/{media_id}/archive")
-def toggle_archive(media_id: int, db: Session = Depends(get_db)):
+def toggle_archive(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     media.is_archived = not media.is_archived
     db.commit()
     return {"id": media.id, "is_archived": media.is_archived}
@@ -574,19 +674,34 @@ class SingleCategoryUpdate(BaseModel):
     category: MediaCategory
 
 @router.patch("/{media_id}/category")
-def update_media_category(media_id: int, req: SingleCategoryUpdate, db: Session = Depends(get_db)):
+def update_media_category(
+    media_id: int,
+    req: SingleCategoryUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     media.category = req.category
     db.commit()
     return {"id": media.id, "category": media.category}
 
 @router.delete("/{media_id}")
-def delete_media(media_id: int, permanent: bool = False, db: Session = Depends(get_db)):
+def delete_media(
+    media_id: int,
+    permanent: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
         
     if permanent:
         if media.original_path and os.path.isfile(media.original_path):
@@ -606,10 +721,15 @@ class BatchFavoriteRequest(BaseModel):
     is_favorite: bool = True
 
 @router.patch("/batch-favorite")
-def batch_favorite(req: BatchFavoriteRequest, db: Session = Depends(get_db)):
-    """Bulk favorites or un-favorites selected media items."""
+def batch_favorite(
+    req: BatchFavoriteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk favorites or un-favorites selected media items for current user."""
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({"is_favorite": req.is_favorite}, synchronize_session=False)
     db.commit()
     return {"status": "success", "count": updated, "is_favorite": req.is_favorite}
@@ -619,10 +739,15 @@ class BatchCategoryRequest(BaseModel):
     category: MediaCategory
 
 @router.patch("/batch-category")
-def batch_category(req: BatchCategoryRequest, db: Session = Depends(get_db)):
-    """Bulk updates category for selected media items (e.g. reorganize to memories, bills, etc.)."""
+def batch_category(
+    req: BatchCategoryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk updates category for selected user media items."""
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({"category": req.category}, synchronize_session=False)
     db.commit()
     return {"status": "success", "count": updated, "category": req.category}
@@ -632,10 +757,17 @@ class BatchDeleteRequest(BaseModel):
     permanent: bool = False
 
 @router.post("/batch-delete")
-def batch_delete_media(req: BatchDeleteRequest, db: Session = Depends(get_db)):
-    """Soft deletes or permanently deletes selected media items. Strictly safe zero auto-deletion."""
+def batch_delete_media(
+    req: BatchDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Soft deletes or permanently deletes selected user media items."""
     if req.permanent:
-        items = db.query(Media).filter(Media.id.in_(req.media_ids)).all()
+        items = db.query(Media).filter(
+            Media.id.in_(req.media_ids),
+            Media.user_id == current_user.id
+        ).all()
         for item in items:
             if item.original_path and os.path.isfile(item.original_path):
                 try:
@@ -647,7 +779,8 @@ def batch_delete_media(req: BatchDeleteRequest, db: Session = Depends(get_db)):
         return {"status": "success", "count": len(items), "permanent": True}
     else:
         updated = db.query(Media).filter(
-            Media.id.in_(req.media_ids)
+            Media.id.in_(req.media_ids),
+            Media.user_id == current_user.id
         ).update({"is_deleted": True}, synchronize_session=False)
         db.commit()
         return {"status": "success", "count": updated, "permanent": False}
@@ -656,12 +789,15 @@ class BulkDownloadRequest(BaseModel):
     media_ids: List[int]
 
 @router.post("/bulk-download")
-def bulk_download(req: BulkDownloadRequest, db: Session = Depends(get_db)):
-    """
-    Creates and streams a ZIP file archive of selected photos for bulk copying/exporting.
-    """
+def bulk_download(
+    req: BulkDownloadRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Creates and streams a ZIP file archive of selected user photos."""
     items = db.query(Media).filter(
         Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id,
         Media.is_deleted == False
     ).all()
     
@@ -711,11 +847,18 @@ class LocationUpdateRequest(BaseModel):
     location_name: Optional[str] = None
 
 @router.patch("/{media_id}/location")
-def update_media_location(media_id: int, req: LocationUpdateRequest, db: Session = Depends(get_db)):
-    """Update location coordinates and/or place name for a single photo."""
+def update_media_location(
+    media_id: int,
+    req: LocationUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update location coordinates for a user photo."""
     media = db.query(Media).filter(Media.id == media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
         
     media.latitude = req.latitude
     media.longitude = req.longitude
@@ -743,14 +886,19 @@ class BatchLocationRequest(BaseModel):
     location_name: Optional[str] = None
 
 @router.patch("/batch-location")
-def batch_update_location(req: BatchLocationRequest, db: Session = Depends(get_db)):
-    """Bulk assigns location coordinates and/or place name to selected photos."""
+def batch_update_location(
+    req: BatchLocationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk assigns location coordinates to user photos."""
     loc_name = req.location_name
     if not loc_name and req.latitude is not None and req.longitude is not None:
         loc_name = reverse_geocode(req.latitude, req.longitude)
         
     updated = db.query(Media).filter(
-        Media.id.in_(req.media_ids)
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
     ).update({
         "latitude": req.latitude,
         "longitude": req.longitude,
@@ -769,12 +917,14 @@ class PropagateLocationsRequest(BaseModel):
     max_gap_hours: float = 4.0
 
 @router.post("/propagate-locations")
-def propagate_cluster_locations(req: PropagateLocationsRequest = PropagateLocationsRequest(), db: Session = Depends(get_db)):
-    """
-    Intelligently propagates location from GPS anchor photos to nearby non-geotagged photos
-    taken within max_gap_hours of the same outing or event.
-    """
+def propagate_cluster_locations(
+    req: PropagateLocationsRequest = PropagateLocationsRequest(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Propagates location from GPS anchor photos within current user library."""
     anchors = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.latitude != None,
         Media.longitude != None,
         Media.captured_at != None,
@@ -785,6 +935,7 @@ def propagate_cluster_locations(req: PropagateLocationsRequest = PropagateLocati
         return {"status": "skipped", "message": "No geotagged anchor photos found in library", "updated_count": 0}
         
     non_geo = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.latitude == None,
         Media.captured_at != None,
         Media.is_deleted == False
@@ -814,13 +965,16 @@ def propagate_cluster_locations(req: PropagateLocationsRequest = PropagateLocati
     }
 
 @router.post("/rescan-geotags")
-def rescan_all_geotags(db: Session = Depends(get_db)):
-    """
-    Deep-scans all photos in library for embedded/concatenated JPEGs with GPS EXIF,
-    re-extracting coordinates and place names.
-    """
+def rescan_all_geotags(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Deep-scans current user's photos for GPS EXIF."""
     from PIL import Image
-    photos = db.query(Media).filter(Media.is_deleted == False).all()
+    photos = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False
+    ).all()
     updated_photos = []
     
     for p in photos:

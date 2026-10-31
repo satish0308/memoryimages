@@ -240,7 +240,7 @@ def extract_exif(image: Image.Image, file_path: Optional[str] = None) -> Dict[st
         
     return metadata
 
-def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.LOCAL, source_id: Optional[str] = None) -> Optional[Media]:
+def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.LOCAL, source_id: Optional[str] = None, user_id: Optional[int] = None) -> Optional[Media]:
     """Scans and ingests a single file into the database."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
@@ -317,6 +317,7 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     
     # Create Media Record
     media = Media(
+        user_id=user_id,
         filename=os.path.basename(file_path),
         original_path=file_path,
         file_size=file_size,
@@ -387,7 +388,8 @@ def scan_file_in_memory(
     filename: str,
     source_type: SourceType = SourceType.GOOGLE_DRIVE,
     source_id: Optional[str] = None,
-    thumbnail_link: Optional[str] = None
+    thumbnail_link: Optional[str] = None,
+    user_id: Optional[int] = None
 ) -> Optional[Media]:
     """
     Ingests a photo purely in-memory with zero local disk writes or volume storage consumption.
@@ -458,6 +460,7 @@ def scan_file_in_memory(
     virtual_path = f"gdrive://{source_id}/{filename}" if source_id else f"memory://{file_hash}/{filename}"
 
     media = Media(
+        user_id=user_id,
         filename=filename,
         original_path=virtual_path,
         file_size=file_size,

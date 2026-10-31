@@ -209,22 +209,24 @@ def ingest_photo_to_s3(
     db: Session,
     filename: str,
     content: bytes,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    user_id: Optional[int] = None
 ) -> Media:
     """
     Directly ingests a photo into MinIO S3 object storage with in-memory analysis:
-    - Uploads original image bytes to `photos/{uuid}_{filename}`
-    - Generates 256px WebP thumbnail in-memory and uploads to `thumbnails/thumb_{uuid}.webp`
+    - Segregates data into user-isolated folders: `users/{user_id}/photos/{uuid}_{filename}`
+    - Generates 256px WebP thumbnail in-memory and uploads to `users/{user_id}/thumbnails/thumb_{uuid}.webp`
     - Parses EXIF, computes pHash & Laplacian sharpness variance in RAM
-    - Inserts Media record into database with SourceType.S3_MINIO
+    - Inserts Media record into database with SourceType.S3_MINIO linked to user_id
     """
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = None
 
     unique_id = uuid.uuid4().hex[:12]
     safe_name = os.path.basename(filename)
-    object_key = f"photos/{unique_id}_{safe_name}"
-    thumb_key = f"thumbnails/thumb_{unique_id}.webp"
+    user_prefix = f"users/{user_id}/" if user_id else "users/common/"
+    object_key = f"{user_prefix}photos/{unique_id}_{safe_name}"
+    thumb_key = f"{user_prefix}thumbnails/thumb_{unique_id}.webp"
 
     # 1. Upload original bytes to MinIO
     mime = "image/jpeg"
@@ -282,6 +284,7 @@ def ingest_photo_to_s3(
             pass
 
     media_item = Media(
+        user_id=user_id,
         filename=safe_name,
         original_path=f"s3://{settings.S3_BUCKET_NAME}/{object_key}",
         file_size=len(content),

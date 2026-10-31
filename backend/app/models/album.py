@@ -18,10 +18,12 @@ class Album(Base):
     name = Column(String(128), nullable=False)
     description = Column(Text, nullable=True)
     cover_media_id = Column(Integer, ForeignKey("media.id", ondelete="SET NULL"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
+    user = relationship("app.models.user.User", backref="albums")
     media = relationship("Media", secondary=album_media, backref="albums")
     cover = relationship("Media", foreign_keys=[cover_media_id])

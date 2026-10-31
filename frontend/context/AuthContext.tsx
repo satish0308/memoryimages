@@ -73,14 +73,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       try {
         setToken(savedToken);
         setUser(JSON.parse(savedUser));
+        if (typeof document !== 'undefined') {
+          document.cookie = `memorypics_token=${savedToken}; path=/; SameSite=Lax; max-age=604800`;
+        }
         validateToken(savedToken);
       } catch (e) {
         localStorage.removeItem('memorypics_token');
         localStorage.removeItem('memorypics_user');
+        if (typeof document !== 'undefined') {
+          document.cookie = 'memorypics_token=; path=/; max-age=0';
+        }
         setUser(null);
         setToken(null);
       }
     } else {
+      if (typeof document !== 'undefined') {
+        document.cookie = 'memorypics_token=; path=/; max-age=0';
+      }
       setUser(null);
       setToken(null);
     }
@@ -136,6 +145,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(data.user);
       localStorage.setItem('memorypics_token', data.access_token);
       localStorage.setItem('memorypics_user', JSON.stringify(data.user));
+      if (typeof document !== 'undefined') {
+        document.cookie = `memorypics_token=${data.access_token}; path=/; SameSite=Lax; max-age=604800`;
+      }
       fetchAllUsers();
       return { success: true };
     } catch (e: any) {
@@ -166,6 +178,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUser(data.user);
       localStorage.setItem('memorypics_token', data.access_token);
       localStorage.setItem('memorypics_user', JSON.stringify(data.user));
+      if (typeof document !== 'undefined') {
+        document.cookie = `memorypics_token=${data.access_token}; path=/; SameSite=Lax; max-age=604800`;
+      }
       fetchAllUsers();
       return { success: true };
     } catch (e: any) {
@@ -178,6 +193,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(null);
     localStorage.removeItem('memorypics_token');
     localStorage.removeItem('memorypics_user');
+    if (typeof document !== 'undefined') {
+      document.cookie = 'memorypics_token=; path=/; max-age=0';
+    }
     router.push('/login');
   };
 

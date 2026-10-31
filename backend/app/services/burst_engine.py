@@ -87,7 +87,8 @@ def detect_burst_clusters(
     db: Session,
     max_time_gap_seconds: float = 4.0,
     max_phash_distance: int = 6,
-    category: Optional[MediaCategory] = None
+    category: Optional[MediaCategory] = None,
+    user_id: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Identifies all burst sequences and visual duplicate clusters across active media.
@@ -96,8 +97,13 @@ def detect_burst_clusters(
       2. Have perceptual near-duplicate hashes (Hamming distance <= max_phash_distance)
     
     Returns clusters ordered chronologically with items ranked by AI Best Shot score.
+    Strictly isolated by user_id to prevent multi-tenant data leaks.
     """
+    if user_id is None:
+        return []
+
     query = db.query(Media).filter(
+        Media.user_id == user_id,
         Media.is_deleted == False,
         Media.is_archived == False
     )
@@ -266,12 +272,16 @@ def resolve_burst_cluster(db: Session, keep_media_id: int, delete_media_ids: Lis
         "reclaimed_mb": round(reclaimed_bytes / (1024 * 1024), 2)
     }
 
-def resolve_all_bursts(db: Session) -> Dict[str, Any]:
+def resolve_all_bursts(db: Session, user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Auto-resolves all detected burst and duplicate clusters:
     Keeps each cluster's AI Best Shot and soft-deletes the remaining redundant copies.
+    Strictly isolated by user_id to prevent multi-tenant data leaks.
     """
-    clusters = detect_burst_clusters(db)
+    if user_id is None:
+        return {"status": "all_resolved", "resolved_clusters": 0, "deleted_shots": 0, "reclaimed_bytes": 0, "reclaimed_mb": 0.0}
+
+    clusters = detect_burst_clusters(db, user_id=user_id)
     total_deleted = 0
     total_reclaimed = 0
     resolved_clusters = 0

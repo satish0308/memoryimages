@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc, func
 
 from app.database import get_db
+from app.models.user import User
 from app.models.media import Media, MediaCategory, MediaEmbedding, VideoKeyframe
 from app.models.person import FaceDetection, Person
+from app.api.auth import get_current_user, get_optional_current_user
 from app.services.event_clustering import cluster_events
 from app.services.clip_engine import semantic_search, index_all_unindexed, embed_text
 from app.services.mood_engine import analyze_media_mood, analyze_all_media_moods
@@ -29,18 +31,21 @@ def search_photos(
     to_date: Optional[datetime] = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Advanced multi-faceted AI search:
-    - Offline ONNX CLIP Semantic Natural Language Search across both photos and video keyframes.
-    - AI Emotion & Mood filtering (joyful, serene, celebratory, adventurous, cozy, dramatic, romantic, nostalgic).
-    - Facial expression detection (smiling faces).
-    - Dominant color palette filtering (blue, green, gold, red, orange, purple, monochrome, vibrant).
-    - Media type filtering (photos vs videos with timestamp jumping).
-    - Keyword matching across filenames, OCR text, camera models, and locations.
-    - Person face tagging & date range filtering.
+    Advanced multi-faceted AI search strictly scoped to the authenticated user's account.
+    Returns empty results for unauthenticated guest requests to eliminate data leaks.
     """
+    if not current_user:
+        return {
+            "total": 0,
+            "query": q,
+            "is_semantic": False,
+            "results": []
+        }
+
     # 1. AI Semantic Natural Language Search (Photos + Video Keyframes)
     if semantic and q and q.strip():
         # A. Semantic search across photos
@@ -52,32 +57,44 @@ def search_photos(
         if q_vec is not None:
             video_results = search_video_keyframes(db, q_vec, top_k=15)
 
-        # Merge results, prioritizing by highest similarity
+        # Merge results, strictly enforcing current_user.id ownership
         all_results = []
         for p in photo_results:
-            p_media = db.query(Media).filter(Media.id == p["id"]).first()
+            p_media = db.query(Media).filter(
+                Media.id == p["id"],
+                Media.user_id == current_user.id,
+                Media.is_deleted == False
+            ).first()
+            if not p_media:
+                continue
             all_results.append({
                 **p,
                 "is_video": False,
-                "mood": p_media.mood if p_media else None,
-                "mood_score": p_media.mood_score if p_media else 0.0,
-                "is_smiling": p_media.is_smiling if p_media else False,
-                "dominant_color": p_media.dominant_color if p_media else None,
-                "color_hex": p_media.color_hex if p_media else None,
+                "mood": p_media.mood,
+                "mood_score": p_media.mood_score or 0.0,
+                "is_smiling": p_media.is_smiling or False,
+                "dominant_color": p_media.dominant_color,
+                "color_hex": p_media.color_hex,
                 "duration_seconds": None,
                 "matched_timestamp": None,
                 "matched_timestamp_label": None
             })
 
         for v in video_results:
-            v_media = db.query(Media).filter(Media.id == v["id"]).first()
+            v_media = db.query(Media).filter(
+                Media.id == v["id"],
+                Media.user_id == current_user.id,
+                Media.is_deleted == False
+            ).first()
+            if not v_media:
+                continue
             all_results.append({
                 **v,
-                "mood": v_media.mood if v_media else None,
-                "mood_score": v_media.mood_score if v_media else 0.0,
-                "is_smiling": v_media.is_smiling if v_media else False,
-                "dominant_color": v_media.dominant_color if v_media else None,
-                "color_hex": v_media.color_hex if v_media else None,
+                "mood": v_media.mood,
+                "mood_score": v_media.mood_score or 0.0,
+                "is_smiling": v_media.is_smiling or False,
+                "dominant_color": v_media.dominant_color,
+                "color_hex": v_media.color_hex,
             })
 
         # Apply multi-attribute filters on semantic results
@@ -105,6 +122,7 @@ def search_photos(
 
     # 2. Database Multi-Attribute Filtering (Keyword / Mood / Color / Category)
     query = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.is_archived == False
     )
@@ -160,13 +178,18 @@ def search_photos(
     # If traditional keyword search returns 0 results for a non-empty phrase, auto-try semantic search fallback
     if total == 0 and q and len(q.strip()) >= 3:
         fallback_semantic = semantic_search(db, q.strip(), top_k=limit)
-        if fallback_semantic:
+        filtered_fallback = []
+        for it in fallback_semantic:
+            m = db.query(Media).filter(Media.id == it["id"], Media.user_id == current_user.id, Media.is_deleted == False).first()
+            if m:
+                filtered_fallback.append(it)
+        if filtered_fallback:
             return {
-                "total": len(fallback_semantic),
+                "total": len(filtered_fallback),
                 "query": q,
                 "is_semantic": True,
                 "auto_semantic_fallback": True,
-                "results": fallback_semantic
+                "results": filtered_fallback
             }
 
     return {
@@ -194,14 +217,22 @@ def search_photos(
     }
 
 @router.get("/moods")
-def get_mood_stats(db: Session = Depends(get_db)):
-    """Returns library-wide mood distribution and smiling face counts."""
+def get_mood_stats(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns library-wide mood distribution and smiling face counts for current user."""
+    if not current_user:
+        return {"total_analyzed": 0, "smiling_count": 0, "moods": {}}
+
     rows = db.query(Media.mood, func.count(Media.id)).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.mood.isnot(None)
     ).group_by(Media.mood).all()
 
     smiling_count = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.is_smiling == True
     ).count()
@@ -216,9 +247,16 @@ def get_mood_stats(db: Session = Depends(get_db)):
     }
 
 @router.get("/colors")
-def get_color_stats(db: Session = Depends(get_db)):
-    """Returns library-wide color palette counts."""
+def get_color_stats(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns library-wide color palette counts for current user."""
+    if not current_user:
+        return {}
+
     rows = db.query(Media.dominant_color, func.count(Media.id)).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.dominant_color.isnot(None)
     ).group_by(Media.dominant_color).all()
@@ -226,15 +264,23 @@ def get_color_stats(db: Session = Depends(get_db)):
     return {r[0]: r[1] for r in rows if r[0]}
 
 @router.post("/analyze-moods")
-def trigger_mood_analysis(limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)):
-    """Triggers batch emotion, mood, and color palette analysis across library photos."""
+def trigger_mood_analysis(
+    limit: int = Query(200, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Triggers batch emotion, mood, and color palette analysis across user library photos."""
     res = analyze_all_media_moods(db, limit=limit)
     return res
 
 @router.post("/index-videos")
-def trigger_video_indexing(db: Session = Depends(get_db)):
-    """Extracts keyframes and computes CLIP visual embeddings for all video files."""
+def trigger_video_indexing(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Extracts keyframes and computes CLIP visual embeddings for user video files."""
     videos = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.mime_type.like("video/%")
     ).all()
@@ -254,11 +300,15 @@ def trigger_video_indexing(db: Session = Depends(get_db)):
     }
 
 @router.post("/index-embeddings")
-def index_embeddings(limit: int = Query(500, ge=1, le=1000), db: Session = Depends(get_db)):
+def index_embeddings(
+    limit: int = Query(500, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Indexes all unindexed media files with offline ONNX CLIP embeddings."""
     indexed_count = index_all_unindexed(db, limit=limit)
-    total_indexed = db.query(MediaEmbedding).count()
-    total_photos = db.query(Media).filter(Media.is_deleted == False).count()
+    total_indexed = db.query(MediaEmbedding).join(Media, MediaEmbedding.media_id == Media.id).filter(Media.user_id == current_user.id).count()
+    total_photos = db.query(Media).filter(Media.user_id == current_user.id, Media.is_deleted == False).count()
     return {
         "status": "success",
         "newly_indexed": indexed_count,
@@ -267,12 +317,25 @@ def index_embeddings(limit: int = Query(500, ge=1, le=1000), db: Session = Depen
     }
 
 @router.get("/ai-status")
-def get_ai_status(db: Session = Depends(get_db)):
-    """Returns status of CLIP semantic search index and video keyframe index."""
-    total_indexed = db.query(MediaEmbedding).count()
-    total_photos = db.query(Media).filter(Media.is_deleted == False).count()
-    total_keyframes = db.query(VideoKeyframe).count()
-    total_videos = db.query(Media).filter(Media.is_deleted == False, Media.mime_type.like("video/%")).count()
+def get_ai_status(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns status of CLIP semantic search index and video keyframe index for current user."""
+    if not current_user:
+        return {
+            "is_indexed": False,
+            "total_indexed": 0,
+            "total_photos": 0,
+            "total_keyframes": 0,
+            "total_videos": 0,
+            "coverage_percent": 0.0
+        }
+
+    total_photos = db.query(Media).filter(Media.user_id == current_user.id, Media.is_deleted == False).count()
+    total_indexed = db.query(MediaEmbedding).join(Media, MediaEmbedding.media_id == Media.id).filter(Media.user_id == current_user.id).count()
+    total_keyframes = db.query(VideoKeyframe).join(Media, VideoKeyframe.media_id == Media.id).filter(Media.user_id == current_user.id).count()
+    total_videos = db.query(Media).filter(Media.user_id == current_user.id, Media.is_deleted == False, Media.mime_type.like("video/%")).count()
 
     return {
         "is_indexed": total_indexed > 0,
@@ -284,7 +347,15 @@ def get_ai_status(db: Session = Depends(get_db)):
     }
 
 @router.get("/events")
-def get_events(db: Session = Depends(get_db)):
-    """Returns detected spatiotemporal events / outing stories."""
-    events = cluster_events(db)
+def get_events(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns detected spatiotemporal events / outing stories strictly for the authenticated user.
+    Guests receive an empty list with zero metadata leakage.
+    """
+    if not current_user:
+        return []
+    events = cluster_events(db, user_id=current_user.id)
     return events

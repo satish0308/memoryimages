@@ -1,13 +1,15 @@
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 
 from app.database import get_db
+from app.models.user import User
 from app.models.album import Album
 from app.models.media import Media, MediaCategory
 from app.models.person import Person, FaceDetection
+from app.api.auth import get_current_user, get_optional_current_user
 from app.services.event_clustering import cluster_events
 
 router = APIRouter()
@@ -25,8 +27,8 @@ class UpdateAlbumRequest(BaseModel):
 class AddPhotosToAlbumRequest(BaseModel):
     media_ids: List[int]
 
-def _perform_auto_curate(db: Session) -> List[Album]:
-    """Helper to auto-generate smart albums based on places and events."""
+def _perform_auto_curate(db: Session, user_id: int) -> List[Album]:
+    """Helper to auto-generate smart albums based on places and events for a specific user."""
     created_albums = []
     
     # 1. Curate from prominent places (>= 3 photos)
@@ -34,6 +36,7 @@ def _perform_auto_curate(db: Session) -> List[Album]:
         Media.location_name,
         func.count(Media.id).label("cnt")
     ).filter(
+        Media.user_id == user_id,
         Media.is_deleted == False,
         Media.location_name != None
     ).group_by(Media.location_name).having(func.count(Media.id) >= 3).all()
@@ -42,12 +45,15 @@ def _perform_auto_curate(db: Session) -> List[Album]:
         city = place_name.split(",")[0].strip()
         album_name = f"{city} Memories"
         
-        # Check if already exists
-        existing = db.query(Album).filter(Album.name == album_name).first()
+        existing = db.query(Album).filter(
+            Album.user_id == user_id,
+            Album.name == album_name
+        ).first()
         if existing:
             continue
 
         photos = db.query(Media).filter(
+            Media.user_id == user_id,
             Media.is_deleted == False,
             Media.location_name == place_name
         ).order_by(desc(Media.captured_at)).all()
@@ -55,6 +61,7 @@ def _perform_auto_curate(db: Session) -> List[Album]:
         if photos:
             sharp_cover = next((p for p in photos if not p.is_blurry), photos[0])
             album = Album(
+                user_id=user_id,
                 name=album_name,
                 description=f"Curated collection of {len(photos)} memories from {place_name}.",
                 cover_media_id=sharp_cover.id
@@ -64,18 +71,25 @@ def _perform_auto_curate(db: Session) -> List[Album]:
             created_albums.append(album)
 
     # 2. Curate from prominent spatiotemporal trips / outings (>= 10 photos)
-    trips = cluster_events(db)
+    trips = cluster_events(db, user_id=user_id)
     for trip in trips:
         if trip["photo_count"] >= 10:
             trip_title = trip["title"]
             album_name = f"Trip: {trip_title}"
-            existing = db.query(Album).filter(Album.name == album_name).first()
+            existing = db.query(Album).filter(
+                Album.user_id == user_id,
+                Album.name == album_name
+            ).first()
             if existing:
                 continue
 
-            trip_photos = db.query(Media).filter(Media.id.in_(trip["media_ids"])).all()
+            trip_photos = db.query(Media).filter(
+                Media.user_id == user_id,
+                Media.id.in_(trip["media_ids"])
+            ).all()
             if trip_photos:
                 album = Album(
+                    user_id=user_id,
                     name=album_name,
                     description=f"Outing on {trip['date']} with {len(trip_photos)} photos.",
                     cover_media_id=trip.get("cover_id") or trip_photos[0].id
@@ -92,27 +106,42 @@ def _perform_auto_curate(db: Session) -> List[Album]:
     return created_albums
 
 @router.get("/collections/smart")
-def get_smart_collections(db: Session = Depends(get_db)):
+def get_smart_collections(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     """
-    Returns auto-computed smart collections:
+    Returns auto-computed smart collections strictly for the current user:
     - Places (grouped by location_name)
     - Trips (spatiotemporal outings)
     - People (detected individuals)
     - Favorites & Categories
     """
+    if not current_user:
+        return {
+            "places": [],
+            "trips": [],
+            "people": [],
+            "favorites": {"count": 0, "cover_id": None, "cover_thumbnail_url": None},
+            "categories": {"screenshots": 0, "receipts_bills": 0, "blurry": 0}
+        }
+
+    uid = current_user.id
+
     # 1. Places Collections
     places_raw = db.query(
         Media.location_name,
         func.count(Media.id).label("photo_count")
     ).filter(
+        Media.user_id == uid,
         Media.is_deleted == False,
         Media.location_name != None
     ).group_by(Media.location_name).order_by(desc("photo_count")).all()
 
     places = []
     for loc_name, count in places_raw:
-        # Find best cover photo (sharpest / recent)
         cover = db.query(Media).filter(
+            Media.user_id == uid,
             Media.is_deleted == False,
             Media.location_name == loc_name
         ).order_by(Media.is_blurry.asc(), desc(Media.captured_at)).first()
@@ -127,7 +156,7 @@ def get_smart_collections(db: Session = Depends(get_db)):
         })
 
     # 2. Trips / Outings
-    trips_raw = cluster_events(db)
+    trips_raw = cluster_events(db, user_id=uid)
     trips = []
     for t in trips_raw:
         trips.append({
@@ -140,7 +169,7 @@ def get_smart_collections(db: Session = Depends(get_db)):
         })
 
     # 3. People
-    people_records = db.query(Person).all()
+    people_records = db.query(Person).filter(Person.user_id == uid).all()
     people = []
     for p in people_records:
         photo_ids = set(f.media_id for f in p.faces if f.media_id)
@@ -158,12 +187,12 @@ def get_smart_collections(db: Session = Depends(get_db)):
     people.sort(key=lambda x: x["photo_count"], reverse=True)
 
     # 4. Favorites & Categories
-    fav_count = db.query(Media).filter(Media.is_favorite == True, Media.is_deleted == False).count()
-    fav_cover = db.query(Media).filter(Media.is_favorite == True, Media.is_deleted == False).order_by(desc(Media.captured_at)).first()
+    fav_count = db.query(Media).filter(Media.user_id == uid, Media.is_favorite == True, Media.is_deleted == False).count()
+    fav_cover = db.query(Media).filter(Media.user_id == uid, Media.is_favorite == True, Media.is_deleted == False).order_by(desc(Media.captured_at)).first()
 
-    screenshot_count = db.query(Media).filter(Media.category == MediaCategory.SCREENSHOT, Media.is_deleted == False).count()
-    bill_count = db.query(Media).filter(Media.category == MediaCategory.DOCUMENT_BILL, Media.is_deleted == False).count()
-    blurry_count = db.query(Media).filter(Media.is_blurry == True, Media.is_deleted == False).count()
+    screenshot_count = db.query(Media).filter(Media.user_id == uid, Media.category == MediaCategory.SCREENSHOT, Media.is_deleted == False).count()
+    bill_count = db.query(Media).filter(Media.user_id == uid, Media.category == MediaCategory.DOCUMENT_BILL, Media.is_deleted == False).count()
+    blurry_count = db.query(Media).filter(Media.user_id == uid, Media.is_blurry == True, Media.is_deleted == False).count()
 
     return {
         "places": places,
@@ -182,10 +211,13 @@ def get_smart_collections(db: Session = Depends(get_db)):
     }
 
 @router.post("/auto-curate")
-def auto_curate_albums_endpoint(db: Session = Depends(get_db)):
-    """Explicitly triggers auto-curation of smart albums from trips & places."""
-    created = _perform_auto_curate(db)
-    albums = db.query(Album).order_by(desc(Album.created_at)).all()
+def auto_curate_albums_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Explicitly triggers auto-curation of smart albums for current user."""
+    created = _perform_auto_curate(db, user_id=current_user.id)
+    albums = db.query(Album).filter(Album.user_id == current_user.id).order_by(desc(Album.created_at)).all()
     return {
         "status": "success",
         "created_count": len(created),
@@ -196,20 +228,22 @@ def auto_curate_albums_endpoint(db: Session = Depends(get_db)):
 def get_available_photos(
     album_id: Optional[int] = None,
     limit: int = Query(300, ge=1, le=1000),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Lists library photos to add to an album.
-    If album_id is provided, includes `in_album: bool`.
-    """
+    """Lists current user's library photos available to add to an album."""
+    if not current_user:
+        return []
+
     photos = db.query(Media).filter(
+        Media.user_id == current_user.id,
         Media.is_deleted == False,
         Media.is_archived == False
     ).order_by(desc(Media.captured_at)).limit(limit).all()
 
     album_photo_ids = set()
     if album_id:
-        album = db.query(Album).filter(Album.id == album_id).first()
+        album = db.query(Album).filter(Album.id == album_id, Album.user_id == current_user.id).first()
         if album:
             album_photo_ids = {m.id for m in album.media}
 
@@ -223,37 +257,56 @@ def get_available_photos(
     } for p in photos]
 
 @router.get("")
-def list_albums(auto_curate: bool = Query(True), db: Session = Depends(get_db)):
-    """Lists all user albums with photo counts and cover thumbnail."""
-    count = db.query(Album).count()
-    if count == 0 and auto_curate:
-        _perform_auto_curate(db)
+def list_albums(
+    auto_curate: bool = Query(True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lists all albums for the authenticated user."""
+    if not current_user:
+        return []
 
-    albums = db.query(Album).order_by(desc(Album.created_at)).all()
+    count = db.query(Album).filter(Album.user_id == current_user.id).count()
+    if count == 0 and auto_curate:
+        _perform_auto_curate(db, user_id=current_user.id)
+
+    albums = db.query(Album).filter(Album.user_id == current_user.id).order_by(desc(Album.created_at)).all()
     results = []
     
     for a in albums:
-        count = len(a.media)
-        cover_id = a.cover_media_id or (a.media[0].id if a.media else None)
+        user_media = [m for m in a.media if m.user_id == current_user.id and not m.is_deleted]
+        photo_count = len(user_media)
+        cover_id = a.cover_media_id or (user_media[0].id if user_media else None)
         results.append({
             "id": a.id,
             "name": a.name,
             "description": a.description,
-            "photo_count": count,
+            "photo_count": photo_count,
             "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None,
             "created_at": a.created_at
         })
     return results
 
 @router.post("")
-def create_album(req: CreateAlbumRequest, db: Session = Depends(get_db)):
-    """Creates a new album and optionally adds initial photos."""
-    album = Album(name=req.name.strip(), description=req.description)
+def create_album(
+    req: CreateAlbumRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Creates a new album belonging to current user."""
+    album = Album(
+        user_id=current_user.id,
+        name=req.name.strip(),
+        description=req.description
+    )
     db.add(album)
     db.flush()
 
     if req.media_ids:
-        photos = db.query(Media).filter(Media.id.in_(req.media_ids)).all()
+        photos = db.query(Media).filter(
+            Media.id.in_(req.media_ids),
+            Media.user_id == current_user.id
+        ).all()
         album.media.extend(photos)
         if photos and not album.cover_media_id:
             album.cover_media_id = photos[0].id
@@ -267,17 +320,25 @@ def create_album(req: CreateAlbumRequest, db: Session = Depends(get_db)):
     }
 
 @router.get("/{album_id}")
-def get_album_details(album_id: int, db: Session = Depends(get_db)):
-    """Gets album metadata and all photos in the album."""
+def get_album_details(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Gets album metadata and photos, ensuring account authorization."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    user_photos = [m for m in album.media if m.user_id == current_user.id and not m.is_deleted]
 
     return {
         "id": album.id,
         "name": album.name,
         "description": album.description,
-        "photo_count": len(album.media),
+        "photo_count": len(user_photos),
         "photos": [{
             "id": m.id,
             "filename": m.filename,
@@ -289,22 +350,31 @@ def get_album_details(album_id: int, db: Session = Depends(get_db)):
             "is_blurry": m.is_blurry,
             "location_name": m.location_name,
             "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
-        } for m in album.media if not m.is_deleted]
+        } for m in user_photos]
     }
 
 @router.patch("/{album_id}")
-def update_album(album_id: int, req: UpdateAlbumRequest, db: Session = Depends(get_db)):
-    """Updates album metadata (name, description, cover photo)."""
+def update_album(
+    album_id: int,
+    req: UpdateAlbumRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Updates album metadata belonging to current user."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if req.name is not None and req.name.strip():
         album.name = req.name.strip()
     if req.description is not None:
         album.description = req.description
     if req.cover_media_id is not None:
-        album.cover_media_id = req.cover_media_id
+        cover = db.query(Media).filter(Media.id == req.cover_media_id, Media.user_id == current_user.id).first()
+        if cover:
+            album.cover_media_id = cover.id
 
     db.commit()
     db.refresh(album)
@@ -316,13 +386,23 @@ def update_album(album_id: int, req: UpdateAlbumRequest, db: Session = Depends(g
     }
 
 @router.post("/{album_id}/photos")
-def add_photos_to_album(album_id: int, req: AddPhotosToAlbumRequest, db: Session = Depends(get_db)):
-    """Adds photos to an existing album."""
+def add_photos_to_album(
+    album_id: int,
+    req: AddPhotosToAlbumRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Adds user-owned photos to user album."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    photos = db.query(Media).filter(Media.id.in_(req.media_ids)).all()
+    photos = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
+    ).all()
     for p in photos:
         if p not in album.media:
             album.media.append(p)
@@ -334,13 +414,20 @@ def add_photos_to_album(album_id: int, req: AddPhotosToAlbumRequest, db: Session
     return {"status": "photos_added", "total_photos": len(album.media)}
 
 @router.delete("/{album_id}/photos/{media_id}")
-def remove_photo_from_album(album_id: int, media_id: int, db: Session = Depends(get_db)):
-    """Removes a photo from an album without deleting the photo."""
+def remove_photo_from_album(
+    album_id: int,
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Removes a photo from a user's album without deleting the photo."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    photo = db.query(Media).filter(Media.id == media_id).first()
+    photo = db.query(Media).filter(Media.id == media_id, Media.user_id == current_user.id).first()
     if photo and photo in album.media:
         album.media.remove(photo)
         if album.cover_media_id == media_id:
@@ -350,11 +437,18 @@ def remove_photo_from_album(album_id: int, media_id: int, db: Session = Depends(
     return {"status": "photo_removed", "total_photos": len(album.media)}
 
 @router.delete("/{album_id}")
-def delete_album(album_id: int, db: Session = Depends(get_db)):
-    """Deletes an album container. Photos inside are NOT deleted."""
+def delete_album(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Deletes an album container belonging to current user."""
     album = db.query(Album).filter(Album.id == album_id).first()
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     db.delete(album)
     db.commit()
     return {"status": "album_deleted", "id": album_id}

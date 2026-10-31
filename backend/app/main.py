@@ -53,6 +53,34 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN is_enhanced BOOLEAN DEFAULT FALSE"))
                 if "enhancement_data" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN enhancement_data TEXT"))
+                if "user_id" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN user_id INTEGER"))
+                # Associate existing unassigned photos with primary owner (admin user_id=1)
+                conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
+                conn.commit()
+
+        if "albums" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("albums")]
+            with db_engine.connect() as conn:
+                if "user_id" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN user_id INTEGER"))
+                conn.execute(text("UPDATE albums SET user_id = 1 WHERE user_id IS NULL"))
+                conn.commit()
+
+        if "people" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("people")]
+            with db_engine.connect() as conn:
+                if "user_id" not in columns:
+                    conn.execute(text("ALTER TABLE people ADD COLUMN user_id INTEGER"))
+                conn.execute(text("UPDATE people SET user_id = 1 WHERE user_id IS NULL"))
+                conn.commit()
+
+        if "sync_sources" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("sync_sources")]
+            with db_engine.connect() as conn:
+                if "user_id" not in columns:
+                    conn.execute(text("ALTER TABLE sync_sources ADD COLUMN user_id INTEGER"))
+                conn.execute(text("UPDATE sync_sources SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
     except Exception as e:
         print(f"Schema upgrade notice: {e}")

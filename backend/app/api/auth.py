@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Cookie
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -49,23 +49,39 @@ class AuthResponse(BaseModel):
 
 # --- Authentication Dependency ---
 
+def _extract_token(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+    cookie_token: Optional[str] = Cookie(None, alias="memorypics_token")
+) -> Optional[str]:
+    """Extracts JWT token from Authorization Bearer header, URL query, or browser cookie."""
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.replace("Bearer ", "").strip()
+    if token and token.strip():
+        return token.strip()
+    if cookie_token and cookie_token.strip():
+        return cookie_token.strip()
+    return None
+
 def get_current_user(
     authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+    cookie_token: Optional[str] = Cookie(None, alias="memorypics_token"),
     db: Session = Depends(get_db)
-) -> Optional[User]:
+) -> User:
     """
-    Extracts and verifies JWT token from Authorization header (Bearer <token>).
+    Extracts and verifies JWT token from Authorization header, Query param, or Cookie.
     Returns User if valid, or raises HTTPException 401.
     """
-    if not authorization or not authorization.startswith("Bearer "):
+    raw_token = _extract_token(authorization, token, cookie_token)
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Missing Bearer token.",
+            detail="Authentication required. Please sign in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token = authorization.replace("Bearer ", "").strip()
-    payload = decode_access_token(token)
+    payload = decode_access_token(raw_token)
     if not payload or "sub" not in payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -92,14 +108,16 @@ def get_current_user(
 
 def get_optional_current_user(
     authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+    cookie_token: Optional[str] = Cookie(None, alias="memorypics_token"),
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Returns the current user if a valid token is present, otherwise None."""
-    if not authorization or not authorization.startswith("Bearer "):
+    raw_token = _extract_token(authorization, token, cookie_token)
+    if not raw_token:
         return None
     try:
-        token = authorization.replace("Bearer ", "").strip()
-        payload = decode_access_token(token)
+        payload = decode_access_token(raw_token)
         if not payload or "sub" not in payload:
             return None
         user_id = int(payload["sub"])

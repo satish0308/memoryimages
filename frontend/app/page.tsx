@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers } from 'lucide-react';
 
+import { useAuth } from '@/context/AuthContext';
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
 import { MomentsCarousel, EventStory } from '@/components/timeline/MomentsCarousel';
@@ -17,6 +18,7 @@ import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowMod
 import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 
 export default function PhotosPage() {
+  const { isAuthenticated, isLoading } = useAuth();
   const [timeline, setTimeline] = useState<TimelineGroup[]>([]);
   const [events, setEvents] = useState<EventStory[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<EventStory | null>(null);
@@ -96,6 +98,8 @@ export default function PhotosPage() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated || isLoading) return;
+
     if (!searchQuery.trim()) {
       setSearchResults(null);
       setIsSemanticResult(false);
@@ -107,7 +111,7 @@ export default function PhotosPage() {
       }, 300);
       return () => clearTimeout(timeout);
     }
-  }, [activeCategory, scale, searchQuery, isSemanticSearch, smartFilters, collapseBursts]);
+  }, [isAuthenticated, isLoading, activeCategory, scale, searchQuery, isSemanticSearch, smartFilters, collapseBursts]);
 
   // Selection handlers
   const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {

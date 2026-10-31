@@ -83,6 +83,8 @@ class Media(Base):
     duration_seconds = Column(Float, nullable=True)
 
     # Relationships
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    user = relationship("app.models.user.User", backref="media_items")
     faces = relationship("FaceDetection", back_populates="media", cascade="all, delete-orphan")
     embedding = relationship("MediaEmbedding", back_populates="media", uselist=False, cascade="all, delete-orphan")
     keyframes = relationship("VideoKeyframe", back_populates="media", cascade="all, delete-orphan")
