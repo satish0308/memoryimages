@@ -73,6 +73,9 @@ def list_people(
             ).all()
         )
         unique_media_ids = list(set(f.media_id for f in faces))
+        if len(unique_media_ids) == 0:
+            continue
+
         first_face = faces[0] if faces else None
         cover_media_id = first_face.media_id if first_face else None
         
@@ -111,8 +114,20 @@ def get_people_stats(
         .filter(Media.user_id == uid, Media.is_deleted == False)
         .count()
     )
-    total_people = db.query(Person).filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == False).count()
-    total_pets = db.query(Person).filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == True).count()
+    total_people = (
+        db.query(func.count(func.distinct(Person.id)))
+        .join(FaceDetection, FaceDetection.person_id == Person.id)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == False, Media.is_deleted == False)
+        .scalar() or 0
+    )
+    total_pets = (
+        db.query(func.count(func.distinct(Person.id)))
+        .join(FaceDetection, FaceDetection.person_id == Person.id)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == True, Media.is_deleted == False)
+        .scalar() or 0
+    )
     tagged_faces = (
         db.query(FaceDetection)
         .join(Media, FaceDetection.media_id == Media.id)

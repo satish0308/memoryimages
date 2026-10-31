@@ -576,6 +576,22 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
 
         clusters.sort(key=len, reverse=True)
 
+        # Clean up empty unnamed person records before allocating clusters
+        all_unnamed = (
+            db.query(Person)
+            .filter(
+                Person.user_id == user_id if user_id else True,
+                Person.is_pet == False
+            )
+            .all()
+        )
+        for p in all_unnamed:
+            if not is_user_named(p.name):
+                fc = db.query(FaceDetection).filter(FaceDetection.person_id == p.id).count()
+                if fc == 0:
+                    db.delete(p)
+        db.commit()
+
         existing_numbers = []
         for p in people_query.all():
             if p.name.startswith("Person "):
@@ -598,6 +614,31 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
                 f.person_id = person.id
                 f.cluster_id = person.id
                 assigned_faces_count += 1
+
+        # Final purge of empty unnamed person records
+        all_unnamed = (
+            db.query(Person)
+            .filter(
+                Person.user_id == user_id if user_id else True,
+                Person.is_pet == False
+            )
+            .all()
+        )
+        for p in all_unnamed:
+            if not is_user_named(p.name):
+                fc = db.query(FaceDetection).filter(FaceDetection.person_id == p.id).count()
+                if fc == 0:
+                    db.delete(p)
+        db.commit()
+
+        # Sequentially renumber remaining unnamed people
+        remaining_unnamed = [
+            p for p in db.query(Person).filter(Person.user_id == user_id if user_id else True, Person.is_pet == False).order_by(Person.id.asc()).all()
+            if not is_user_named(p.name)
+        ]
+        for idx, p in enumerate(remaining_unnamed, start=1):
+            p.name = f"Person {idx}"
+        db.commit()
 
     db.commit()
 
