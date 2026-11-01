@@ -132,18 +132,28 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Interactive Reordering**: Click any photo slot, then click another to instantly swap their positions.
 - **Print-Ready High-Res Export**: Offscreen HTML5 canvas renders at 2160px+ resolution with automatic memory reclamation (`URL.revokeObjectURL`), supporting instant JPG downloads and direct **"Save to Library"**.
 
-### 🪄 In-Browser Non-Destructive Photo Editing Studio (`/edit`)
-- **Dedicated Full-Screen Darkroom Studio**: Open any photo from Lightbox (press `E` or click **"Edit"**) into a dedicated full-screen editing workspace (`/edit?id=...`).
-- **Parametric Sliders**: Real-time hardware-accelerated adjustments with live canvas feedback:
-  - ☀️ **Light & Tone**: Exposure (`-100` to `+100`), Contrast, Highlights, Shadows.
-  - 🎨 **Color & White Balance**: Temperature / Warmth (Cool blue to Amber warm), Tint (Green to Magenta), Saturation, and Vibrance.
-  - 🔍 **Detail & Crispness**: Convolution sharpness filtering and radial Vignette edge falloff.
-- **Crop, Rotate & Geometry**:
-  - Presets: Freeform, 1:1 Square, 4:5 Portrait, 16:9 Cinema, 9:16 Story, 4:3 Classic, 3:2 Print.
-  - 90° Clockwise / Counter-Clockwise rotation, Horizontal Flip (Mirror), and Vertical Flip.
-- **1-Click Curated Color Presets**: *Vivid Pop*, *Golden Hour*, *Noir B&W*, *Vintage Film*, *Cinematic Slate*, *Moody Forest*.
-- **Interactive "Before vs After" Split Screen**: Drag a live vertical split line across the photo to inspect edits vs original, or press-and-hold **"Hold to Compare"**.
-- **Non-Destructive Saving**:
+### 🪄 MyMemoryPics Pro Studio: Non-Destructive Darkroom & Raster Editor (`/edit`)
+- **Pro Desktop Darkroom Layout**: Open any photo from Lightbox (press `E` or click **"Edit"**) into a dedicated full-screen professional studio inspired by **Darktable**, **RawTherapee**, **PhotoCraft**, and **GIMP**.
+- **📷 Darktable & RawTherapee Pro Color Science (Phase A)**:
+  - **Interactive Spline Tone Curves**: Direct Catmull-Rom cubic spline manipulation across **Composite RGB**, **Red**, **Green**, and **Blue** channels (S-Curves, High Contrast, Matte Film with lifted blacks).
+  - **8-Channel HSL Color Mixer**: Individual Hue Shift, Saturation, and Luminance sliders for 8 spectral bands: *Red, Orange (Skin Tones), Yellow, Green, Aqua/Cyan, Blue (Skies), Purple, Magenta*.
+  - **3-Way Color Grading Wheels**: Circular color wheels for **Shadows (Lift)**, **Midtones (Gamma)**, and **Highlights (Gain)** with luminance balance sliders.
+  - **Real-Time RGB & Luma Histogram**: 256-bin live frequency distribution analyzer with **Blue shadow-clipping** ($RGB = 0$) and **Red highlight-clipping** ($RGB = 255$) alerts.
+  - **Parametric Sliders**: Exposure, Contrast, Highlights, Shadows, Warmth (Amber/Blue), Tint (Green/Magenta), Saturation, Vibrance, Vignette.
+- **🎨 GIMP & PhotoCraft Selective Retouch & Masking (Phase B)**:
+  - **Selective Adjustment Masks**:
+    - **Radial Spotlight Mask (`G`)**: Draggable circular/oval mask directly on canvas with feathering, invert toggle, and local exposure/warmth.
+    - **Linear Horizon Gradient Mask (`G`)**: Draggable 2-point horizon line for sky and sunset balancing without affecting foreground subjects.
+  - **Precision Retouch Brushes**:
+    - **Spot Healing Brush (`J`)**: Click/paint over skin blemishes and dust specks with automated Poisson neighborhood texture synthesis.
+    - **Dodge Brush (`O`)**: Selectively paint to brighten eyes, teeth, and highlights.
+    - **Burn Brush (`O`)**: Selectively paint to deepen shadows and darken glaring reflections.
+    - **Brush Controls**: Brush Diameter (`[` and `]`), Softness/Feather, and Flow/Opacity.
+  - **Typography & Watermark Layer (`T`)**: Custom signature, fonts (Sans, Serif, Monospace, Script), size, color, opacity, and drop shadows.
+  - **Crop & Geometry Transform (`C`)**: Aspect ratios (`1:1, 4:5, 16:9, 9:16, 4:3, 3:2, Freeform`), 90° rotation, horizontal mirror flip, vertical flip, and straighten slider.
+- **⚡ 1:1 Photoshop & PhotoCraft Keyboard Shortcuts**:
+  - `V` (Hand/Pan), `C` (Crop), `J` (Spot Healing), `O` (Dodge/Burn), `G` (Masks), `T` (Text), `[` / `]` (Brush Size), `\` (Split Compare), `Ctrl+Z` (Undo), `Ctrl+Y` (Redo), `Ctrl+S` (Save As New), `Esc` (Exit).
+- **🔒 Non-Destructive Sidecar & Export**:
   - **Save as New Photo**: Calls `POST /api/v1/media/{id}/save-edit` with canvas rendering, ingesting into library with inherited EXIF and GPS metadata.
   - **Save Recipe Overlay**: Persists adjustments JSON recipe on existing photo with 1-click **"Revert to Original"** anytime.
   - **Direct Download**: Instant high-res JPG export to your computer.
