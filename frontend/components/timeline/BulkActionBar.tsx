@@ -13,8 +13,10 @@ import {
   Loader2,
   Check,
   MapPin,
-  Sparkles
+  Sparkles,
+  Share2
 } from 'lucide-react';
+import { ShareEventModal } from '../albums/ShareEventModal';
 
 interface AlbumOption {
   id: number;
@@ -55,6 +57,14 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [showNewAlbumInput, setShowNewAlbumInput] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [sharedAlbum, setSharedAlbum] = useState<{
+    id: number;
+    name: string;
+    share_token?: string | null;
+    is_public?: boolean;
+    allow_guest_uploads?: boolean;
+  } | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   useEffect(() => {
     if (selectedIds.length > 0) {
@@ -241,6 +251,39 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     }
   };
 
+  // Bulk Instant Bundle Share
+  const handleBatchShare = async () => {
+    try {
+      setLoadingAction('share');
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const res = await fetch(`${apiUrl}/api/v1/media/batch-share${tokenParam}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ media_ids: selectedIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSharedAlbum({
+          id: data.album_id,
+          name: data.name,
+          share_token: data.share_token,
+          is_public: true,
+          allow_guest_uploads: false,
+        });
+        setShowShareModal(true);
+        if (onAlbumAdded) onAlbumAdded();
+      }
+    } catch (e) {
+      console.error('Batch share error:', e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex flex-wrap items-center gap-3 max-w-[95vw] animate-slideUp">
       {/* Selected Counter */}
@@ -255,6 +298,21 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
 
       {/* Action Buttons */}
       <div className="flex items-center gap-2 relative flex-wrap">
+        {/* Bulk Share */}
+        <button
+          onClick={handleBatchShare}
+          disabled={loadingAction !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+          title="Share selected photos via an instant public link & QR code"
+        >
+          {loadingAction === 'share' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Share2 className="w-3.5 h-3.5 text-white" />
+          )}
+          <span>Share</span>
+        </button>
+
         {/* Bulk Download (ZIP) */}
         <button
           onClick={handleBulkDownload}
@@ -597,6 +655,15 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Instant Bundle Share Modal */}
+      <ShareEventModal
+        album={sharedAlbum}
+        apiUrl={apiUrl}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        onShareUpdated={() => {}}
+      />
     </div>
   );
 };

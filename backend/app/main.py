@@ -53,6 +53,8 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN is_enhanced BOOLEAN DEFAULT FALSE"))
                 if "enhancement_data" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN enhancement_data TEXT"))
+                if "share_token" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN share_token VARCHAR(64)"))
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN user_id INTEGER"))
                 # Associate existing unassigned photos with primary owner (admin user_id=1)

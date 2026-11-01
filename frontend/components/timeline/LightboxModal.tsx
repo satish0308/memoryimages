@@ -26,9 +26,11 @@ import {
   Sun,
   Mountain,
   Sliders,
-  Loader2
+  Loader2,
+  Share2
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
+import { SharePhotoModal } from './SharePhotoModal';
 
 interface FaceData {
   id: number;
@@ -86,6 +88,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isPlayingMotion, setIsPlayingMotion] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // 1-Click Auto-Enhance state
   const [isEnhanced, setIsEnhanced] = useState(photo?.is_enhanced || false);
@@ -470,6 +473,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         setShowFaceBoxes((prev) => !prev);
       } else if (e.key.toLowerCase() === 'i') {
         setShowSidebar((prev) => !prev);
+      } else if (e.key.toLowerCase() === 'p') {
+        setShowShareModal(true);
       } else if (e.key.toLowerCase() === 's') {
         window.open(`/similar?id=${photo.id}`, '_blank');
       }
@@ -556,6 +561,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+          <button
+            onClick={() => setShowShareModal(true)}
+            className="p-2.5 bg-black/60 text-white hover:bg-black/90 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer hover:text-indigo-400"
+            title="Share Photo (P)"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setShowSidebar(!showSidebar)}
             className={`p-2.5 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer ${
@@ -1080,6 +1092,17 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 <div className="h-4 w-px bg-slate-700" />
               </>
             )}
+
+            {/* Share Photo Modal Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowShareModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold text-indigo-300 hover:text-white hover:bg-indigo-500/20 transition cursor-pointer border border-indigo-500/30 shadow-sm"
+              title="Share Photo (P)"
+            >
+              <Share2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Share</span>
+            </button>
 
             {/* Info & EXIF Sidebar Toggle */}
             <button
@@ -1688,6 +1711,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               Download
             </a>
             <button
+              onClick={() => setShowShareModal(true)}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition"
+              title="Share Photo (P)"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => onToggleFavorite(photo.id)}
               className={`p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition ${
                 photo.is_favorite ? 'text-red-500' : 'text-slate-300'
@@ -1749,6 +1779,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           </div>
         </div>
       )}
+      {/* Share Photo Modal */}
+      <SharePhotoModal
+        photo={photo}
+        apiUrl={apiUrl}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+      />
     </div>
   );
 };

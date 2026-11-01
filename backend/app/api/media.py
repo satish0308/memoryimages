@@ -454,6 +454,126 @@ def get_media_detail(
         raise HTTPException(status_code=403, detail="Access denied")
     return media
 
+class BatchShareRequest(BaseModel):
+    media_ids: List[int]
+    name: Optional[str] = None
+
+@router.post("/batch-share")
+def batch_share_media(
+    req: BatchShareRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Instant batch sharing: creates a shareable event collection for selected photos."""
+    import secrets
+    from app.models.album import Album
+    if not req.media_ids:
+        raise HTTPException(status_code=400, detail="No photos selected to share")
+
+    photos = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id,
+        Media.is_deleted == False
+    ).all()
+
+    if not photos:
+        raise HTTPException(status_code=404, detail="No matching photos found")
+
+    share_token = secrets.token_urlsafe(16)
+    name = req.name or f"Shared Photos ({datetime.utcnow().strftime('%b %d, %Y')})"
+    album = Album(
+        user_id=current_user.id,
+        name=name,
+        description=f"Quick shared bundle with {len(photos)} photos.",
+        cover_media_id=photos[0].id,
+        share_token=share_token,
+        is_public=True,
+        allow_guest_uploads=False
+    )
+    album.media.extend(photos)
+    db.add(album)
+    db.commit()
+    db.refresh(album)
+
+    return {
+        "id": album.id,
+        "album_id": album.id,
+        "name": album.name,
+        "share_token": album.share_token,
+        "share_url": f"/share/{album.share_token}",
+        "photo_count": len(photos)
+    }
+
+@router.post("/{media_id}/share")
+def share_single_media(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generates a public signed share link for a single photo."""
+    import secrets
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not media.share_token:
+        media.share_token = secrets.token_urlsafe(16)
+        db.commit()
+        db.refresh(media)
+
+    return {
+        "share_token": media.share_token,
+        "share_url": f"/share/photo/{media.share_token}",
+        "media_id": media.id,
+        "filename": media.filename
+    }
+
+@router.delete("/{media_id}/share")
+def revoke_single_media_share(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Revokes the public share link for a single photo."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    media.share_token = None
+    db.commit()
+    return {"status": "share_revoked"}
+
+@router.get("/public/share/{share_token}")
+def get_public_shared_media(
+    share_token: str,
+    db: Session = Depends(get_db)
+):
+    """Public guest endpoint: view a single shared photo without login."""
+    media = db.query(Media).filter(Media.share_token == share_token).first()
+    if not media or media.is_deleted:
+        raise HTTPException(status_code=404, detail="Shared photo not found or link has expired")
+
+    return {
+        "id": media.id,
+        "filename": media.filename,
+        "captured_at": media.captured_at.isoformat() if media.captured_at else None,
+        "location_name": media.location_name,
+        "camera_make": media.camera_make,
+        "camera_model": media.camera_model,
+        "iso": media.iso,
+        "exposure_time": media.exposure_time,
+        "focal_length": media.focal_length,
+        "width": media.width,
+        "height": media.height,
+        "has_motion_photo": bool(getattr(media, "has_motion_photo", False)),
+        "thumbnail_url": f"/api/v1/media/{media.id}/thumbnail?size=1080",
+        "download_url": f"/api/v1/media/{media.id}/view"
+    }
+
 @router.get("/{media_id}/burst")
 def get_media_burst(
     media_id: int,

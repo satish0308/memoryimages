@@ -82,6 +82,7 @@ class Media(Base):
     color_hex = Column(String(7), nullable=True)
     duration_seconds = Column(Float, nullable=True)
     has_motion_photo = Column(Boolean, default=False, index=True)
+    share_token = Column(String(64), unique=True, index=True, nullable=True)
 
     # Relationships
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
