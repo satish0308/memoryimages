@@ -25,12 +25,56 @@ from app.config import settings
 logger = logging.getLogger("memorypics.api.media")
 router = APIRouter()
 
+def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None):
+    return {
+        "id": item.id,
+        "filename": item.filename,
+        "category": item.category.value if hasattr(item.category, "value") else str(item.category),
+        "captured_at": item.captured_at.isoformat() if item.captured_at else None,
+        "width": item.width or 0,
+        "height": item.height or 0,
+        "is_favorite": bool(item.is_favorite),
+        "is_blurry": bool(item.is_blurry),
+        "blur_type": getattr(item, "blur_type", "sharp") or "sharp",
+        "is_bokeh": getattr(item, "is_bokeh", False) or False,
+        "is_enhanced": getattr(item, "is_enhanced", False) or False,
+        "enhancement_data": item.enhancement_data,
+        "file_size": item.file_size,
+        "camera_make": item.camera_make,
+        "camera_model": item.camera_model,
+        "iso": item.iso,
+        "focal_length": item.focal_length,
+        "exposure_time": item.exposure_time,
+        "latitude": item.latitude,
+        "longitude": item.longitude,
+        "location_name": item.location_name,
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+        "mood": item.mood,
+        "mood_score": item.mood_score,
+        "is_smiling": item.is_smiling,
+        "dominant_color": item.dominant_color,
+        "color_hex": item.color_hex,
+        "is_video": (item.mime_type or "").startswith("video/"),
+        "duration_seconds": item.duration_seconds,
+        "has_motion_photo": bool(getattr(item, "has_motion_photo", False)),
+        "motion_video_url": f"/api/v1/media/{item.id}/motion-video" if getattr(item, "has_motion_photo", False) else None,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
+        "burst_count": burst_count,
+        "burst_id": burst_id,
+        "burst_media_ids": burst_media_ids or [],
+        "is_burst_lead": is_burst_lead,
+        "burst_score": burst_score,
+        "burst_type": burst_type,
+    }
+
 @router.get("")
 def list_media(
     category: Optional[MediaCategory] = None,
     is_favorite: Optional[bool] = None,
     is_archived: bool = False,
     is_deleted: bool = False,
+    geotagged_only: bool = Query(False),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -54,6 +98,8 @@ def list_media(
         query = query.filter(Media.category == category)
     if is_favorite is not None:
         query = query.filter(Media.is_favorite == is_favorite)
+    if geotagged_only:
+        query = query.filter(Media.latitude != None, Media.longitude != None)
         
     total = query.count()
     items = query.order_by(desc(Media.captured_at)).offset(offset).limit(limit).all()
@@ -62,7 +108,7 @@ def list_media(
         "total": total,
         "offset": offset,
         "limit": limit,
-        "items": items
+        "items": [_format_media_item(item) for item in items]
     }
 
 @router.get("/timeline")
@@ -231,49 +277,6 @@ def get_flashbacks(
         })
 
     return list(flashback_groups.values())
-
-def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None):
-    return {
-        "id": item.id,
-        "filename": item.filename,
-        "category": item.category.value if hasattr(item.category, "value") else str(item.category),
-        "captured_at": item.captured_at.isoformat() if item.captured_at else None,
-        "width": item.width or 0,
-        "height": item.height or 0,
-        "is_favorite": bool(item.is_favorite),
-        "is_blurry": bool(item.is_blurry),
-        "blur_type": getattr(item, "blur_type", "sharp") or "sharp",
-        "is_bokeh": getattr(item, "is_bokeh", False) or False,
-        "is_enhanced": getattr(item, "is_enhanced", False) or False,
-        "enhancement_data": item.enhancement_data,
-        "file_size": item.file_size,
-        "camera_make": item.camera_make,
-        "camera_model": item.camera_model,
-        "iso": item.iso,
-        "focal_length": item.focal_length,
-        "exposure_time": item.exposure_time,
-        "latitude": item.latitude,
-        "longitude": item.longitude,
-        "location_name": item.location_name,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
-        "mood": item.mood,
-        "mood_score": item.mood_score,
-        "is_smiling": item.is_smiling,
-        "dominant_color": item.dominant_color,
-        "color_hex": item.color_hex,
-        "is_video": (item.mime_type or "").startswith("video/"),
-        "duration_seconds": item.duration_seconds,
-        "has_motion_photo": bool(getattr(item, "has_motion_photo", False)),
-        "motion_video_url": f"/api/v1/media/{item.id}/motion-video" if getattr(item, "has_motion_photo", False) else None,
-        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
-        "source_id": item.source_id,
-        "burst_count": burst_count,
-        "burst_id": burst_id,
-        "burst_media_ids": burst_media_ids or [],
-        "is_burst_lead": is_burst_lead,
-        "burst_score": burst_score,
-        "burst_type": burst_type,
-    }
 
 @router.get("/memories/highlights")
 def get_memories_highlights(

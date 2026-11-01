@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
 
-  const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/');
+  const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/') || pathname === '/kiosk';
   const isKioskRoute = pathname === '/kiosk';
 
   useEffect(() => {
