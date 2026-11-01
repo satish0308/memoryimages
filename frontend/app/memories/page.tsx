@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { useAuth } from '@/context/AuthContext';
 
 interface MemoryReel {
   id: string;
@@ -29,6 +30,7 @@ interface MemoryReel {
 }
 
 export default function MemoriesPage() {
+  const { token: authContextToken } = useAuth();
   const [reels, setReels] = useState<MemoryReel[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeStory, setActiveStory] = useState<MemoryReel | null>(null);
@@ -40,12 +42,17 @@ export default function MemoriesPage() {
   const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/v1/media/memories/highlights`)
+    const activeToken = authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+    const tokenParam = activeToken ? `?token=${encodeURIComponent(activeToken)}` : '';
+
+    fetch(`${API_URL}/api/v1/media/memories/highlights${tokenParam}`, { headers })
       .then((res) => (res.ok ? res.json() : { reels: [] }))
       .then((data) => setReels(data.reels || []))
       .catch((err) => console.error('Failed to load memories:', err))
       .finally(() => setLoading(false));
-  }, [API_URL]);
+  }, [API_URL, authContextToken]);
 
   // Story Autoplay Progression
   useEffect(() => {
@@ -101,7 +108,7 @@ export default function MemoriesPage() {
 
   const currentItem: MediaItem | undefined = activeStory?.items[storyIndex];
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+  const token = authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
   const tokenQuery = token ? `?token=${token}` : '';
 
   return (
