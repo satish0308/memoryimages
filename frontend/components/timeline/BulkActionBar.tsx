@@ -18,7 +18,6 @@ import {
   Layout
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
-import { CollageStudioModal } from '../studio/CollageStudioModal';
 import { MediaItem } from './PhotoCard';
 
 interface AlbumOption {
@@ -56,7 +55,6 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showEnhanceMenu, setShowEnhanceMenu] = useState(false);
-  const [showCollageModal, setShowCollageModal] = useState(false);
   const [customLocName, setCustomLocName] = useState('');
   const [customLat, setCustomLat] = useState('');
   const [customLon, setCustomLon] = useState('');
@@ -320,15 +318,18 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         </button>
 
         {/* 1-Click Creative Collage & Print Studio */}
-        {selectedIds.length >= 2 && selectedIds.length <= 12 && (
+        {selectedIds.length >= 2 && selectedIds.length <= 16 && (
           <button
-            onClick={() => setShowCollageModal(true)}
+            onClick={() => {
+              const url = `/collage?ids=${selectedIds.join(',')}`;
+              window.open(url, '_blank') || window.location.assign(url);
+            }}
             disabled={loadingAction !== null}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
-            title="Create a multi-photo collage or print layout"
+            title="Open Creative Collage & Print Studio in dedicated full page / tab"
           >
             <Layout className="w-3.5 h-3.5 text-pink-200" />
-            <span>Collage</span>
+            <span>Collage Studio</span>
             <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
               {selectedIds.length}
             </span>
@@ -685,19 +686,6 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
         onShareUpdated={() => {}}
-      />
-
-      {/* Creative Collage & Print Studio Modal */}
-      <CollageStudioModal
-        isOpen={showCollageModal}
-        onClose={() => setShowCollageModal(false)}
-        selectedPhotos={selectedPhotos}
-        apiUrl={apiUrl}
-        onSavedToLibrary={() => {
-          setShowCollageModal(false);
-          onClearSelection();
-          if (onBatchCategoryUpdated) onBatchCategoryUpdated();
-        }}
       />
     </div>
   );

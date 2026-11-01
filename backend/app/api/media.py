@@ -80,6 +80,7 @@ def list_media(
     is_archived: bool = False,
     is_deleted: bool = False,
     geotagged_only: bool = Query(False),
+    ids: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -99,6 +100,10 @@ def list_media(
         Media.is_archived == is_archived,
         Media.is_deleted == is_deleted
     )
+    if ids:
+        id_list = [int(x.strip()) for x in ids.split(",") if x.strip().isdigit()]
+        if id_list:
+            query = query.filter(Media.id.in_(id_list))
     if category:
         query = query.filter(Media.category == category)
     if is_favorite is not None:
