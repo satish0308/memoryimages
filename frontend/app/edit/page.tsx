@@ -135,6 +135,7 @@ function ProStudioContent() {
   const [isSplitView, setIsSplitView] = useState<boolean>(false);
   const [splitPos, setSplitPos] = useState<number>(50);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isReverting, setIsReverting] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [histTrigger, setHistTrigger] = useState<number>(0);
@@ -260,7 +261,11 @@ function ProStudioContent() {
         handleRedo();
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        handleSave(true);
+        if (e.shiftKey) {
+          handleSave(true);
+        } else {
+          handleSave(false);
+        }
       }
     };
 
@@ -624,6 +629,30 @@ function ProStudioContent() {
     }
   };
 
+  const handleRevertToOriginal = async () => {
+    if (!photo) return;
+    if (!confirm('Revert all adjustments and restore the original unedited photo?')) return;
+    setIsReverting(true);
+    try {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/${photo.id}/revert-edit`, {
+        method: 'POST',
+        headers,
+      });
+      if (!res.ok) throw new Error('Failed to revert photo');
+
+      handleResetAll();
+      setSaveSuccessMsg('Reverted to camera original!');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (e: any) {
+      alert(`Revert error: ${e.message}`);
+    } finally {
+      setIsReverting(false);
+    }
+  };
+
   const handleDownload = () => {
     if (!canvasRef.current || !photo) return;
     setIsExporting(true);
@@ -747,9 +776,21 @@ function ProStudioContent() {
 
           <button
             type="button"
+            onClick={handleRevertToOriginal}
+            disabled={isReverting || loading}
+            className="px-2.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-rose-950/40 hover:text-rose-300 hover:border-rose-700/50 text-slate-400 text-xs font-semibold flex items-center gap-1.5 transition border border-slate-700/60 cursor-pointer disabled:opacity-50"
+            title="Revert non-destructive recipe to original unedited photo"
+          >
+            {isReverting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">Revert</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleDownload}
             disabled={isExporting || loading}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition border border-slate-700 cursor-pointer disabled:opacity-50"
+            title="Export high-res flattened JPEG [Ctrl+E]"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export JPG</span>
@@ -757,11 +798,23 @@ function ProStudioContent() {
 
           <button
             type="button"
+            onClick={() => handleSave(false)}
+            disabled={isSaving || loading}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-950/60 text-slate-200 hover:text-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition border border-slate-700 hover:border-indigo-600/50 cursor-pointer disabled:opacity-50"
+            title="Save non-destructive recipe overlay to photo sidecar [Ctrl+S]"
+          >
+            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5 text-indigo-400" />}
+            <span>Save Recipe</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => handleSave(true)}
             disabled={isSaving || loading}
             className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
+            title="Bake and save as a new photo copy in your library"
           >
-            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
             <span>Save as New</span>
           </button>
         </div>
