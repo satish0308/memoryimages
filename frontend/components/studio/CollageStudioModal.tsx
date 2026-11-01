@@ -255,9 +255,16 @@ export const CollageStudioModal: React.FC<CollageStudioModalProps> = ({
         .then(res => res.blob())
         .then(blob => {
           const img = new Image();
-          img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = URL.createObjectURL(blob);
+          const objUrl = URL.createObjectURL(blob);
+          img.onload = () => {
+            URL.revokeObjectURL(objUrl);
+            resolve(img);
+          };
+          img.onerror = (e) => {
+            URL.revokeObjectURL(objUrl);
+            reject(e);
+          };
+          img.src = objUrl;
         })
         .catch(reject);
     });
