@@ -12,7 +12,9 @@ import {
   BookOpen, 
   Globe, 
   Settings,
-  Lock
+  Lock,
+  Tv,
+  Flame
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { AppHeader } from '@/components/layout/AppHeader';
@@ -23,19 +25,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
 
-  const isPublicRoute = pathname === '/login' || pathname === '/register';
+  const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/');
+  const isKioskRoute = pathname === '/kiosk';
 
   useEffect(() => {
     if (!isLoading) {
       if (!isAuthenticated && !isPublicRoute) {
         router.replace('/login');
-      } else if (isAuthenticated && isPublicRoute) {
+      } else if (isAuthenticated && (pathname === '/login' || pathname === '/register')) {
         router.replace('/');
       }
     }
-  }, [isLoading, isAuthenticated, isPublicRoute, router]);
+  }, [isLoading, isAuthenticated, isPublicRoute, pathname, router]);
 
-  // Public Route (Login / Register): Render immediately without splash delay
+  // Standalone Fullscreen Kiosk Mode (no sidebar or header)
+  if (isKioskRoute) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-black text-white">
+        {children}
+      </div>
+    );
+  }
+
+  // Public Route (Login / Register / Guest Share): Render immediately without splash delay
   if (isPublicRoute && !isAuthenticated) {
     return (
       <div className="min-h-screen w-full bg-slate-950 overflow-y-auto">
@@ -121,6 +133,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
 
             <Link
+              href="/memories"
+              className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                pathname.startsWith('/memories')
+                  ? 'bg-purple-50 text-purple-700 font-semibold'
+                  : 'text-slate-700 hover:bg-slate-100 hover:text-purple-600'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Flame className={`w-4 h-4 ${pathname.startsWith('/memories') ? 'text-purple-600' : 'text-slate-500'}`} />
+                <span>Memories</span>
+              </div>
+              <span className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-xs">
+                ✨ Story
+              </span>
+            </Link>
+
+            <Link
               href="/albums"
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
                 pathname.startsWith('/albums')
@@ -130,6 +159,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <BookOpen className={`w-4 h-4 ${pathname.startsWith('/albums') ? 'text-indigo-600' : 'text-slate-500'}`} />
               <span>Albums</span>
+            </Link>
+
+            <Link
+              href="/similar"
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                pathname.startsWith('/similar')
+                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                  : 'text-slate-700 hover:bg-slate-100 hover:text-indigo-600'
+              }`}
+            >
+              <Sparkles className={`w-4 h-4 ${pathname.startsWith('/similar') ? 'text-indigo-600' : 'text-slate-500'}`} />
+              <span>Similar AI</span>
             </Link>
 
             <Link
@@ -195,6 +236,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <Settings className={`w-4 h-4 ${pathname.startsWith('/settings') ? 'text-indigo-600' : 'text-slate-500'}`} />
               <span>App Settings</span>
+            </Link>
+
+            <Link
+              href="/kiosk"
+              target="_blank"
+              className="flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+              title="Open Ambient Fullscreen TV Display"
+            >
+              <div className="flex items-center gap-3">
+                <Tv className="w-4 h-4 text-slate-500" />
+                <span>Kiosk Mode</span>
+              </div>
+              <span className="bg-slate-200 text-slate-700 text-[10px] font-mono px-1.5 py-0.5 rounded font-semibold">
+                TV ↗
+              </span>
             </Link>
           </nav>
         </div>

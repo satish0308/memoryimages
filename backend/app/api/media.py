@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, extract
 
 from app.database import get_db
 from app.models.user import User
@@ -231,6 +231,186 @@ def get_flashbacks(
         })
 
     return list(flashback_groups.values())
+
+def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None):
+    return {
+        "id": item.id,
+        "filename": item.filename,
+        "category": item.category.value if hasattr(item.category, "value") else str(item.category),
+        "captured_at": item.captured_at.isoformat() if item.captured_at else None,
+        "width": item.width or 0,
+        "height": item.height or 0,
+        "is_favorite": bool(item.is_favorite),
+        "is_blurry": bool(item.is_blurry),
+        "blur_type": getattr(item, "blur_type", "sharp") or "sharp",
+        "is_bokeh": getattr(item, "is_bokeh", False) or False,
+        "is_enhanced": getattr(item, "is_enhanced", False) or False,
+        "enhancement_data": item.enhancement_data,
+        "file_size": item.file_size,
+        "camera_make": item.camera_make,
+        "camera_model": item.camera_model,
+        "iso": item.iso,
+        "focal_length": item.focal_length,
+        "exposure_time": item.exposure_time,
+        "latitude": item.latitude,
+        "longitude": item.longitude,
+        "location_name": item.location_name,
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+        "mood": item.mood,
+        "mood_score": item.mood_score,
+        "is_smiling": item.is_smiling,
+        "dominant_color": item.dominant_color,
+        "color_hex": item.color_hex,
+        "is_video": (item.mime_type or "").startswith("video/"),
+        "duration_seconds": item.duration_seconds,
+        "has_motion_photo": bool(getattr(item, "has_motion_photo", False)),
+        "motion_video_url": f"/api/v1/media/{item.id}/motion-video" if getattr(item, "has_motion_photo", False) else None,
+        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+        "source_id": item.source_id,
+        "burst_count": burst_count,
+        "burst_id": burst_id,
+        "burst_media_ids": burst_media_ids or [],
+        "is_burst_lead": is_burst_lead,
+        "burst_score": burst_score,
+        "burst_type": burst_type,
+    }
+
+@router.get("/memories/highlights")
+def get_memories_highlights(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns curated, story-style nostalgic memory reels for the current user:
+    - On This Day (Past Years)
+    - This Week in Past Years
+    - Rediscovered Favorites
+    - Smiles & Joyful Moments
+    - Scenic Travel Flashbacks
+    """
+    if not current_user:
+        return {"reels": []}
+
+    now = datetime.utcnow()
+    current_month = now.month
+    current_day = now.day
+    current_year = now.year
+
+    reels = []
+
+    # 1. On This Day in Past Years (Exact Day match)
+    on_this_day_items = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.is_archived == False,
+        extract("month", Media.captured_at) == current_month,
+        extract("day", Media.captured_at) == current_day,
+        extract("year", Media.captured_at) < current_year
+    ).order_by(desc(Media.captured_at)).all()
+
+    if on_this_day_items:
+        # Group by year
+        year_groups = {}
+        for it in on_this_day_items:
+            y = it.captured_at.year
+            if y not in year_groups:
+                year_groups[y] = []
+            year_groups[y].append(it)
+
+        for y, items in sorted(year_groups.items(), reverse=True):
+            years_ago = current_year - y
+            title = f"{years_ago} Year{'s' if years_ago > 1 else ''} Ago Today"
+            reels.append({
+                "id": f"on_this_day_{y}",
+                "tag": "ON THIS DAY",
+                "title": title,
+                "subtitle": f"{now.strftime('%B %d')}, {y} • {len(items)} memories",
+                "cover_url": f"/api/v1/media/{items[0].id}/thumbnail?size=1080",
+                "item_count": len(items),
+                "items": [_format_media_item(it) for it in items]
+            })
+
+    # 2. This Week in Past Years (+/- 4 days from today)
+    start_day = max(1, current_day - 4)
+    end_day = current_day + 4
+    week_items = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.is_archived == False,
+        extract("month", Media.captured_at) == current_month,
+        extract("day", Media.captured_at).between(start_day, end_day),
+        extract("year", Media.captured_at) < current_year
+    ).order_by(desc(Media.captured_at)).limit(40).all()
+
+    if week_items and len(week_items) >= 4:
+        reels.append({
+            "id": f"this_week_past_{current_month}",
+            "tag": "NOSTALGIA",
+            "title": f"This Week in {now.strftime('%B')}",
+            "subtitle": f"Rediscovering {len(week_items)} moments from past years",
+            "cover_url": f"/api/v1/media/{week_items[0].id}/thumbnail?size=1080",
+            "item_count": len(week_items),
+            "items": [_format_media_item(it) for it in week_items]
+        })
+
+    # 3. Smiling & Joyful Memories
+    happy_items = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.is_archived == False,
+        (Media.is_smiling == True) | (Media.mood == "joyful") | (Media.mood == "celebratory")
+    ).order_by(desc(Media.captured_at)).limit(35).all()
+
+    if happy_items and len(happy_items) >= 3:
+        reels.append({
+            "id": "joyful_smiles",
+            "tag": "SMILES & JOY",
+            "title": "Smiles & Joyful Memories",
+            "subtitle": f"{len(happy_items)} candid laughing & happy moments",
+            "cover_url": f"/api/v1/media/{happy_items[0].id}/thumbnail?size=1080",
+            "item_count": len(happy_items),
+            "items": [_format_media_item(it) for it in happy_items]
+        })
+
+    # 4. Scenic Travel & Locations Flashback
+    travel_items = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.is_archived == False,
+        Media.location_name != None
+    ).order_by(desc(Media.captured_at)).limit(40).all()
+
+    if travel_items and len(travel_items) >= 4:
+        reels.append({
+            "id": "travel_recap",
+            "tag": "PLACES & TRIPS",
+            "title": "Unforgettable Places & Journeys",
+            "subtitle": f"Wanderlust across {len(set(t.location_name for t in travel_items))} locations",
+            "cover_url": f"/api/v1/media/{travel_items[0].id}/thumbnail?size=1080",
+            "item_count": len(travel_items),
+            "items": [_format_media_item(it) for it in travel_items]
+        })
+
+    # 5. Golden Hour & Dramatic Shots
+    scenic_items = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.is_archived == False,
+        (Media.mood == "serene") | (Media.mood == "dramatic") | (Media.mood == "romantic")
+    ).order_by(desc(Media.captured_at)).limit(30).all()
+
+    if scenic_items and len(scenic_items) >= 3:
+        reels.append({
+            "id": "scenic_serene",
+            "tag": "ATMOSPHERE",
+            "title": "Golden Hour & Serene Views",
+            "subtitle": f"{len(scenic_items)} atmospheric scenes captured in time",
+            "cover_url": f"/api/v1/media/{scenic_items[0].id}/thumbnail?size=1080",
+            "item_count": len(scenic_items),
+            "items": [_format_media_item(it) for it in scenic_items]
+        })
+
+    return {"reels": reels}
 
 @router.get("/locations")
 def get_locations(

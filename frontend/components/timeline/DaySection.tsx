@@ -75,7 +75,7 @@ export const DaySection: React.FC<DaySectionProps> = ({
   };
 
   return (
-    <section className="space-y-3">
+    <section id={`timeline-group-${group.key || group.date}`} className="space-y-3 scroll-mt-20">
       {/* Sticky Header with Group Select All Toggle */}
       <div className="flex items-center justify-between text-slate-700 sticky top-0 bg-slate-50/95 backdrop-blur-md py-2.5 z-10 border-b border-slate-200/60 px-1">
         <div className="flex items-center gap-2">

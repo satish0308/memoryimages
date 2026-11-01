@@ -68,6 +68,12 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE albums ADD COLUMN is_dynamic BOOLEAN DEFAULT FALSE"))
                 if "rules" not in columns:
                     conn.execute(text("ALTER TABLE albums ADD COLUMN rules TEXT"))
+                if "share_token" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN share_token VARCHAR(64)"))
+                if "is_public" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN is_public BOOLEAN DEFAULT FALSE"))
+                if "allow_guest_uploads" not in columns:
+                    conn.execute(text("ALTER TABLE albums ADD COLUMN allow_guest_uploads BOOLEAN DEFAULT FALSE"))
                 conn.execute(text("UPDATE albums SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 

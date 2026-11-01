@@ -358,6 +358,7 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     except Exception:
                         pass
 
+                is_motion = name.startswith("MVIMG_") or ("_MP." in name) or ("_MP_" in name)
                 media_obj = Media(
                     filename=name,
                     original_path=f"gdrive://{file_id}/{name}",
@@ -374,6 +375,7 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     focal_length=focal_length,
                     exposure_time=exposure_time,
                     duration_seconds=duration_seconds,
+                    has_motion_photo=is_motion,
                     latitude=latitude,
                     longitude=longitude,
                     location_name=location_name,

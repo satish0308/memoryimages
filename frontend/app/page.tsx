@@ -17,6 +17,7 @@ import { SmartFilterDrawer, SmartFilters, DEFAULT_SMART_FILTERS } from '@/compon
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
+import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
 
 export default function PhotosPage() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -677,6 +678,11 @@ export default function PhotosPage() {
             />
           ))}
         </div>
+      )}
+
+      {/* Interactive Vertical Timeline Minimap Scrubber */}
+      {!searchResults && filteredTimeline.length > 0 && (
+        <TimelineScrubber groups={filteredTimeline} />
       )}
 
       {/* Floating Bulk Action Bar */}

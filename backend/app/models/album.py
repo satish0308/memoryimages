@@ -21,6 +21,9 @@ class Album(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     is_dynamic = Column(Boolean, default=False, nullable=False)
     rules = Column(Text, nullable=True)
+    share_token = Column(String(64), unique=True, index=True, nullable=True)
+    is_public = Column(Boolean, default=False, nullable=False)
+    allow_guest_uploads = Column(Boolean, default=False, nullable=False)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

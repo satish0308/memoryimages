@@ -24,12 +24,15 @@ import {
   CheckSquare, 
   Square,
   ChevronRight,
-  Filter
+  Filter,
+  QrCode,
+  Share2
 } from 'lucide-react';
 import { PhotoCard, MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
+import { ShareEventModal } from '@/components/albums/ShareEventModal';
 
 interface AlbumItem {
   id: number;
@@ -39,6 +42,9 @@ interface AlbumItem {
   cover_thumbnail_url: string | null;
   is_dynamic?: boolean;
   rules?: any;
+  share_token?: string | null;
+  is_public?: boolean;
+  allow_guest_uploads?: boolean;
   created_at: string;
 }
 
@@ -113,6 +119,7 @@ export default function AlbumsPage() {
   
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [sharingAlbum, setSharingAlbum] = useState<AlbumItem | null>(null);
   const [newAlbumName, setNewAlbumName] = useState('');
   const [newAlbumDesc, setNewAlbumDesc] = useState('');
   const [isDynamicAlbum, setIsDynamicAlbum] = useState(false);
@@ -662,6 +669,17 @@ export default function AlbumsPage() {
                     <Plus className="w-3.5 h-3.5" />
                     <span>Add Photos</span>
                   </button>
+                  <button
+                    onClick={() => {
+                      const cur = albums.find((a) => a.id === Number(selectedCollection.id));
+                      if (cur) setSharingAlbum(cur);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 hover:from-purple-100 hover:to-indigo-100 text-purple-700 rounded-xl text-xs font-semibold shadow-xs transition"
+                    title="Share Event & QR Code"
+                  >
+                    <QrCode className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Share Event</span>
+                  </button>
                 </>
               )}
 
@@ -1011,6 +1029,18 @@ export default function AlbumsPage() {
                         <span className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/60 backdrop-blur-md text-white rounded-full text-[10px] font-semibold">
                           {album.photo_count} photo{album.photo_count !== 1 ? 's' : ''}
                         </span>
+
+                        {/* Quick Share Event QR */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSharingAlbum(album);
+                          }}
+                          className="absolute top-2 right-9 p-1.5 bg-black/40 hover:bg-purple-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition backdrop-blur-sm"
+                          title="Share Event & QR Code"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                        </button>
 
                         {/* Quick Delete */}
                         <button
@@ -1454,6 +1484,17 @@ export default function AlbumsPage() {
         itemType="photos"
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={handleExecuteBatchDelete}
+      />
+
+      {/* Share Event & QR Code Modal */}
+      <ShareEventModal
+        album={sharingAlbum}
+        apiUrl={API_URL}
+        isOpen={Boolean(sharingAlbum)}
+        onClose={() => setSharingAlbum(null)}
+        onShareUpdated={() => {
+          loadData();
+        }}
       />
     </div>
   );

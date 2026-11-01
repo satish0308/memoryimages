@@ -1,7 +1,7 @@
 import json
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, or_
 
@@ -30,6 +30,10 @@ class UpdateAlbumRequest(BaseModel):
 
 class AddPhotosToAlbumRequest(BaseModel):
     media_ids: List[int]
+
+class ShareAlbumRequest(BaseModel):
+    is_public: bool = True
+    allow_guest_uploads: bool = False
 
 def resolve_dynamic_album_photos(album: Album, db: Session, user_id: int) -> List[Media]:
     """Resolves live photos matching the dynamic smart album's saved query rules."""
@@ -361,6 +365,9 @@ def list_albums(
             "is_dynamic": getattr(a, "is_dynamic", False),
             "rules": parsed_rules,
             "photo_count": photo_count,
+            "share_token": a.share_token,
+            "is_public": bool(a.is_public),
+            "allow_guest_uploads": bool(a.allow_guest_uploads),
             "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None,
             "created_at": a.created_at
         })
@@ -440,6 +447,9 @@ def get_album_details(
         "description": album.description,
         "is_dynamic": getattr(album, "is_dynamic", False),
         "rules": parsed_rules,
+        "share_token": album.share_token,
+        "is_public": bool(album.is_public),
+        "allow_guest_uploads": bool(album.allow_guest_uploads),
         "photo_count": len(user_photos),
         "photos": [{
             "id": m.id,
@@ -567,3 +577,207 @@ def export_album_zip(
         preset=req.get("preset", "original")
     )
     return bulk_download(download_req, current_user=current_user, db=db)
+
+@router.post("/{album_id}/share")
+def share_album(
+    album_id: int,
+    req: ShareAlbumRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generates or updates public event share link and guest upload permissions."""
+    import secrets
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not album.share_token:
+        album.share_token = secrets.token_urlsafe(16)
+    album.is_public = req.is_public
+    album.allow_guest_uploads = req.allow_guest_uploads
+    db.commit()
+    db.refresh(album)
+
+    return {
+        "share_token": album.share_token,
+        "share_url": f"/share/{album.share_token}",
+        "is_public": album.is_public,
+        "allow_guest_uploads": album.allow_guest_uploads
+    }
+
+@router.delete("/{album_id}/share")
+def revoke_album_share(
+    album_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Revokes the public share link for an album."""
+    album = db.query(Album).filter(Album.id == album_id).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Album not found")
+    if album.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    album.is_public = False
+    album.share_token = None
+    db.commit()
+    return {"status": "share_revoked"}
+
+@router.get("/public/share/{share_token}")
+def get_public_shared_album(
+    share_token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Public guest endpoint: Access a shared event album via its signed share token.
+    Zero login required for friends, guests, and family.
+    """
+    album = db.query(Album).filter(Album.share_token == share_token, Album.is_public == True).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Shared album not found or link has expired")
+
+    if getattr(album, "is_dynamic", False):
+        photos = resolve_dynamic_album_photos(album, db, user_id=album.user_id)
+    else:
+        photos = [m for m in album.media if not m.is_deleted and not m.is_archived]
+
+    return {
+        "name": album.name,
+        "description": album.description,
+        "allow_guest_uploads": bool(album.allow_guest_uploads),
+        "photo_count": len(photos),
+        "created_at": album.created_at,
+        "photos": [{
+            "id": p.id,
+            "filename": p.filename,
+            "captured_at": p.captured_at,
+            "location_name": p.location_name,
+            "width": p.width,
+            "height": p.height,
+            "has_motion_photo": bool(getattr(p, "has_motion_photo", False)),
+            "thumbnail_url": f"/api/v1/media/{p.id}/thumbnail?size=256",
+            "view_url": f"/api/v1/media/{p.id}/view"
+        } for p in photos]
+    }
+
+@router.post("/public/share/{share_token}/upload")
+def guest_upload_to_shared_album(
+    share_token: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Public guest endpoint: Guests upload photos directly into the shared event album.
+    Photos are safely stored under the event host's account and tagged into the album.
+    """
+    import os
+    import shutil
+    import uuid
+    from app.config import settings
+    from app.models.media import SourceType
+    from app.services.scanner import scan_file
+
+    album = db.query(Album).filter(Album.share_token == share_token, Album.is_public == True).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Shared album not found")
+    if not album.allow_guest_uploads:
+        raise HTTPException(status_code=403, detail="Guest uploads are disabled for this album")
+
+    os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    ext = os.path.splitext(file.filename)[1].lower()
+    safe_name = f"guest_{uuid.uuid4().hex[:8]}_{file.filename}"
+    file_path = os.path.join(settings.MEDIA_DIR, safe_name)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    media = scan_file(db, file_path, source_type=SourceType.MANUAL_UPLOAD, user_id=album.user_id)
+    if not media:
+        raise HTTPException(status_code=400, detail="Uploaded file is not a supported image format")
+
+    if media not in album.media:
+        album.media.append(media)
+    if not album.cover_media_id:
+        album.cover_media_id = media.id
+    db.commit()
+
+    return {
+        "status": "success",
+        "media_id": media.id,
+        "filename": media.filename,
+        "thumbnail_url": f"/api/v1/media/{media.id}/thumbnail?size=256"
+    }
+
+@router.get("/public/share/{share_token}/zip")
+def guest_download_album_zip(
+    share_token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Public guest endpoint: 1-Click high-speed streaming ZIP export of all photos in the shared album.
+    Zero server disk overhead streaming.
+    """
+    import io
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    from concurrent.futures import ThreadPoolExecutor
+    from app.services.drive_cache import stream_google_drive_file, fetch_google_drive_thumbnail_bytes
+    from app.models.media import SourceType
+
+    album = db.query(Album).filter(Album.share_token == share_token, Album.is_public == True).first()
+    if not album:
+        raise HTTPException(status_code=404, detail="Shared album not found")
+
+    if getattr(album, "is_dynamic", False):
+        photos = resolve_dynamic_album_photos(album, db, user_id=album.user_id)
+    else:
+        photos = [m for m in album.media if not m.is_deleted and not m.is_archived]
+
+    if not photos:
+        raise HTTPException(status_code=400, detail="Album is empty")
+
+    def fetch_item_bytes(item):
+        file_bytes = None
+        base_name = item.filename or f"photo_{item.id}.jpg"
+        try:
+            if item.source_type == SourceType.GOOGLE_DRIVE and item.source_id:
+                file_bytes = fetch_google_drive_thumbnail_bytes(item.source_id, db, size=1080)
+                if not file_bytes:
+                    g_stream = stream_google_drive_file(item.source_id, db)
+                    if g_stream:
+                        file_bytes = b"".join(g_stream)
+            elif item.original_path and os.path.isfile(item.original_path):
+                with open(item.original_path, "rb") as f:
+                    file_bytes = f.read()
+        except Exception:
+            pass
+        return base_name, file_bytes
+
+    max_workers = min(6, max(1, len(photos)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(fetch_item_bytes, photos))
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        seen = set()
+        for base_name, data in results:
+            if not data:
+                continue
+            arc_name = base_name
+            counter = 1
+            while arc_name in seen:
+                name_p, ext_p = os.path.splitext(base_name)
+                arc_name = f"{name_p}_{counter}{ext_p}"
+                counter += 1
+            seen.add(arc_name)
+            zf.writestr(arc_name, data)
+
+    zip_buffer.seek(0)
+    safe_title = "".join(c for c in album.name if c.isalnum() or c in (" ", "-", "_")).strip() or "Event_Photos"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_title}.zip"',
+    }
+    return StreamingResponse(zip_buffer, media_type="application/zip", headers=headers)
+

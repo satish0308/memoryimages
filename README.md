@@ -38,11 +38,35 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 ## ✨ Key Features
 
 ### 📅 Smart Interactive Timeline & 0ms Client Caching
+- **Interactive Vertical Minimap Scrubber**: A sleek, floating glassmorphic rail on the right edge of the screen displaying distinct year ticks and month dots. Dragging or hovering pops up an interactive glassmorphic tooltip badge (e.g. `📅 Aug 2024 · 142 photos`) and smoothly navigates across 15,000+ photos in a split second with active section auto-tracking.
 - **Client-Side Smart Caching (IndexedDB)**: Browser-native IndexedDB engine (`mymemorypics_thumbnail_cache`) pre-warms and caches thumbnails locally. Subsequent visits to your 14,000+ photo library load instantly with **0ms network latency** and full offline capability.
+- **Apple Live Photos & Google Motion Photos**: Auto-detects paired Apple Live Photos (`.heic` + `.mov`) and Google Motion Photos (embedded MP4 micro-video in JPEGs). Timeline cards display an ambient iOS-style **`[LIVE]`** pulsing badge, cross-fading to a smooth muted video loop on hover, and full high-definition playback in the Lightbox viewer.
 - **High-DPI Retina Thumbnails**: Ultra-crisp 512px WebP thumbnails rendered with Display P3 color profile preservation and smooth progressive blur backdrops.
 - **Pinch-to-Zoom Timeline Scaling**: Switch seamlessly between **Day**, **Month**, and **Year** chronological zoom levels.
 - **Dynamic Density Scaling**: Adjust grid density from a 10-column compact bird's-eye view to a 4-column detailed card layout.
 - **Group & Batch Multi-Selection**: Select entire months, years, or custom batches with 1-click selection headers and a floating bulk action dock (Favorite, Recategorize, Location Tagging, AI Enhance, Parallel ZIP Export).
+
+### 🌟 Nostalgia Flashbacks & Curated Memories Tab (`/memories`)
+- **Story-Style Nostalgic Reels**: Dedicated high-engagement Memories hub featuring:
+  - 🎂 **On This Day**: Highlights memories captured on today's calendar date across previous years (*"8 Years Ago Today"*).
+  - 🍂 **This Week in the Past**: Temporal window clustering photos taken $\pm 4$ days from today in previous years.
+  - 😄 **Smiles & Joy**: Candid laughing, smiling, and celebratory moments detected by facial emotion AI.
+  - 🗺️ **Unforgettable Places & Journeys**: Scenic travel milestones grouped by distinct world destinations.
+  - 🌅 **Golden Hour & Serene Views**: Atmospheric dusk, sunset, and nature landscapes.
+- **Fullscreen Interactive Story Player**: Instagram and Apple Photos style multi-segment progress bars, tap-to-skip left/right, pause/play toggle, ambient background glow, and 1-click Lightbox inspector.
+
+### 📺 Ambient TV & Digital Picture Frame Mode (`/kiosk`)
+- **Immersive Fullscreen Display**: Clean, distraction-free digital picture frame mode designed to run 24/7 on smart TVs, living room tablets, or secondary monitors with zero UI clutter.
+- **Smooth Ken Burns Motion**: Elegant panning and zooming transitions bringing static photos to life.
+- **Ambient Widgets**: Live clock, date, photo location badge, and capture date overlay.
+- **Configurable Controls**: Auto-hiding HUD with 5s, 8s, 15s, or 30s slide intervals, fullscreen toggle (`F`), and instant source switching (*All Photos*, *Favorites Only*, or *Places Only*).
+
+### 🔗 Event Sharing, QR Code Generator & Public Guest Portal (`/share/[token]`)
+- **1-Click Event Sharing**: Turn any album into a collaborative event album with a signed, tokenized public link (`/share/{token}`).
+- **Built-in QR Code Generator**: Generate instant scannable QR codes for guests at weddings, parties, vacations, or family dinners.
+- **Zero-Login Guest Portal**: Guests can view the photo wall, inspect full-resolution photos, or play ambient slideshows without creating an account.
+- **Guest Upload Dropzone**: Guests can contribute their own photos directly into the event album from their smartphone or laptop with real-time transfer progress. Uploaded photos are safely saved directly to your local host storage (`./data/originals`).
+- **1-Click Guest Streaming ZIP**: Guests can download the entire event collection in a single streaming ZIP archive with **0MB server disk overhead**.
 
 ### 🔍 Multi-Vector "Show Similar Photos" Engine & Discovery Tab (`/similar`)
 - **4-Facet Multi-Modal Matching**: Select any reference photo to instantly discover matching memories across four independent AI dimensions:
@@ -355,8 +379,11 @@ mymemorypics/
 - [x] **🗂️ Smart Spatiotemporal Trip Clustering**: Haversine distance and overnight temporal linking grouping multi-day vacations into cohesive named trips.
 - [x] **📦 High-Speed Parallel Streaming ZIP Exporter**: Multi-threaded parallel packaging (`max_workers=6`) supporting `original` and `optimized` presets.
 - [x] **📸 Rapid Burst & Duplicate Inspector**: 24ms localized BFS query, cached grid thumbnails, and smart Best Shot inspection with Zero Auto-Deletion protection.
-- [ ] **🔗 Public Shareable Album Links & Guest Gallery**: Tokenized public sharing URLs (`/share/[token]`) with optional PIN protection and auto-expiration for friends and family with 1-click ZIP export.
-- [ ] **🎞️ Apple Live Photos & Short Video Motion**: Auto-pairing of `.heic` + `.mov` clips with hover-motion playback on timeline thumbnails and inline silent video player.
+- [x] **🔗 Public Shareable Album Links & Guest Gallery (`/share/[token]`)**: Tokenized public sharing URLs with instant QR code generation, guest upload dropzone, and 1-click in-memory streaming ZIP export.
+- [x] **🎞️ Apple Live Photos & Short Video Motion**: Auto-detection of `.heic` + `.mov` and Google Motion Photos with hover-to-play timeline loops and high-res player.
+- [x] **📅 Vertical Minimap Scrubber**: Interactive fast scrubber rail on timeline with dynamic year/month jump bubbles.
+- [x] **🌟 Curated Memories Tab (`/memories`)**: Fullscreen story player with On This Day, This Week, and Joyful Moments highlights.
+- [x] **📺 Ambient TV & Kiosk Mode (`/kiosk`)**: Fullscreen Ken Burns digital picture frame for smart TVs and tablets with live clock and date.
 - [ ] **📱 PWA Offline App**: Mobile home-screen installation and background sync service worker.
 
 ---
