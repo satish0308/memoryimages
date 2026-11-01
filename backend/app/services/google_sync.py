@@ -358,7 +358,7 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     except Exception:
                         pass
 
-                is_motion = name.startswith("MVIMG_") or ("_MP." in name) or ("_MP_" in name)
+                is_motion = name.startswith("MVIMG_") or name.endswith("_MP.jpg") or name.endswith("_MP.jpeg") or name.endswith("_MP.heic")
                 media_obj = Media(
                     filename=name,
                     original_path=f"gdrive://{file_id}/{name}",

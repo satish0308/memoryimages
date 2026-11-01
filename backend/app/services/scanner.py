@@ -344,7 +344,8 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     
     # Check if paired video or motion photo exists
     fname_base = os.path.splitext(file_path)[0]
-    has_motion = any(os.path.isfile(fname_base + e) for e in [".mov", ".MOV", ".mp4", ".MP4"]) or os.path.basename(file_path).startswith("MVIMG_") or ("_MP." in os.path.basename(file_path)) or ("_MP_" in os.path.basename(file_path))
+    base_name = os.path.basename(file_path)
+    has_motion = any(os.path.isfile(fname_base + e) for e in [".mov", ".MOV", ".mp4", ".MP4"]) or base_name.startswith("MVIMG_") or base_name.endswith("_MP.jpg") or base_name.endswith("_MP.jpeg")
 
     # Create Media Record
     media = Media(
