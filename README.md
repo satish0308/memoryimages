@@ -99,18 +99,53 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Noise Elimination**: Filters out isolated 1-2 photo noise (`min_photos=5`), reducing trips clutter from 415 fragmented items down to **133 curated stories** with rich titles, dates, and non-blurry covers.
 - **Navigable Collections**: Full Lightbox traversal with Next/Prev chevron buttons, keyboard arrows (`ArrowLeft`, `ArrowRight`), and swipe support.
 
+### ⭐ AI Aesthetics & "Best Shot" Selector
+- **Multi-Metric Quality Scoring**: Evaluates each photo across four independent technical and human dimensions:
+  - 🔍 **Sharpness & Focus**: Laplacian variance scoring normalized to detect camera shake vs. razor-sharp subject detail.
+  - ☀️ **Lighting & Exposure Balance**: Luminance histogram standard deviation analysis penalizing dark pocket shots or blown highlights.
+  - 😊 **Facial Expression & Smiles**: Detects joyful, smiling, and celebratory facial emotions with open-eye weighting.
+  - 📐 **Detail & Resolution**: Megapixel density and clarity evaluation.
+- **Gold Crown "Best Shot" Badge**: In any rapid burst sequence or duplicate cluster, the highest-ranking photo receives a prominent gold **`👑 BEST SHOT`** badge with aesthetic score tooltips directly on the timeline card.
+- **1-Click "Switch to Best Shot"**: When inspecting alternate shots in Lightbox, a single click on **"⭐ Switch to Best Shot in Sequence"** jumps directly to the crown winner.
+- **Automatic Blurry Photo Flagging**: Blurry shots are tagged with **`⚠️ Blurry`** warnings and provide a 1-click **"Move to Trash"** button for effortless cleanup.
+
+### 🎬 Video Studio & Scrubbable Hover Previews
+- **YouTube & Apple-Style Hover Scrubber**: Hovering your cursor over any video thumbnail on the timeline automatically starts a muted preview. Moving your mouse horizontally scrubs through the video in real time with an interactive progress track and a floating timestamp pill (e.g. `0:14 / 0:45`).
+- **Precision Frame-by-Frame Stepper**: In Lightbox, step backward or forward by single frames (`◀ 1F`, `1F ▶` at 30fps / `0.033s`) to find the exact frame before capturing.
+- **Adjustable Playback Speeds**: Toggle between `0.5x`, `1x`, `1.5x`, and `2x` video playback on the fly.
+- **📸 1-Click "Capture Best Frame" Grabber**: Pause or scrub to any moment in a video and extract an ultra-crisp still photo.
+  - **Save to Library**: Directly ingests the extracted frame into your photo feed with inherited timestamp, GPS coordinates, and camera metadata via `POST /api/v1/media/{id}/capture-frame`.
+  - **Instant Download (JPG)**: Direct high-resolution still image download to your computer.
+
+### 🎨 Creative Studio: 1-Click Collages & Print Layouts (`/collage`)
+- **Dedicated Full-Screen Studio Route**: Select between 2 and 16 photos on the timeline and launch **"Collage Studio"** in a dedicated, full-screen tab or window (`/collage?ids=...`).
+- **100% Viewport-Fitted Canvas**: True responsive CSS aspect-ratio viewport fitting ensuring zero scrolling, cut-offs, or clipping on any display size.
+- **Instant Escape & Minimize Navigation**: Pressing the **`Esc`** key on your keyboard or clicking **"← Exit Studio"** instantly minimizes or closes the studio and returns to your gallery.
+- **Versatile Layout Templates**:
+  - **Classic Grid**: Even multi-photo grids (2x2, 2x3, 3x3) with configurable corner rounding and gaps.
+  - **Split View**: 50/50 balanced side-by-side or stacked cards.
+  - **Hero Focus**: 1 dominant lead hero photo alongside a vertical side stack.
+  - **Triptych**: 3 vertical story slices.
+  - **Polaroid Stack**: Authentic tilted polaroid frames with realistic white borders, drop shadows, and photo captions.
+  - **Story (9:16)**: Smartphone-optimized story format with ambient photo blur.
+  - **Print 4x6 (3:2)**: Standard photo print layout ready for printing.
+- **Interactive Reordering**: Click any photo slot, then click another to instantly swap their positions.
+- **Print-Ready High-Res Export**: Offscreen HTML5 canvas renders at 2160px+ resolution with automatic memory reclamation (`URL.revokeObjectURL`), supporting instant JPG downloads and direct **"Save to Library"**.
+
 ### 📸 Rapid Burst Sequence & Duplicate Inspector
 - **Perceptual Similarity Clustering**: High-speed localized BFS query ($\pm 20$s window) identifying near-identical rapid burst sequences and duplicate shots in 24ms.
 - **Inspect vs Grid Modes**: Instant switching between 256px cached thumbnail grid and 1080p single inspection view with progressive adjacent prefetching.
 - **1-Click Best Shot Selection**: AI automatically evaluates sharpness, focus, and smiles to recommend the best shot while allowing manual override.
 - **Zero Auto-Deletion Guarantee**: Redundant shots are soft-deleted to Trash only upon explicit user confirmation.
 
-### 👥 People & Face Auto-Clustering
+### 👥 People & Face Management Studio & Visual Search (`/people`)
+- **Visual Face Crop & ArcFace Library Search**: Draw a custom box or click any detected face in Lightbox or People studio to compute its 512-dimensional ArcFace biometric vector, query across 15,000+ photos via vector cosine similarity, and 1-click group matches into a named person profile.
+- **AI "Merge Same Person" Suggestions**: Automatically identifies duplicate people profiles with match confidence percentages and 1-click merge.
+- **Relationship Categorization**: Tag profiles with relationship types (**Family**, **Friends**, **Work**, **Partner**, **Self**, **Other**) and filter by relationship category pills.
+- **Custom Cover Photos & Profile Visibility**: Set any photo in a person's gallery as their primary cover thumbnail, and toggle hiding/unhiding unwanted face detections.
 - **UltraFace ONNX Inference**: Sub-millisecond bounding box localization with strict norm thresholding ($>0.70$) and aspect ratio filtering (0.48–1.48) to reject false positives on water, textures, and backgrounds.
 - **Default Hidden Bounding Boxes**: Face detection boxes remain hidden upon image preview and display only when explicitly toggled.
-- **ArcFace Biometric Embeddings**: Cosine similarity clustering groups face crops into identified individuals without manual tagging.
 - **On-The-Fly WebP Face Avatars**: Dynamic 180×180 WebP headshots cropped in-memory from full-resolution photos.
-- **People Management Studio**: Dedicated interactive people gallery, inline name assignment, face merging, and untagged face review trays.
 
 ### 📦 High-Speed Parallel Streaming ZIP Exporter
 - **In-Memory Parallel Generation**: Multi-threaded parallel packaging (`ThreadPoolExecutor(max_workers=6)`) streaming directly into a ZIP archive without writing temporary files to server disk.
@@ -278,6 +313,10 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/media/{id}/thumbnail` | Direct 307 CDN redirect or in-memory WebP thumbnail |
 | `GET` | `/api/v1/media/{id}/view` | Streams full-resolution original image from Drive/disk |
 | `GET` | `/api/v1/media/{id}/similar` | Multi-vector similarity search across Visual, Faces, Location, and Time |
+| `GET` | `/api/v1/media/{id}/aesthetics` | AI aesthetic quality scoring breakdown (sharpness, exposure, expression, resolution) |
+| `POST` | `/api/v1/media/{id}/set-best-shot` | Designates primary Best Shot for rapid burst sequence / manual override |
+| `POST` | `/api/v1/media/{id}/capture-frame` | Extracts still frame from video (canvas/ffmpeg) & saves directly to library with EXIF |
+| `POST` | `/api/v1/media/save-collage` | Ingests high-resolution canvas collage directly into library under Memory category |
 | `POST` | `/api/v1/media/bulk-download` | High-speed parallel streaming ZIP archive (`original` or `optimized` presets) |
 | `POST` | `/api/v1/media/batch-enhance` | Non-destructive batch AI enhancement (Auto Magic, Shadow Lift, De-Haze, Revert) |
 | `POST` | `/api/v1/media/pregenerate-thumbnails` | Enqueues background worker job to pre-generate missing 1080p WebP renditions |
@@ -287,9 +326,14 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/search?semantic=true` | Offline ONNX CLIP natural language semantic search |
 | `GET` | `/api/v1/search/events` | Spatiotemporal event clustering ("Moments & Outings") |
 | `GET` | `/api/v1/media/locations` | Geotagged coordinates and location names for map explorer |
-| `GET` | `/api/v1/people` | Identified people with photo counts and avatars |
+| `GET` | `/api/v1/people` | Identified people with photo counts, relationship tags, and avatars |
 | `GET` | `/api/v1/people/{id}/avatar` | On-the-fly square WebP face crop avatar |
-| `POST` | `/api/v1/people/auto-cluster` | Triggers offline CLIP face embedding clustering |
+| `GET` | `/api/v1/people/merge-suggestions` | AI duplicate people merge recommendations based on ArcFace centroid cosine distance |
+| `POST` | `/api/v1/people/search-by-face` | 512-d ArcFace visual search by custom crop box across entire library |
+| `POST` | `/api/v1/people/group-matched-faces` | 1-click group matched face crops into new or existing person profile |
+| `PATCH` | `/api/v1/people/{id}` | Updates person name, relationship category (Family, Friends, Work, Partner, Self), and hidden state |
+| `PATCH` | `/api/v1/people/{id}/cover` | Sets custom cover photo for person profile |
+| `POST` | `/api/v1/people/auto-cluster` | Triggers offline ArcFace embedding clustering |
 | `GET` | `/api/v1/albums` | Lists custom and dynamic smart albums with live photo counts |
 | `POST` | `/api/v1/albums` | Creates standard custom albums or self-updating dynamic smart albums |
 | `GET` | `/api/v1/albums/{id}` | Gets album details; live-resolves matching photos for dynamic albums |
@@ -349,7 +393,7 @@ mymemorypics/
 │   ├── Dockerfile           # Backend container definition
 │   └── requirements.txt     # Python dependencies (FastAPI, ONNX, FastEmbed, Pillow, PyJWT, redis, psycopg2, boto3)
 ├── frontend/
-│   ├── app/                 # Next.js App Router (/albums, /similar, /triage, /map, /people, /sync, /settings)
+│   ├── app/                 # Next.js App Router (/albums, /collage, /similar, /triage, /map, /people, /sync, /settings)
 │   ├── components/          # Reusable UI modules (Timeline, Lightbox, BulkActionBar, AmbientSlideshow, Triage)
 │   ├── utils/               # Frontend utilities (thumbnailCache.ts for IndexedDB 0ms caching)
 │   ├── Dockerfile           # Multi-stage production Next.js container definition
@@ -368,6 +412,10 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **⭐ AI Aesthetics & "Best Shot" Selector**: Multi-metric evaluation (Laplacian sharpness, exposure balance, facial smiles/open eyes, resolution), gold `👑 BEST SHOT` crown badge, Lightbox sequence switcher, and blurry photo cleanup.
+- [x] **🎬 Video Studio & Scrubbable Hover Previews**: Real-time cursor scrubbing on timeline thumbnails, frame-by-frame stepper, speed controls, and 1-click "Capture Best Frame" grabber saving directly to library.
+- [x] **🎨 Creative Studio: 1-Click Collages & Print Layouts (`/collage`)**: Full-screen dedicated studio route with responsive 100% viewport fitting, `[Esc]` minimize/return, multi-layout templates (Grid, Split, Hero, Triptych, Polaroid, Story, Print), slot swapping, and 2160px+ high-res export.
+- [x] **👤 Visual Face Crop & ArcFace Library Search (`/people`)**: Draw bounding box or click face to extract 512-d ArcFace vector, instant library-wide visual search, 1-click group into person profiles, relationship tagging, and AI merge suggestions.
 - [x] **☁️ S3 / MinIO Object Storage Engine**: Self-hosted S3-compatible engine (MinIO) for zero-cloud private photo storage, RAM streaming, and disaster recovery archives.
 - [x] **🛡️ Automated WAL Backups & Disaster Recovery**: Zero-downtime online SQLite backups, safety rollback, offsite exports, and rolling retention pruning.
 - [x] **🐘 PostgreSQL + pgvector Dual-Database Engine**: Dynamic database driver supporting SQLite for personal libraries and PostgreSQL + pgvector with HNSW indexing for 100k+ photo enterprise scale.
