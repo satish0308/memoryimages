@@ -13,10 +13,12 @@ import {
   Camera, 
   Heart, 
   Share2,
-  Maximize2
+  Maximize2,
+  Film
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { HighlightReelModal } from '@/components/studio/HighlightReelModal';
 import { useAuth } from '@/context/AuthContext';
 
 interface MemoryReel {
@@ -37,6 +39,11 @@ export default function MemoriesPage() {
   const [storyIndex, setStoryIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
+  const [highlightReelData, setHighlightReelData] = useState<{
+    title: string;
+    subtitle?: string;
+    items: MediaItem[];
+  } | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -191,9 +198,25 @@ export default function MemoriesPage() {
 
               {/* Bottom Details */}
               <div className="absolute bottom-5 left-5 right-5 text-white z-10 space-y-1">
-                <h3 className="font-black text-lg leading-snug drop-shadow-md">
-                  {reel.title}
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-lg leading-snug drop-shadow-md">
+                    {reel.title}
+                  </h3>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHighlightReelData({
+                        title: reel.title,
+                        subtitle: reel.subtitle,
+                        items: reel.items,
+                      });
+                    }}
+                    className="p-1.5 rounded-full bg-white/20 hover:bg-indigo-600 text-white backdrop-blur-md transition shadow-md"
+                    title="Play as Cinematic Highlight Reel"
+                  >
+                    <Film className="w-3.5 h-3.5" />
+                  </button>
+                </div>
                 <p className="text-xs text-slate-300 line-clamp-1 drop-shadow-sm">
                   {reel.subtitle}
                 </p>
@@ -252,16 +275,36 @@ export default function MemoriesPage() {
                 </div>
               </div>
 
-              {/* Play / Pause Toggle */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsPlaying(!isPlaying);
-                }}
-                className="p-1.5 rounded-full bg-black/30 backdrop-blur-md hover:bg-black/50 text-white"
-              >
-                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-white" />}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const story = activeStory;
+                    setActiveStory(null);
+                    setHighlightReelData({
+                      title: story.title,
+                      subtitle: story.subtitle,
+                      items: story.items,
+                    });
+                  }}
+                  className="px-2.5 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-lg hover:scale-105 transition cursor-pointer"
+                  title="Watch as cinematic Ken Burns Highlight Reel with soundtrack"
+                >
+                  <Film className="w-3 h-3 text-pink-200" />
+                  <span>Cinematic Reel</span>
+                </button>
+
+                {/* Play / Pause Toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsPlaying(!isPlaying);
+                  }}
+                  className="p-1.5 rounded-full bg-black/30 backdrop-blur-md hover:bg-black/50 text-white cursor-pointer"
+                >
+                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 fill-white" />}
+                </button>
+              </div>
             </div>
 
             {/* Center Photo Display & Tap Navigators */}
@@ -345,6 +388,17 @@ export default function MemoriesPage() {
         onToggleFavorite={() => {}}
         onDelete={() => setSelectedPhoto(null)}
       />
+
+      {/* Cinematic Highlight Reel Studio Modal */}
+      {highlightReelData && (
+        <HighlightReelModal
+          isOpen={Boolean(highlightReelData)}
+          onClose={() => setHighlightReelData(null)}
+          title={highlightReelData.title}
+          subtitle={highlightReelData.subtitle}
+          items={highlightReelData.items}
+        />
+      )}
     </div>
   );
 }

@@ -132,6 +132,31 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Interactive Reordering**: Click any photo slot, then click another to instantly swap their positions.
 - **Print-Ready High-Res Export**: Offscreen HTML5 canvas renders at 2160px+ resolution with automatic memory reclamation (`URL.revokeObjectURL`), supporting instant JPG downloads and direct **"Save to Library"**.
 
+### 🪄 In-Browser Non-Destructive Photo Editing Studio (`/edit`)
+- **Dedicated Full-Screen Darkroom Studio**: Open any photo from Lightbox (press `E` or click **"Edit"**) into a dedicated full-screen editing workspace (`/edit?id=...`).
+- **Parametric Sliders**: Real-time hardware-accelerated adjustments with live canvas feedback:
+  - ☀️ **Light & Tone**: Exposure (`-100` to `+100`), Contrast, Highlights, Shadows.
+  - 🎨 **Color & White Balance**: Temperature / Warmth (Cool blue to Amber warm), Tint (Green to Magenta), Saturation, and Vibrance.
+  - 🔍 **Detail & Crispness**: Convolution sharpness filtering and radial Vignette edge falloff.
+- **Crop, Rotate & Geometry**:
+  - Presets: Freeform, 1:1 Square, 4:5 Portrait, 16:9 Cinema, 9:16 Story, 4:3 Classic, 3:2 Print.
+  - 90° Clockwise / Counter-Clockwise rotation, Horizontal Flip (Mirror), and Vertical Flip.
+- **1-Click Curated Color Presets**: *Vivid Pop*, *Golden Hour*, *Noir B&W*, *Vintage Film*, *Cinematic Slate*, *Moody Forest*.
+- **Interactive "Before vs After" Split Screen**: Drag a live vertical split line across the photo to inspect edits vs original, or press-and-hold **"Hold to Compare"**.
+- **Non-Destructive Saving**:
+  - **Save as New Photo**: Calls `POST /api/v1/media/{id}/save-edit` with canvas rendering, ingesting into library with inherited EXIF and GPS metadata.
+  - **Save Recipe Overlay**: Persists adjustments JSON recipe on existing photo with 1-click **"Revert to Original"** anytime.
+  - **Direct Download**: Instant high-res JPG export to your computer.
+
+### 🎞️ AI Highlight Reels ("Moments in Motion")
+- **Cinematic Ken Burns Engine**: Smooth pan and zoom transitions across still photos with crossfade dissolves rendered on a 1080p HTML5 canvas.
+- **Atmospheric Ambient Audio Soundtrack**: Built-in Web Audio API synthesizer generating peaceful pentatonic acoustic chords without external audio asset downloads.
+- **Multi-Source Generation**:
+  - **From /memories**: 1-click **"Cinematic Reel"** on any flashback story, anniversary trip, or curated album.
+  - **From Bulk Selection**: Select 2 to 25 photos on timeline or albums → click **"🎬 Highlight Reel"** in `BulkActionBar`.
+- **Customizable Speed & Overlays**: Choose between *Fast (2.5s)*, *Balanced (3.5s)*, and *Cinematic (5.0s)* pacing with animated title cards and date/location HUD.
+- **1080p High-Def Video Export**: In-browser client recording via `MediaRecorder` API saving directly to library (`POST /api/v1/media/save-highlight-reel`) or downloading as an HD WebM/MP4 video.
+
 ### 📸 Rapid Burst Sequence & Duplicate Inspector
 - **Perceptual Similarity Clustering**: High-speed localized BFS query ($\pm 20$s window) identifying near-identical rapid burst sequences and duplicate shots in 24ms.
 - **Inspect vs Grid Modes**: Instant switching between 256px cached thumbnail grid and 1080p single inspection view with progressive adjacent prefetching.
@@ -317,6 +342,10 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `POST` | `/api/v1/media/{id}/set-best-shot` | Designates primary Best Shot for rapid burst sequence / manual override |
 | `POST` | `/api/v1/media/{id}/capture-frame` | Extracts still frame from video (canvas/ffmpeg) & saves directly to library with EXIF |
 | `POST` | `/api/v1/media/save-collage` | Ingests high-resolution canvas collage directly into library under Memory category |
+| `POST` | `/api/v1/media/{id}/save-edit` | Ingests canvas-edited photo as new copy or updates recipe overlay |
+| `PATCH`| `/api/v1/media/{id}/edit-recipe` | Updates non-destructive recipe parameters (adjustments, crop, preset) |
+| `POST` | `/api/v1/media/{id}/revert-edit` | Reverts recipe adjustments back to original unedited state |
+| `POST` | `/api/v1/media/save-highlight-reel`| Ingests recorded highlight reel video (MP4/WebM) into library |
 | `POST` | `/api/v1/media/bulk-download` | High-speed parallel streaming ZIP archive (`original` or `optimized` presets) |
 | `POST` | `/api/v1/media/batch-enhance` | Non-destructive batch AI enhancement (Auto Magic, Shadow Lift, De-Haze, Revert) |
 | `POST` | `/api/v1/media/pregenerate-thumbnails` | Enqueues background worker job to pre-generate missing 1080p WebP renditions |
@@ -393,7 +422,7 @@ mymemorypics/
 │   ├── Dockerfile           # Backend container definition
 │   └── requirements.txt     # Python dependencies (FastAPI, ONNX, FastEmbed, Pillow, PyJWT, redis, psycopg2, boto3)
 ├── frontend/
-│   ├── app/                 # Next.js App Router (/albums, /collage, /similar, /triage, /map, /people, /sync, /settings)
+│   ├── app/                 # Next.js App Router (/albums, /collage, /edit, /similar, /triage, /map, /people, /sync, /settings)
 │   ├── components/          # Reusable UI modules (Timeline, Lightbox, BulkActionBar, AmbientSlideshow, Triage)
 │   ├── utils/               # Frontend utilities (thumbnailCache.ts for IndexedDB 0ms caching)
 │   ├── Dockerfile           # Multi-stage production Next.js container definition
@@ -412,6 +441,8 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **🪄 In-Browser Non-Destructive Photo Editing Studio (`/edit`)**: Dedicated full-screen studio, parametric sliders (exposure, contrast, shadows, warmth, sharpness, vignette), crop/rotate/flip presets, color presets, live split before/after slider, and recipe persistence.
+- [x] **🎞️ AI Highlight Reels ("Moments in Motion")**: High-definition Ken Burns animated reels with atmospheric synthesized ambient soundtrack, customizable pacing, title cards, and 1080p WebM/MP4 export to library and download.
 - [x] **⭐ AI Aesthetics & "Best Shot" Selector**: Multi-metric evaluation (Laplacian sharpness, exposure balance, facial smiles/open eyes, resolution), gold `👑 BEST SHOT` crown badge, Lightbox sequence switcher, and blurry photo cleanup.
 - [x] **🎬 Video Studio & Scrubbable Hover Previews**: Real-time cursor scrubbing on timeline thumbnails, frame-by-frame stepper, speed controls, and 1-click "Capture Best Frame" grabber saving directly to library.
 - [x] **🎨 Creative Studio: 1-Click Collages & Print Layouts (`/collage`)**: Full-screen dedicated studio route with responsive 100% viewport fitting, `[Esc]` minimize/return, multi-layout templates (Grid, Split, Hero, Triptych, Polaroid, Story, Print), slot swapping, and 2160px+ high-res export.

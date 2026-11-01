@@ -15,9 +15,11 @@ import {
   MapPin, 
   Sparkles, 
   Share2,
-  Layout
+  Layout,
+  Film
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
+import { HighlightReelModal } from '../studio/HighlightReelModal';
 import { MediaItem } from './PhotoCard';
 
 interface AlbumOption {
@@ -69,6 +71,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     allow_guest_uploads?: boolean;
   } | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showHighlightReelModal, setShowHighlightReelModal] = useState(false);
 
   useEffect(() => {
     if (selectedIds.length > 0) {
@@ -330,6 +333,22 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           >
             <Layout className="w-3.5 h-3.5 text-pink-200" />
             <span>Collage Studio</span>
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
+              {selectedIds.length}
+            </span>
+          </button>
+        )}
+
+        {/* 1-Click AI Highlight Reel */}
+        {selectedIds.length >= 2 && selectedIds.length <= 25 && (
+          <button
+            onClick={() => setShowHighlightReelModal(true)}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
+            title="Create Cinematic Highlight Reel with Ken Burns motion & soundtrack"
+          >
+            <Film className="w-3.5 h-3.5 text-indigo-200" />
+            <span>Highlight Reel</span>
             <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
               {selectedIds.length}
             </span>
@@ -687,6 +706,17 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         onClose={() => setShowShareModal(false)}
         onShareUpdated={() => {}}
       />
+
+      {/* AI Highlight Reel Studio Modal */}
+      {showHighlightReelModal && (
+        <HighlightReelModal
+          isOpen={showHighlightReelModal}
+          onClose={() => setShowHighlightReelModal(false)}
+          title="Highlight Reel"
+          subtitle={`${selectedIds.length} Selected Moments`}
+          items={selectedPhotos.length ? selectedPhotos : selectedIds.map((id) => ({ id } as MediaItem))}
+        />
+      )}
     </div>
   );
 };

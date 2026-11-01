@@ -71,6 +71,7 @@ def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None,
         "burst_type": burst_type,
         "aesthetic_score": burst_score if burst_score is not None else getattr(item, "aesthetic_score", 0.0),
         "is_best_shot": is_burst_lead or getattr(item, "is_best_shot", False),
+        "edit_recipe": getattr(item, "edit_recipe", None),
     }
 
 @router.get("")
@@ -793,6 +794,204 @@ def save_created_collage(
         "status": "success",
         "id": new_media.id,
         "filename": new_media.filename,
+        "thumbnail_url": f"/api/v1/media/{new_media.id}/thumbnail?size=256",
+        "view_url": f"/api/v1/media/{new_media.id}/view"
+    }
+
+class SaveEditRequest(BaseModel):
+    image_base64: str
+    save_as_new: bool = True
+    recipe: Optional[Dict[str, Any]] = None
+
+class EditRecipeRequest(BaseModel):
+    recipe: Dict[str, Any]
+
+class SaveHighlightReelRequest(BaseModel):
+    video_base64: str
+    title: Optional[str] = "Highlight Reel"
+    source_media_ids: Optional[List[int]] = []
+    duration_seconds: Optional[float] = None
+
+@router.post("/{media_id}/save-edit")
+def save_edited_photo(
+    media_id: int,
+    req: SaveEditRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Saves an edited version of a photo.
+    If save_as_new=True: ingests as a new photo in the user's library with inherited EXIF.
+    If save_as_new=False: updates the existing media item's edit_recipe and marks is_enhanced=True.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not req.image_base64:
+        raise HTTPException(status_code=400, detail="Missing edited image data")
+
+    try:
+        header, encoded = req.image_base64.split(",", 1) if "," in req.image_base64 else ("", req.image_base64)
+        image_data = base64.b64decode(encoded)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
+
+    recipe_json = json.dumps(req.recipe) if req.recipe else None
+
+    if req.save_as_new:
+        upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+        os.makedirs(upload_dir, exist_ok=True)
+        timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        stem, _ = os.path.splitext(media.filename)
+        filename = f"{stem}_edited_{timestamp_str}_{secrets.token_hex(3)}.jpg"
+        dest_path = os.path.join(upload_dir, filename)
+
+        with open(dest_path, "wb") as f:
+            f.write(image_data)
+
+        from app.services.scanner import scan_file
+        new_media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+        if not new_media:
+            raise HTTPException(status_code=500, detail="Failed to catalog edited photo")
+
+        # Inherit parent EXIF & metadata
+        new_media.captured_at = media.captured_at
+        new_media.latitude = media.latitude
+        new_media.longitude = media.longitude
+        new_media.location_name = media.location_name
+        new_media.camera_make = media.camera_make
+        new_media.camera_model = media.camera_model
+        new_media.iso = media.iso
+        new_media.focal_length = media.focal_length
+        new_media.exposure_time = media.exposure_time
+        new_media.category = MediaCategory.MEMORY
+        new_media.is_enhanced = True
+        new_media.edit_recipe = recipe_json
+        db.commit()
+
+        return {
+            "status": "success",
+            "saved_as": "new_copy",
+            "id": new_media.id,
+            "filename": new_media.filename,
+            "thumbnail_url": f"/api/v1/media/{new_media.id}/thumbnail?size=256",
+            "preview_url": f"/api/v1/media/{new_media.id}/thumbnail?size=1080",
+            "view_url": f"/api/v1/media/{new_media.id}/view"
+        }
+    else:
+        # Save recipe overlay onto current media item
+        media.edit_recipe = recipe_json
+        media.is_enhanced = True
+
+        if media.source_type == SourceType.LOCAL and os.path.exists(media.original_path):
+            try:
+                from PIL import Image
+                im = Image.open(io.BytesIO(image_data))
+                thumb_dir = os.path.join(settings.THUMBNAIL_DIR, "256")
+                os.makedirs(thumb_dir, exist_ok=True)
+                t_path = os.path.join(thumb_dir, f"thumb_{media.id}.webp")
+                im.thumbnail((256, 256), Image.Resampling.LANCZOS)
+                im.save(t_path, format="WEBP", quality=85)
+                media.thumbnail_256_path = t_path
+            except Exception as e:
+                logger.warning(f"Could not update local thumbnail for edited media {media.id}: {e}")
+
+        db.commit()
+        return {
+            "status": "success",
+            "saved_as": "recipe_overlay",
+            "id": media.id,
+            "filename": media.filename,
+            "edit_recipe": req.recipe,
+            "thumbnail_url": f"/api/v1/media/{media.id}/thumbnail?size=256",
+            "view_url": f"/api/v1/media/{media.id}/view"
+        }
+
+@router.patch("/{media_id}/edit-recipe")
+def update_edit_recipe(
+    media_id: int,
+    req: EditRecipeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Updates non-destructive recipe parameters (adjustments, crop, preset) on a media item."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    media.edit_recipe = json.dumps(req.recipe)
+    media.is_enhanced = True
+    db.commit()
+    return {"status": "success", "id": media.id, "recipe": req.recipe}
+
+@router.post("/{media_id}/revert-edit")
+def revert_photo_edits(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reverts any non-destructive recipe adjustments back to original unedited state."""
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    media.edit_recipe = None
+    media.is_enhanced = False
+    db.commit()
+    return {"status": "reverted", "id": media.id}
+
+@router.post("/save-highlight-reel")
+def save_highlight_reel(
+    req: SaveHighlightReelRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Saves an exported Highlight Reel video (MP4/WebM) directly into the user's library as a Memory video.
+    """
+    if not req.video_base64:
+        raise HTTPException(status_code=400, detail="Missing video base64 data")
+
+    try:
+        header, encoded = req.video_base64.split(",", 1) if "," in req.video_base64 else ("", req.video_base64)
+        video_bytes = base64.b64decode(encoded)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 video data: {e}")
+
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ext = ".mp4" if "mp4" in header.lower() else ".webm"
+    clean_title = (req.title or "Highlight_Reel").strip().replace(" ", "_")
+    filename = f"{clean_title}_{timestamp_str}_{secrets.token_hex(4)}{ext}"
+    dest_path = os.path.join(upload_dir, filename)
+
+    with open(dest_path, "wb") as f:
+        f.write(video_bytes)
+
+    from app.services.scanner import scan_file
+    new_media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+    if not new_media:
+        raise HTTPException(status_code=500, detail="Failed to catalog highlight reel video")
+
+    new_media.category = MediaCategory.MEMORY
+    new_media.duration_seconds = req.duration_seconds or 15.0
+    new_media.mime_type = "video/mp4" if ext == ".mp4" else "video/webm"
+    db.commit()
+
+    return {
+        "status": "success",
+        "id": new_media.id,
+        "filename": new_media.filename,
+        "duration_seconds": new_media.duration_seconds,
         "thumbnail_url": f"/api/v1/media/{new_media.id}/thumbnail?size=256",
         "view_url": f"/api/v1/media/{new_media.id}/view"
     }

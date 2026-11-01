@@ -592,6 +592,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         setShowShareModal(true);
       } else if (e.key.toLowerCase() === 's') {
         window.open(`/similar?id=${photo.id}`, '_blank');
+      } else if (e.key.toLowerCase() === 'e' && !photo.is_video) {
+        window.location.href = `/edit?id=${photo.id}`;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -676,6 +678,16 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+          {!photo.is_video && (
+            <a
+              href={`/edit?id=${photo.id}`}
+              className="px-3 py-2 bg-indigo-600/90 hover:bg-indigo-600 text-white font-semibold text-xs rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer flex items-center gap-1.5 border border-indigo-400/40 hover:scale-105"
+              title="Open Photo Editing Studio (E)"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Edit</span>
+            </a>
+          )}
           <button
             onClick={() => setShowShareModal(true)}
             className="p-2.5 bg-black/60 text-white hover:bg-black/90 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer hover:text-indigo-400"
@@ -2030,6 +2042,15 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <Download className="w-3.5 h-3.5" />
               Download
             </a>
+            {!photo.is_video && (
+              <a
+                href={`/edit?id=${photo.id}`}
+                className="p-2 rounded-lg border border-indigo-500/50 bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 hover:text-white transition"
+                title="Edit Photo Studio (E)"
+              >
+                <Sliders className="w-4 h-4" />
+              </a>
+            )}
             <button
               onClick={() => setShowShareModal(true)}
               className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition"
