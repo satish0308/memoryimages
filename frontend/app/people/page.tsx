@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Users, 
   Edit2, 
@@ -8,28 +8,31 @@ import {
   UserPlus, 
   Sparkles, 
   RefreshCw, 
-  Layers, 
   X, 
   ArrowRight, 
   Trash2, 
   Merge, 
-  Image as ImageIcon,
-  CheckCircle2,
-  Calendar,
-  MapPin,
-  ExternalLink,
-  Search,
-  Maximize2
+  CheckCircle2, 
+  Search, 
+  Maximize2,
+  Star,
+  Eye,
+  EyeOff,
+  UserCheck,
+  ChevronDown
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
-import { useTaskQueue } from '@/context/TaskQueueContext';
+import { SearchPersonModal } from '@/components/people/SearchPersonModal';
+import { useAuth } from '@/context/AuthContext';
 
 interface PersonItem {
   id: number;
   name: string;
   is_pet?: boolean;
   pet_type?: string | null;
+  relationship_type?: string | null;
+  is_hidden?: boolean;
   photo_count: number;
   faces_count: number;
   avatar_url: string | null;
@@ -66,12 +69,47 @@ interface PersonPhotoItem {
   thumbnail_url: string;
 }
 
+interface MergeSuggestion {
+  target_person: {
+    id: number;
+    name: string;
+    faces_count: number;
+    avatar_url: string;
+    cover_thumbnail_url: string | null;
+  };
+  source_person: {
+    id: number;
+    name: string;
+    faces_count: number;
+    avatar_url: string;
+    cover_thumbnail_url: string | null;
+  };
+  similarity: number;
+  confidence_pct: number;
+}
+
+const RELATIONSHIP_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'Family', label: '👨‍👩‍👧 Family' },
+  { value: 'Friends', label: '🤝 Friends' },
+  { value: 'Partner', label: '❤️ Partner' },
+  { value: 'Work', label: '💼 Work' },
+  { value: 'Self', label: '👤 Self' }
+];
+
 export default function PeoplePage() {
+  const { token: authContextToken } = useAuth();
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [stats, setStats] = useState<PeopleStats | null>(null);
   const [unnamedFaces, setUnnamedFaces] = useState<UnnamedFaceItem[]>([]);
   const [activeTab, setActiveTab] = useState<'people' | 'unnamed'>('people');
   const [filterType, setFilterType] = useState<'all' | 'people' | 'pets'>('all');
+  const [selectedRelationship, setSelectedRelationship] = useState<string>('all');
+  const [showHidden, setShowHidden] = useState(false);
+
+  // Merge Suggestions
+  const [mergeSuggestions, setMergeSuggestions] = useState<MergeSuggestion[]>([]);
+  const [mergingId, setMergingId] = useState<string | null>(null);
 
   // Loading & Action states
   const [loading, setLoading] = useState(true);
@@ -97,20 +135,33 @@ export default function PeoplePage() {
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
 
-  // Quick face tagger
-  const [namingFaceId, setNamingFaceId] = useState<number | null>(null);
-  const [newPersonName, setNewPersonName] = useState('');
+  // Visual Face Search Modal
+  const [searchModalFaceId, setSearchModalFaceId] = useState<number | null>(null);
+  const [isSearchPersonOpen, setIsSearchPersonOpen] = useState(false);
 
-  const { dispatchTask } = useTaskQueue();
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+  const getActiveToken = useCallback(() => {
+    return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
+  }, [authContextToken]);
 
   const fetchPeople = useCallback(async () => {
     try {
       setLoading(true);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      let url = `${API_URL}/api/v1/people?filter_type=${filterType}&show_hidden=${showHidden}`;
+      if (selectedRelationship !== 'all') {
+        url += `&relationship=${encodeURIComponent(selectedRelationship)}`;
+      }
+
       const [peopleRes, statsRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/people?filter_type=${filterType}`),
-        fetch(`${API_URL}/api/v1/people/stats`)
+        fetch(url, { headers }),
+        fetch(`${API_URL}/api/v1/people/stats`, { headers })
       ]);
+
       if (peopleRes.ok) setPeople(await peopleRes.json());
       if (statsRes.ok) setStats(await statsRes.json());
     } catch (e) {
@@ -118,20 +169,40 @@ export default function PeoplePage() {
     } finally {
       setLoading(false);
     }
-  }, [API_URL, filterType]);
+  }, [API_URL, filterType, selectedRelationship, showHidden, getActiveToken]);
+
+  const fetchMergeSuggestions = useCallback(async () => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/merge-suggestions?similarity_threshold=0.40`, { headers });
+      if (res.ok) {
+        setMergeSuggestions(await res.json());
+      }
+    } catch (e) {
+      console.error('Error fetching merge suggestions:', e);
+    }
+  }, [API_URL, getActiveToken]);
 
   const fetchUnnamedFaces = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/people/unnamed-faces?limit=60`);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/unnamed-faces?limit=60`, { headers });
       if (res.ok) setUnnamedFaces(await res.json());
     } catch (e) {
       console.error('Error fetching unnamed faces:', e);
     }
-  }, [API_URL]);
+  }, [API_URL, getActiveToken]);
 
   useEffect(() => {
     fetchPeople();
-  }, [fetchPeople]);
+    fetchMergeSuggestions();
+  }, [fetchPeople, fetchMergeSuggestions]);
 
   useEffect(() => {
     if (activeTab === 'unnamed') {
@@ -144,7 +215,11 @@ export default function PeoplePage() {
     setSelectedPerson(person);
     setLoadingPhotos(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
       if (res.ok) {
         setPersonPhotos(await res.json());
       }
@@ -158,16 +233,20 @@ export default function PeoplePage() {
   const handleSaveName = async (id: number) => {
     if (!editName.trim()) return;
     try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_URL}/api/v1/people/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ name: editName.trim() })
       });
       if (res.ok) {
         const updated = await res.json();
-        setPeople(prev => prev.map(p => p.id === id ? { ...p, name: updated.name } : p));
+        setPeople((prev) => prev.map((p) => (p.id === id ? { ...p, name: updated.name } : p)));
         if (selectedPerson && selectedPerson.id === id) {
-          setSelectedPerson(prev => prev ? { ...prev, name: updated.name } : null);
+          setSelectedPerson((prev) => (prev ? { ...prev, name: updated.name } : null));
         }
         setEditingId(null);
         setStatusMessage(`Renamed to "${updated.name}"`);
@@ -178,14 +257,118 @@ export default function PeoplePage() {
     }
   };
 
+  const handleUpdateRelationship = async (personId: number, rel: string) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ relationship_type: rel || null })
+      });
+      if (res.ok) {
+        setPeople((prev) =>
+          prev.map((p) => (p.id === personId ? { ...p, relationship_type: rel || null } : p))
+        );
+        if (selectedPerson && selectedPerson.id === personId) {
+          setSelectedPerson((prev) => (prev ? { ...prev, relationship_type: rel || null } : null));
+        }
+        setStatusMessage('Relationship category updated!');
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    } catch (e) {
+      console.error('Update relationship error:', e);
+    }
+  };
+
+  const handleSetCover = async (personId: number, mediaId: number) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}/cover`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ media_id: mediaId })
+      });
+      if (res.ok) {
+        fetchPeople();
+        setStatusMessage('Profile cover updated!');
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    } catch (e) {
+      console.error('Set cover error:', e);
+    }
+  };
+
+  const handleToggleHidePerson = async (personId: number, shouldHide: boolean) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ is_hidden: shouldHide })
+      });
+      if (res.ok) {
+        setSelectedPerson(null);
+        fetchPeople();
+        setStatusMessage(shouldHide ? 'Person hidden from library' : 'Person unhidden');
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    } catch (e) {
+      console.error('Hide person error:', e);
+    }
+  };
+
+  // Quick 1-Click Merge Suggestion
+  const handleQuickMerge = async (sourceId: number, targetId: number) => {
+    try {
+      const pairKey = `${sourceId}-${targetId}`;
+      setMergingId(pairKey);
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/merge`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ source_person_id: sourceId, target_person_id: targetId })
+      });
+
+      if (res.ok) {
+        setMergeSuggestions((prev) =>
+          prev.filter((s) => !(s.source_person.id === sourceId && s.target_person.id === targetId))
+        );
+        fetchPeople();
+        setStatusMessage('Profiles merged successfully!');
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    } catch (e) {
+      console.error('Quick merge failed:', e);
+    } finally {
+      setMergingId(null);
+    }
+  };
+
   // Run AI Auto-Clustering with ArcFace 512-d embeddings
   const handleAutoCluster = async () => {
     try {
       setIsClustering(true);
       setStatusMessage('Auto-clustering faces with ArcFace 512-d biometrics...');
-      const res = await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST' });
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST', headers });
       if (res.ok) {
         fetchPeople();
+        fetchMergeSuggestions();
         setStatusMessage('ArcFace clustering complete!');
         setTimeout(() => setStatusMessage(null), 3500);
       }
@@ -202,11 +385,16 @@ export default function PeoplePage() {
     try {
       setIsScanning(true);
       setStatusMessage('Scanning library photos with UltraFace, ArcFace & YOLOv8 for pets...');
-      const res = await fetch(`${API_URL}/api/v1/people/scan-faces?max_photos=250`, { method: 'POST' });
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/scan-faces?max_photos=250`, { method: 'POST', headers });
       if (res.ok) {
-        await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST' });
+        await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST', headers });
         setStatusMessage('Deep scan & clustering complete!');
         fetchPeople();
+        fetchMergeSuggestions();
         setTimeout(() => setStatusMessage(null), 4000);
       }
     } catch (e) {
@@ -217,35 +405,17 @@ export default function PeoplePage() {
     }
   };
 
-  // Assign name to an unnamed face
-  const handleAssignFaceName = async (faceId: number) => {
-    if (!newPersonName.trim()) return;
-    try {
-      const res = await fetch(`${API_URL}/api/v1/people/faces/${faceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ person_name: newPersonName.trim() })
-      });
-      if (res.ok) {
-        setNamingFaceId(null);
-        setNewPersonName('');
-        fetchUnnamedFaces();
-        fetchPeople();
-        setStatusMessage('Face assigned successfully!');
-        setTimeout(() => setStatusMessage(null), 3000);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Merge two people
+  // Manual Merge from Modal
   const handleMergePeople = async () => {
     if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return;
     try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_URL}/api/v1/people/merge`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           source_person_id: mergeSourceId,
           target_person_id: mergeTargetId
@@ -259,6 +429,7 @@ export default function PeoplePage() {
           setSelectedPerson(null);
         }
         fetchPeople();
+        fetchMergeSuggestions();
         setStatusMessage('People successfully merged!');
         setTimeout(() => setStatusMessage(null), 3000);
       }
@@ -286,7 +457,11 @@ export default function PeoplePage() {
     setSelectedPerson(person);
     setLoadingPhotos(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
       if (res.ok) {
         const photos = await res.json();
         setPersonPhotos(photos);
@@ -301,7 +476,6 @@ export default function PeoplePage() {
     }
   };
 
-  // Active Lightbox Photo
   const activeMediaItem: MediaItem | null = unnamedPhotoMedia
     ? unnamedPhotoMedia
     : selectedPhotoIndex !== null && personPhotos[selectedPhotoIndex]
@@ -327,11 +501,10 @@ export default function PeoplePage() {
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-bold text-lg">
               <Users className="w-5 h-5 text-indigo-600" />
-              People & Face Recognition
+              <span>People & Face Management Studio</span>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl">
-              Automatic face detection and vector clustering powered by UltraFace ONNX & CLIP Vision.
-              Faces are clustered into individuals so you can easily label family, friends, and special moments.
+              Automatic face clustering, ArcFace biometric matching, relationship management, and 1-click visual face search.
             </p>
           </div>
 
@@ -341,7 +514,7 @@ export default function PeoplePage() {
               onClick={handleAutoCluster}
               disabled={isClustering}
               className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
-              title="Automatically cluster faces with vector embeddings"
+              title="Automatically cluster faces with ArcFace biometric embeddings"
             >
               <Sparkles className={`w-3.5 h-3.5 ${isClustering ? 'animate-spin text-amber-300' : ''}`} />
               <span>{isClustering ? 'Clustering...' : 'Auto-Cluster Faces'}</span>
@@ -363,7 +536,7 @@ export default function PeoplePage() {
               title="Merge two duplicate person profiles"
             >
               <Merge className="w-3.5 h-3.5 text-purple-500" />
-              <span className="hidden sm:inline">Merge</span>
+              <span className="hidden sm:inline">Manual Merge</span>
             </button>
           </div>
         </div>
@@ -406,68 +579,189 @@ export default function PeoplePage() {
         )}
       </div>
 
-      {/* View Switcher Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-        <button
-          onClick={() => setActiveTab('people')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
-            activeTab === 'people'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>Identified People ({people.length})</span>
-        </button>
+      {/* AI Merge Same Person Suggestions Banner */}
+      {mergeSuggestions.length > 0 && !showHidden && (
+        <div className="bg-gradient-to-r from-purple-950/70 via-indigo-950/50 to-slate-900 border border-purple-500/40 rounded-3xl p-5 shadow-xl space-y-3 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              <h3 className="font-bold text-sm text-white">
+                AI Duplicate Face Suggestions ({mergeSuggestions.length})
+              </h3>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              High-confidence biometric vector matches across people
+            </span>
+          </div>
 
+          <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
+            {mergeSuggestions.map((s) => (
+              <div
+                key={`${s.source_person.id}-${s.target_person.id}`}
+                className="flex-shrink-0 bg-slate-900/90 border border-slate-700/80 rounded-2xl p-3 flex items-center gap-3 shadow-md"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-purple-500/50 shadow-inner">
+                    <img
+                      src={`${API_URL}${s.source_person.avatar_url}`}
+                      alt={s.source_person.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-bold text-white max-w-[90px] truncate">
+                      {s.source_person.name}
+                    </p>
+                    <p className="text-[10px] text-slate-400">{s.source_person.faces_count} faces</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center px-1">
+                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded-full">
+                    {s.confidence_pct}% Match
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-purple-400 mt-0.5" />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-indigo-500/50 shadow-inner">
+                    <img
+                      src={`${API_URL}${s.target_person.avatar_url}`}
+                      alt={s.target_person.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-bold text-white max-w-[90px] truncate">
+                      {s.target_person.name}
+                    </p>
+                    <p className="text-[10px] text-slate-400">{s.target_person.faces_count} faces</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleQuickMerge(s.source_person.id, s.target_person.id)}
+                  disabled={mergingId === `${s.source_person.id}-${s.target_person.id}`}
+                  className="ml-2 px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {mergingId === `${s.source_person.id}-${s.target_person.id}` ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Merge className="w-3.5 h-3.5" />
+                  )}
+                  <span>Merge</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* View Switcher Tabs */}
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setActiveTab('people');
+              setShowHidden(false);
+            }}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
+              activeTab === 'people' && !showHidden
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Identified People ({people.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('unnamed')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
+              activeTab === 'unnamed'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Untagged Faces Review Tray</span>
+          </button>
+        </div>
+
+        {/* Hidden People Toggle */}
         <button
-          onClick={() => setActiveTab('unnamed')}
-          className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
-            activeTab === 'unnamed'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
+          onClick={() => {
+            setShowHidden(!showHidden);
+            setActiveTab('people');
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition ${
+            showHidden
+              ? 'bg-amber-600 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'
           }`}
+          title="Toggle view of hidden people"
         >
-          <UserPlus className="w-3.5 h-3.5" />
-          <span>Untagged Faces Review Tray</span>
+          {showHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+          <span>{showHidden ? 'Viewing Hidden People' : 'Hidden People'}</span>
         </button>
       </div>
 
       {/* Tab 1: Identified People Grid */}
       {activeTab === 'people' && (
         <>
-          {/* Sub-Filters: All | People | Pets */}
-          <div className="flex items-center gap-2 mb-4">
-            <button
-              onClick={() => setFilterType('all')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                filterType === 'all'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              All ({people.length})
-            </button>
-            <button
-              onClick={() => setFilterType('people')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                filterType === 'people'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              People ({people.filter(p => !p.is_pet).length})
-            </button>
-            <button
-              onClick={() => setFilterType('pets')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                filterType === 'pets'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              <span>🐾 Pets ({people.filter(p => p.is_pet).length})</span>
-            </button>
+          {/* Sub-Filters: Type & Relationship Category */}
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setFilterType('all')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                  filterType === 'all'
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                All ({people.length})
+              </button>
+              <button
+                onClick={() => setFilterType('people')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                  filterType === 'people'
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                People ({people.filter((p) => !p.is_pet).length})
+              </button>
+              <button
+                onClick={() => setFilterType('pets')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                  filterType === 'pets'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <span>🐾 Pets ({people.filter((p) => p.is_pet).length})</span>
+              </button>
+            </div>
+
+            {/* Relationship Category Filter Pills */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] text-slate-400 font-medium">Category:</span>
+              {RELATIONSHIP_FILTERS.map((rf) => (
+                <button
+                  key={rf.value}
+                  onClick={() => setSelectedRelationship(rf.value)}
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
+                    selectedRelationship === rf.value
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                  }`}
+                >
+                  {rf.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {people.length === 0 && !loading && (
@@ -476,18 +770,24 @@ export default function PeoplePage() {
                 <Users className="w-7 h-7" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 dark:text-white text-sm">No People Clustered Yet</h3>
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                  {showHidden ? 'No Hidden People' : 'No People in this Category'}
+                </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  Click "Auto-Cluster Faces" to group detected faces using offline vision embeddings.
+                  {showHidden
+                    ? 'You have not hidden any person profiles.'
+                    : 'Click "Auto-Cluster Faces" or use Visual Face Search to group your loved ones.'}
                 </p>
               </div>
-              <button
-                onClick={handleAutoCluster}
-                disabled={isClustering}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md transition"
-              >
-                Auto-Cluster Faces Now
-              </button>
+              {!showHidden && (
+                <button
+                  onClick={handleAutoCluster}
+                  disabled={isClustering}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md transition"
+                >
+                  Auto-Cluster Faces Now
+                </button>
+              )}
             </div>
           )}
 
@@ -502,7 +802,7 @@ export default function PeoplePage() {
               return (
                 <div
                   key={person.id}
-                  className="group bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-4 text-center space-y-3 shadow-sm hover:shadow-xl hover:border-indigo-400 dark:hover:border-indigo-600 transition-all duration-300"
+                  className="group bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-4 text-center space-y-3 shadow-sm hover:shadow-xl hover:border-indigo-400 dark:hover:border-indigo-600 transition-all duration-300 relative"
                 >
                   {/* Face Crop Avatar Circle */}
                   <div
@@ -570,6 +870,15 @@ export default function PeoplePage() {
                       </div>
                     )}
 
+                    {/* Relationship Badge */}
+                    {person.relationship_type && (
+                      <div className="mt-1 flex justify-center">
+                        <span className="text-[9px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                          {person.relationship_type}
+                        </span>
+                      </div>
+                    )}
+
                     {person.is_pet && (
                       <div className="mt-1 flex justify-center">
                         <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
@@ -579,7 +888,7 @@ export default function PeoplePage() {
                       </div>
                     )}
 
-                    {/* Photo Count & Fullscreen Actions */}
+                    {/* Photo Count & Gallery Trigger */}
                     <div className="flex items-center justify-center gap-2 mt-1">
                       <button
                         onClick={() => openPersonGallery(person)}
@@ -587,13 +896,6 @@ export default function PeoplePage() {
                         title="Browse all photos in gallery"
                       >
                         {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
-                      </button>
-                      <button
-                        onClick={(e) => openPersonFullscreen(person, e)}
-                        className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-md transition hover:bg-slate-100 dark:hover:bg-slate-800"
-                        title="Open in full screen"
-                      >
-                        <Maximize2 className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -604,16 +906,16 @@ export default function PeoplePage() {
         </>
       )}
 
-      {/* Tab 2: Untagged Faces Review Tray */}
+      {/* Tab 2: Untagged Faces Review Tray with Visual Face Search */}
       {activeTab === 'unnamed' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Detected Faces Awaiting Label
+                Detected Faces Awaiting Label ({unnamedFaces.length})
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                These faces were detected in your library. Click to name them or assign to an existing person.
+                Click &quot;Search Person&quot; on any face to instantly find and group all matching photos across your library.
               </p>
             </div>
             <button
@@ -636,7 +938,7 @@ export default function PeoplePage() {
                   key={face.id}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 text-center space-y-2 shadow-sm hover:shadow-md transition"
                 >
-                  <div 
+                  <div
                     onClick={() => openFaceInLightbox(face)}
                     className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-slate-900 border-2 border-slate-100 dark:border-slate-800 shadow-sm cursor-pointer hover:border-indigo-500 transition hover:scale-105 group/crop relative"
                     title="Click to view full photo in full screen"
@@ -652,45 +954,23 @@ export default function PeoplePage() {
                     </div>
                   </div>
 
-                  {namingFaceId === face.id ? (
-                    <div className="space-y-1.5">
-                      <input
-                        type="text"
-                        placeholder="Person name..."
-                        value={newPersonName}
-                        onChange={(e) => setNewPersonName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAssignFaceName(face.id)}
-                        className="w-full text-xs border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-800 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        autoFocus
-                      />
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => handleAssignFaceName(face.id)}
-                          className="px-2.5 py-1 bg-indigo-600 text-white rounded-lg text-[10px] font-semibold"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setNamingFaceId(null)}
-                          className="px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 text-[10px] rounded-lg"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <button
-                        onClick={() => {
-                          setNamingFaceId(face.id);
-                          setNewPersonName('');
-                        }}
-                        className="px-3 py-1 bg-indigo-50 dark:bg-indigo-950 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-semibold transition"
-                      >
-                        + Name Person
-                      </button>
-                    </div>
-                  )}
+                  <p className="text-[10px] text-slate-400 truncate max-w-[120px] mx-auto">
+                    {face.filename}
+                  </p>
+
+                  {/* 1-Click Visual Search Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchModalFaceId(face.id);
+                      setIsSearchPersonOpen(true);
+                    }}
+                    className="w-full py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-[10px] font-bold shadow-xs flex items-center justify-center gap-1 transition"
+                    title="Search & group all photos of this person in library"
+                  >
+                    <Search className="w-3 h-3 text-amber-300" />
+                    <span>Search Person</span>
+                  </button>
                 </div>
               ))}
             </div>
@@ -698,14 +978,14 @@ export default function PeoplePage() {
         </div>
       )}
 
-      {/* Person Photo Gallery Modal */}
+      {/* Selected Person Gallery Modal */}
       {selectedPerson && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
             {/* Modal Header */}
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4 min-w-0">
-                <div className="w-14 h-14 rounded-full overflow-hidden bg-slate-900 border-2 border-indigo-500 shadow-md flex-shrink-0">
+            <div className="p-6 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-full overflow-hidden bg-slate-900 border-2 border-indigo-500 shadow-md">
                   {selectedPerson.avatar_url ? (
                     <img
                       src={`${API_URL}${selectedPerson.avatar_url}`}
@@ -713,42 +993,61 @@ export default function PeoplePage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white">
+                    <div className="w-full h-full flex items-center justify-center text-slate-400">
                       <Users className="w-6 h-6" />
                     </div>
                   )}
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white truncate">
-                      {selectedPerson.name}
-                    </h2>
-                    <span className="bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 text-xs font-bold px-2.5 py-0.5 rounded-full">
-                      {personPhotos.length} {personPhotos.length === 1 ? 'photo' : 'photos'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Viewing all memories featuring this person
+
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>{selectedPerson.name}</span>
+                    {selectedPerson.is_pet && (
+                      <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full">
+                        🐾 {selectedPerson.pet_type?.toUpperCase()}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {personPhotos.length} photos with confirmed facial detections
                   </p>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    if (personPhotos.length > 0) {
-                      setSelectedPhotoIndex(0);
-                    }
-                  }}
-                  disabled={personPhotos.length === 0}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 hover:scale-[1.02]"
-                  title="View this person's photos in full-screen lightbox"
+              {/* Action Controls */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Relationship Dropdown */}
+                <select
+                  value={selectedPerson.relationship_type || ''}
+                  onChange={(e) => handleUpdateRelationship(selectedPerson.id, e.target.value)}
+                  className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-slate-700 dark:text-slate-200 cursor-pointer focus:outline-none focus:border-indigo-500"
                 >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                  <span>View Fullscreen</span>
+                  <option value="">No Category</option>
+                  <option value="Family">👨‍👩‍👧 Family</option>
+                  <option value="Friends">🤝 Friends</option>
+                  <option value="Partner">❤️ Partner</option>
+                  <option value="Work">💼 Work</option>
+                  <option value="Self">👤 Self</option>
+                  <option value="Other">🏷️ Other</option>
+                </select>
+
+                {/* Hide / Unhide Person */}
+                <button
+                  onClick={() =>
+                    handleToggleHidePerson(selectedPerson.id, !selectedPerson.is_hidden)
+                  }
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-400 rounded-xl text-xs font-semibold transition"
+                  title={selectedPerson.is_hidden ? 'Unhide this person' : 'Hide from library'}
+                >
+                  {selectedPerson.is_hidden ? (
+                    <Eye className="w-3.5 h-3.5" />
+                  ) : (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  )}
+                  <span>{selectedPerson.is_hidden ? 'Unhide' : 'Hide'}</span>
                 </button>
 
+                {/* Merge Button */}
                 <button
                   onClick={() => {
                     setMergeSourceId(selectedPerson.id);
@@ -770,7 +1069,7 @@ export default function PeoplePage() {
               </div>
             </div>
 
-            {/* Photos Grid */}
+            {/* Photos Grid with Set Cover Buttons */}
             <div className="flex-1 overflow-y-auto p-6">
               {loadingPhotos ? (
                 <div className="py-20 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
@@ -786,11 +1085,8 @@ export default function PeoplePage() {
                   {personPhotos.map((photo, index) => (
                     <div
                       key={photo.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedPhotoIndex(index);
-                      }}
-                      className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200/60 dark:border-slate-800 hover:shadow-xl hover:scale-[1.03] transition-all duration-300"
+                      onClick={() => setSelectedPhotoIndex(index)}
+                      className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200/60 dark:border-slate-800 hover:shadow-xl hover:scale-[1.02] transition-all duration-300"
                     >
                       <img
                         src={`${API_URL}${photo.thumbnail_url}`}
@@ -799,8 +1095,21 @@ export default function PeoplePage() {
                         loading="lazy"
                       />
 
-                      {/* Vignette Overlay */}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
+                      {/* Set Cover Hover Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSetCover(selectedPerson.id, photo.id);
+                        }}
+                        className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-amber-600 text-white opacity-0 group-hover:opacity-100 transition shadow-md z-10"
+                        title="Set as profile cover"
+                      >
+                        <Star className="w-3 h-3 text-amber-300" />
+                      </button>
+
+                      {/* Bottom Details Vignette */}
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
                         <p className="text-white text-[11px] font-semibold truncate leading-tight">
                           {photo.filename}
                         </p>
@@ -824,7 +1133,7 @@ export default function PeoplePage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm">
                 <Merge className="w-4 h-4 text-purple-600" />
-                Merge Two People
+                <span>Merge Two People</span>
               </div>
               <button
                 onClick={() => setShowMergeModal(false)}
@@ -841,7 +1150,7 @@ export default function PeoplePage() {
             <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Merge From (Source to be merged):
+                  Merge From (Source person to dissolve):
                 </label>
                 <select
                   value={mergeSourceId || ''}
@@ -894,6 +1203,19 @@ export default function PeoplePage() {
           </div>
         </div>
       )}
+
+      {/* Visual Face Search & Grouping Modal */}
+      <SearchPersonModal
+        isOpen={isSearchPersonOpen}
+        onClose={() => setIsSearchPersonOpen(false)}
+        apiUrl={API_URL}
+        faceId={searchModalFaceId}
+        onGrouped={() => {
+          fetchPeople();
+          fetchUnnamedFaces();
+          fetchMergeSuggestions();
+        }}
+      />
 
       {/* Integrated Lightbox Modal with Next/Prev navigation */}
       <LightboxModal

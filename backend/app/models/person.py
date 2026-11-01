@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship as sa_relationship
 
 from app.database import Base
 
@@ -13,11 +13,13 @@ class Person(Base):
     is_hidden = Column(Boolean, default=False)
     is_pet = Column(Boolean, default=False)
     pet_type = Column(String(32), nullable=True) # "dog", "cat", etc.
+    relationship_type = Column(String(32), nullable=True) # "Family", "Friends", "Work", "Partner", "Self", "Acquaintance", etc.
+    cover_media_id = Column(Integer, ForeignKey("media.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    faces = relationship("FaceDetection", back_populates="person")
+    faces = sa_relationship("FaceDetection", back_populates="person")
 
 class FaceDetection(Base):
     __tablename__ = "face_detections"
@@ -40,5 +42,5 @@ class FaceDetection(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    media = relationship("Media", back_populates="faces")
-    person = relationship("Person", back_populates="faces")
+    media = sa_relationship("Media", back_populates="faces")
+    person = sa_relationship("Person", back_populates="faces")

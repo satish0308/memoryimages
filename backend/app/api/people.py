@@ -1,5 +1,9 @@
 import logging
-from typing import List, Optional
+import io
+import base64
+from typing import List, Optional, Dict, Any
+import numpy as np
+from PIL import Image
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Response, status
 from sqlalchemy.orm import Session
@@ -24,7 +28,31 @@ from app.services.face_engine import (
 router = APIRouter()
 
 class PersonUpdateRequest(BaseModel):
-    name: str
+    name: Optional[str] = None
+    relationship_type: Optional[str] = None
+    is_hidden: Optional[bool] = None
+
+class SetCoverRequest(BaseModel):
+    media_id: int
+
+class SearchFaceRequest(BaseModel):
+    face_id: Optional[int] = None
+    media_id: Optional[int] = None
+    box_x: Optional[float] = None
+    box_y: Optional[float] = None
+    box_w: Optional[float] = None
+    box_h: Optional[float] = None
+    similarity_threshold: Optional[float] = 0.38
+
+class GroupMatchedFacesRequest(BaseModel):
+    person_name: str
+    person_id: Optional[int] = None
+    relationship_type: Optional[str] = None
+    face_ids: List[int] = []
+    media_ids: List[int] = []
+    query_face_id: Optional[int] = None
+    set_as_cover: bool = True
+    cover_media_id: Optional[int] = None
 
 class MergePeopleRequest(BaseModel):
     source_person_id: int
@@ -43,6 +71,8 @@ class UpdateFaceTagRequest(BaseModel):
 @router.get("")
 def list_people(
     filter_type: str = Query("all", regex="^(all|people|pets)$"),
+    relationship: Optional[str] = Query(None),
+    show_hidden: bool = Query(False),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
@@ -51,13 +81,20 @@ def list_people(
         return []
 
     query = db.query(Person).filter(
-        Person.user_id == current_user.id,
-        Person.is_hidden == False
+        Person.user_id == current_user.id
     )
+    if not show_hidden:
+        query = query.filter(Person.is_hidden == False)
+    else:
+        query = query.filter(Person.is_hidden == True)
+
     if filter_type == "people":
         query = query.filter(Person.is_pet == False)
     elif filter_type == "pets":
         query = query.filter(Person.is_pet == True)
+
+    if relationship and relationship.lower() != "all":
+        query = query.filter(Person.relationship_type.ilike(relationship))
 
     people = query.all()
     results = []
@@ -77,13 +114,16 @@ def list_people(
             continue
 
         first_face = faces[0] if faces else None
-        cover_media_id = first_face.media_id if first_face else None
+        cover_media_id = p.cover_media_id or (first_face.media_id if first_face else None)
         
         results.append({
             "id": p.id,
             "name": p.name,
             "is_pet": bool(p.is_pet),
             "pet_type": p.pet_type,
+            "relationship_type": getattr(p, "relationship_type", None),
+            "is_hidden": bool(p.is_hidden),
+            "cover_media_id": cover_media_id,
             "photo_count": len(unique_media_ids),
             "faces_count": len(faces),
             "avatar_url": f"/api/v1/people/{p.id}/avatar" if first_face else None,
@@ -249,6 +289,100 @@ def get_face_crop(
         headers={"Cache-Control": "public, max-age=86400"}
     )
 
+@router.get("/merge-suggestions")
+def get_merge_suggestions(
+    similarity_threshold: float = Query(0.40, ge=0.25, le=0.90),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Computes ArcFace centroid embeddings for all identified people and recommends
+    pairs that are likely the exact same person.
+    """
+    if not current_user:
+        return []
+
+    people = db.query(Person).filter(
+        Person.user_id == current_user.id,
+        Person.is_hidden == False
+    ).all()
+
+    centroids = {}
+    person_info = {}
+
+    for p in people:
+        faces = (
+            db.query(FaceDetection)
+            .join(Media, FaceDetection.media_id == Media.id)
+            .filter(
+                FaceDetection.person_id == p.id,
+                Media.user_id == current_user.id,
+                Media.is_deleted == False,
+                FaceDetection.embedding_str != None
+            ).all()
+        )
+        if not faces:
+            continue
+
+        embs = []
+        for f in faces:
+            try:
+                embs.append(np.array([float(x) for x in f.embedding_str.split(",")]))
+            except Exception:
+                pass
+        if not embs:
+            continue
+
+        centroid = np.mean(embs, axis=0)
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroids[p.id] = centroid / norm
+            first_face = faces[0]
+            cover_id = p.cover_media_id or (first_face.media_id if first_face else None)
+            person_info[p.id] = {
+                "id": p.id,
+                "name": p.name,
+                "relationship_type": getattr(p, "relationship_type", None),
+                "faces_count": len(faces),
+                "avatar_url": f"/api/v1/people/{p.id}/avatar",
+                "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None
+            }
+
+    p_ids = list(centroids.keys())
+    suggestions = []
+
+    for i in range(len(p_ids)):
+        for j in range(i + 1, len(p_ids)):
+            pid1, pid2 = p_ids[i], p_ids[j]
+            sim = float(np.dot(centroids[pid1], centroids[pid2]))
+            if sim >= similarity_threshold:
+                p1 = person_info[pid1]
+                p2 = person_info[pid2]
+
+                def is_named(name: str):
+                    clean = name.strip().lower()
+                    return clean not in ("unnamed", "unnamed person", "unknown") and not (clean.startswith("person ") and clean[7:].isdigit())
+
+                if is_named(p1["name"]) and not is_named(p2["name"]):
+                    target, source = p1, p2
+                elif is_named(p2["name"]) and not is_named(p1["name"]):
+                    target, source = p2, p1
+                elif p1["faces_count"] >= p2["faces_count"]:
+                    target, source = p1, p2
+                else:
+                    target, source = p2, p1
+
+                conf_pct = min(99, max(60, int(round((sim - 0.25) / (0.75 - 0.25) * 50 + 50))))
+                suggestions.append({
+                    "target_person": target,
+                    "source_person": source,
+                    "similarity": round(sim, 3),
+                    "confidence_pct": conf_pct
+                })
+
+    suggestions.sort(key=lambda x: x["similarity"], reverse=True)
+    return suggestions[:25]
+
 @router.get("/{person_id}")
 def get_person_detail(
     person_id: int,
@@ -339,26 +473,289 @@ def get_person_photos(
         "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
     } for m in photos]
 
+@router.post("/search-by-face")
+def search_by_face(
+    req: SearchFaceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Given a face crop (from drawn bounding box or existing face ID), computes its 512-d
+    ArcFace embedding and performs instant multi-face vector similarity search across all library photos.
+    """
+    query_emb = None
+    query_crop_url = None
+    query_face_id = req.face_id
+
+    # 1. Existing face ID
+    if req.face_id:
+        face = db.query(FaceDetection).filter(FaceDetection.id == req.face_id).first()
+        if not face:
+            raise HTTPException(status_code=404, detail="Face detection not found")
+        query_crop_url = f"/api/v1/people/faces/{face.id}/crop"
+        if face.embedding_str:
+            try:
+                query_emb = np.array([float(x) for x in face.embedding_str.split(",")])
+            except Exception:
+                pass
+        if query_emb is None:
+            media = db.query(Media).filter(Media.id == face.media_id).first()
+            if media:
+                img = load_media_image(media, db)
+                if img:
+                    W, H = img.size
+                    cx = int((face.box_x + face.box_w / 2.0) * W)
+                    cy = int((face.box_y + face.box_h / 2.0) * H)
+                    half = int(max(face.box_w * W, face.box_h * H) * 0.65)
+                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    query_emb = extract_arcface_embedding(crop)
+
+    # 2. Custom drawn or clicked box on media
+    elif req.media_id and req.box_x is not None and req.box_y is not None:
+        media = db.query(Media).filter(Media.id == req.media_id, Media.user_id == current_user.id).first()
+        if not media:
+            raise HTTPException(status_code=404, detail="Media not found")
+        img = load_media_image(media, db)
+        if not img:
+            raise HTTPException(status_code=400, detail="Unable to load image for face extraction")
+
+        W, H = img.size
+        bw = req.box_w or 0.15
+        bh = req.box_h or 0.18
+        cx = int((req.box_x + bw / 2.0) * W)
+        cy = int((req.box_y + bh / 2.0) * H)
+        half = int(max(bw * W, bh * H) * 0.65)
+        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+        query_emb = extract_arcface_embedding(crop)
+
+        # Generate WebP base64 preview for query avatar
+        try:
+            buf = io.BytesIO()
+            crop_sq = crop.convert("RGB").resize((180, 180), Image.Resampling.LANCZOS)
+            crop_sq.save(buf, format="WEBP", quality=90)
+            b64_crop = base64.b64encode(buf.getvalue()).decode("utf-8")
+            query_crop_url = f"data:image/webp;base64,{b64_crop}"
+        except Exception:
+            query_crop_url = f"/api/v1/media/{media.id}/thumbnail?size=256"
+
+        emb_str = ",".join(f"{x:.5f}" for x in query_emb) if query_emb is not None else None
+        face = FaceDetection(
+            media_id=media.id,
+            person_id=None,
+            box_x=req.box_x,
+            box_y=req.box_y,
+            box_w=bw,
+            box_h=bh,
+            confidence=1.0,
+            embedding_str=emb_str
+        )
+        db.add(face)
+        db.commit()
+        db.refresh(face)
+        query_face_id = face.id
+        if not query_crop_url.startswith("data:"):
+            query_crop_url = f"/api/v1/people/faces/{face.id}/crop"
+
+    if query_emb is None:
+        raise HTTPException(status_code=400, detail="Could not extract biometric face features from the specified area. Please ensure a face is visible.")
+
+    # 3. Query all face embeddings for current user
+    all_faces = (
+        db.query(FaceDetection, Media)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            FaceDetection.embedding_str != None
+        ).all()
+    )
+
+    matches_by_media: Dict[int, Dict[str, Any]] = {}
+    suggested_person_counts: Dict[int, int] = {}
+
+    for face_item, media_item in all_faces:
+        try:
+            target_emb = np.array([float(x) for x in face_item.embedding_str.split(",")])
+            sim = float(np.dot(query_emb, target_emb))
+        except Exception:
+            continue
+
+        if sim >= (req.similarity_threshold or 0.38):
+            conf_pct = min(99, max(50, int(round((sim - 0.25) / (0.75 - 0.25) * 50 + 50))))
+            
+            if media_item.id not in matches_by_media or sim > matches_by_media[media_item.id]["similarity"]:
+                person_obj = db.query(Person).filter(Person.id == face_item.person_id).first() if face_item.person_id else None
+                
+                if person_obj and person_obj.name and not person_obj.name.startswith("Person "):
+                    suggested_person_counts[person_obj.id] = suggested_person_counts.get(person_obj.id, 0) + 1
+
+                matches_by_media[media_item.id] = {
+                    "media_id": media_item.id,
+                    "face_id": face_item.id,
+                    "filename": media_item.filename,
+                    "thumbnail_url": f"/api/v1/media/{media_item.id}/thumbnail?size=256",
+                    "captured_at": media_item.captured_at.isoformat() if media_item.captured_at else None,
+                    "similarity": round(sim, 3),
+                    "confidence_pct": conf_pct,
+                    "current_person_id": person_obj.id if person_obj else None,
+                    "current_person_name": person_obj.name if person_obj else None,
+                    "box_x": face_item.box_x,
+                    "box_y": face_item.box_y,
+                    "box_w": face_item.box_w,
+                    "box_h": face_item.box_h
+                }
+
+    matches_list = sorted(list(matches_by_media.values()), key=lambda x: x["similarity"], reverse=True)
+
+    suggested_name = None
+    suggested_relationship = None
+    suggested_person_id = None
+    if suggested_person_counts:
+        top_pid = max(suggested_person_counts.items(), key=lambda x: x[1])[0]
+        top_p = db.query(Person).filter(Person.id == top_pid).first()
+        if top_p:
+            suggested_name = top_p.name
+            suggested_relationship = getattr(top_p, "relationship_type", None)
+            suggested_person_id = top_p.id
+
+    return {
+        "query_face_id": query_face_id,
+        "query_crop_url": query_crop_url,
+        "suggested_person_id": suggested_person_id,
+        "suggested_name": suggested_name,
+        "suggested_relationship": suggested_relationship,
+        "total_matches": len(matches_list),
+        "matches": matches_list
+    }
+
+@router.post("/group-matched-faces")
+def group_matched_faces(
+    req: GroupMatchedFacesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Groups all selected matching photos and face detections into a single Person profile.
+    Creates the person or merges into an existing person, sets relationship and cover photo.
+    """
+    target_name = req.person_name.strip()
+    if not target_name:
+        raise HTTPException(status_code=400, detail="Person name is required")
+
+    person = None
+    if req.person_id:
+        person = db.query(Person).filter(Person.id == req.person_id, Person.user_id == current_user.id).first()
+
+    if not person:
+        person = db.query(Person).filter(
+            Person.user_id == current_user.id,
+            func.lower(Person.name) == func.lower(target_name)
+        ).first()
+
+    if not person:
+        person = Person(
+            name=target_name,
+            user_id=current_user.id,
+            relationship_type=req.relationship_type.strip() if req.relationship_type else None,
+            is_hidden=False
+        )
+        db.add(person)
+        db.commit()
+        db.refresh(person)
+    else:
+        person.name = target_name
+        if req.relationship_type:
+            person.relationship_type = req.relationship_type.strip()
+        person.is_hidden = False
+
+    if req.cover_media_id:
+        person.cover_media_id = req.cover_media_id
+    elif req.set_as_cover and req.media_ids:
+        person.cover_media_id = req.media_ids[0]
+
+    assigned_count = 0
+    if req.face_ids:
+        db.query(FaceDetection).filter(
+            FaceDetection.id.in_(req.face_ids)
+        ).update({"person_id": person.id}, synchronize_session=False)
+        assigned_count += len(req.face_ids)
+
+    if req.query_face_id and req.query_face_id not in req.face_ids:
+        db.query(FaceDetection).filter(FaceDetection.id == req.query_face_id).update({"person_id": person.id}, synchronize_session=False)
+
+    db.commit()
+    db.refresh(person)
+
+    faces = db.query(FaceDetection).filter(FaceDetection.person_id == person.id).all()
+    unique_media = list(set(f.media_id for f in faces))
+
+    return {
+        "status": "success",
+        "message": f"Successfully grouped {len(unique_media)} photos for {person.name}",
+        "person": {
+            "id": person.id,
+            "name": person.name,
+            "relationship_type": getattr(person, "relationship_type", None),
+            "photo_count": len(unique_media),
+            "faces_count": len(faces),
+            "avatar_url": f"/api/v1/people/{person.id}/avatar"
+        },
+        "grouped_count": len(unique_media)
+    }
+
 @router.patch("/{person_id}")
-def update_person_name(
+def update_person(
     person_id: int,
     req: PersonUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Updates a person's display name."""
+    """Updates a person's name, relationship, or hidden status."""
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
     if person.user_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    new_name = req.name.strip()
-    if not new_name:
-        raise HTTPException(status_code=400, detail="Name cannot be empty")
-    person.name = new_name
+    if req.name is not None:
+        new_name = req.name.strip()
+        if new_name:
+            person.name = new_name
+    if req.relationship_type is not None:
+        person.relationship_type = req.relationship_type.strip() or None
+    if req.is_hidden is not None:
+        person.is_hidden = req.is_hidden
+
     db.commit()
-    return {"id": person.id, "name": person.name}
+    db.refresh(person)
+    return {
+        "id": person.id,
+        "name": person.name,
+        "relationship_type": person.relationship_type,
+        "is_hidden": person.is_hidden
+    }
+
+@router.patch("/{person_id}/cover")
+def set_person_cover(
+    person_id: int,
+    req: SetCoverRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Sets custom cover photo for a person."""
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+    if person.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    media = db.query(Media).filter(Media.id == req.media_id, Media.user_id == current_user.id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    person.cover_media_id = media.id
+    db.commit()
+    return {"id": person.id, "cover_media_id": person.cover_media_id}
 
 @router.post("/merge")
 def merge_people(

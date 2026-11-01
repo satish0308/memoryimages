@@ -27,10 +27,12 @@ import {
   Mountain,
   Sliders,
   Loader2,
-  Share2
+  Share2,
+  Search
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 import { SharePhotoModal } from './SharePhotoModal';
+import { SearchPersonModal } from '@/components/people/SearchPersonModal';
 
 interface FaceData {
   id: number;
@@ -89,6 +91,15 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isPlayingMotion, setIsPlayingMotion] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [searchModalFaceId, setSearchModalFaceId] = useState<number | null>(null);
+  const [searchModalCustomBox, setSearchModalCustomBox] = useState<{
+    mediaId: number;
+    boxX: number;
+    boxY: number;
+    boxW: number;
+    boxH: number;
+  } | null>(null);
+  const [isSearchPersonOpen, setIsSearchPersonOpen] = useState(false);
 
   // 1-Click Auto-Enhance state
   const [isEnhanced, setIsEnhanced] = useState(photo?.is_enhanced || false);
@@ -404,34 +415,16 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     const box_x = Math.max(0, Math.min(clickX - box_w / 2, 1 - box_w));
     const box_y = Math.max(0, Math.min(clickY - box_h / 2, 1 - box_h));
 
-    const personName = prompt('Enter the name of the person:');
-    if (!personName || !personName.trim()) {
-      setIsAddingFace(false);
-      return;
-    }
-
-    try {
-      const res = await fetch(`${apiUrl}/api/v1/people/media/${photo.id}/faces`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          box_x: Math.round(box_x * 1000) / 1000,
-          box_y: Math.round(box_y * 1000) / 1000,
-          box_w: Math.round(box_w * 1000) / 1000,
-          box_h: Math.round(box_h * 1000) / 1000,
-          person_name: personName.trim(),
-        }),
-      });
-      if (res.ok) {
-        const newFace = await res.json();
-        setFaces((prev) => [...prev, newFace]);
-        fetchKnownPeople();
-      }
-    } catch (err) {
-      console.error('Error adding face tag:', err);
-    } finally {
-      setIsAddingFace(false);
-    }
+    setIsAddingFace(false);
+    setSearchModalCustomBox({
+      mediaId: photo.id,
+      boxX: Math.round(box_x * 1000) / 1000,
+      boxY: Math.round(box_y * 1000) / 1000,
+      boxW: Math.round(box_w * 1000) / 1000,
+      boxH: Math.round(box_h * 1000) / 1000,
+    });
+    setSearchModalFaceId(null);
+    setIsSearchPersonOpen(true);
   };
 
   const handleCategoryChange = async (newCategory: string) => {
@@ -913,10 +906,25 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   setEditingName(face.person_name !== 'Unnamed' ? face.person_name : '');
                 }}
               >
-                {/* Floating Face Name Tag Badge */}
-                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900/90 text-white shadow-lg border border-slate-700 pointer-events-none group-hover:scale-105 transition">
-                  {face.person_name || 'Unnamed'}
-                </span>
+                {/* Floating Face Name Tag Badge & Quick Search */}
+                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1">
+                  <span className="whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-900/90 text-white shadow-lg border border-slate-700 pointer-events-none group-hover:scale-105 transition">
+                    {face.person_name || 'Unnamed'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSearchModalFaceId(face.id);
+                      setSearchModalCustomBox(null);
+                      setIsSearchPersonOpen(true);
+                    }}
+                    className="p-1 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white shadow-md transition cursor-pointer"
+                    title="Find all photos of this person in library"
+                  >
+                    <Search className="w-2.5 h-2.5" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1674,6 +1682,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => {
+                                  setSearchModalFaceId(face.id);
+                                  setSearchModalCustomBox(null);
+                                  setIsSearchPersonOpen(true);
+                                }}
+                                className="px-2 py-1 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 rounded text-indigo-300 text-[10px] font-semibold flex items-center gap-1 transition"
+                                title="Find all photos of this person in library"
+                              >
+                                <Search className="w-3 h-3 text-indigo-400" />
+                                <span>Find</span>
+                              </button>
+                              <button
+                                onClick={() => {
                                   setEditingFaceId(face.id);
                                   setEditingName(face.person_name !== 'Unnamed' ? face.person_name : '');
                                 }}
@@ -1785,6 +1805,19 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         apiUrl={apiUrl}
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
+      />
+
+      {/* Visual Face Search & Grouping Modal */}
+      <SearchPersonModal
+        isOpen={isSearchPersonOpen}
+        onClose={() => setIsSearchPersonOpen(false)}
+        apiUrl={apiUrl}
+        faceId={searchModalFaceId}
+        customBox={searchModalCustomBox}
+        onGrouped={() => {
+          if (photo) fetchFaces(photo.id);
+          fetchKnownPeople();
+        }}
       />
     </div>
   );

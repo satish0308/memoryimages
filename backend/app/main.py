@@ -84,6 +84,10 @@ def check_and_upgrade_schema(db_engine):
             with db_engine.connect() as conn:
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE people ADD COLUMN user_id INTEGER"))
+                if "relationship_type" not in columns:
+                    conn.execute(text("ALTER TABLE people ADD COLUMN relationship_type VARCHAR(32)"))
+                if "cover_media_id" not in columns:
+                    conn.execute(text("ALTER TABLE people ADD COLUMN cover_media_id INTEGER"))
                 conn.execute(text("UPDATE people SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 
