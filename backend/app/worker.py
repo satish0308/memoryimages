@@ -348,22 +348,35 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, thumb_1080_rel)
 
             try:
-                img = None
+                # 1. Local disk photos: read directly, resize & save as WebP
                 if item.original_path and os.path.isfile(item.original_path):
-                    img = Image.open(item.original_path)
+                    with Image.open(item.original_path) as img:
+                        img = ImageOps.exif_transpose(img)
+                        img_rgb = img.convert("RGB")
+                        img_1080 = img_rgb.copy()
+                        img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
+                        img_1080.save(thumb_1080_path, "WEBP", quality=90, method=4)
+                    item.thumbnail_1080_path = thumb_1080_path
+                    db.commit()
+                    processed += 1
+
+                # 2. Google Drive photos: fast CDN fetch (120 KB pre-rendered by Google instead of 25MB master stream)
                 elif item.source_type == SourceType.GOOGLE_DRIVE and item.source_id:
-                    file_bytes = b"".join(stream_google_drive_file(item.source_id, db))
-                    img = Image.open(io.BytesIO(file_bytes))
+                    from app.services.drive_cache import fetch_google_drive_thumbnail_bytes
+                    thumb_bytes = fetch_google_drive_thumbnail_bytes(item.source_id, db, size=1080)
+                    if thumb_bytes:
+                        with open(thumb_1080_path, "wb") as f:
+                            f.write(thumb_bytes)
+                        item.thumbnail_1080_path = thumb_1080_path
+                        db.commit()
+                        processed += 1
+
+                # 3. Fallback: scale from existing 256 thumbnail if no master file exists
                 elif item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
-                    img = Image.open(item.thumbnail_256_path)
-
-                if img:
-                    img = ImageOps.exif_transpose(img)
-                    img_rgb = img.convert("RGB")
-                    img_1080 = img_rgb.copy()
-                    img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
-                    img_1080.save(thumb_1080_path, "WEBP", quality=90, method=4)
-
+                    with Image.open(item.thumbnail_256_path) as img:
+                        img = ImageOps.exif_transpose(img)
+                        img_rgb = img.convert("RGB")
+                        img_rgb.save(thumb_1080_path, "WEBP", quality=85)
                     item.thumbnail_1080_path = thumb_1080_path
                     db.commit()
                     processed += 1
