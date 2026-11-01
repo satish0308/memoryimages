@@ -53,6 +53,10 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN is_enhanced BOOLEAN DEFAULT FALSE"))
                 if "enhancement_data" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN enhancement_data TEXT"))
+                if "aesthetic_score" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN aesthetic_score FLOAT DEFAULT 0.0"))
+                if "is_best_shot" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN is_best_shot BOOLEAN DEFAULT FALSE"))
                 if "share_token" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN share_token VARCHAR(64)"))
                 if "user_id" not in columns:

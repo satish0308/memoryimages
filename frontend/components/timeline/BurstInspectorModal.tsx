@@ -17,7 +17,8 @@ import {
   AlertCircle,
   Layers,
   Clock,
-  HardDrive
+  HardDrive,
+  Crown
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 
@@ -355,9 +356,9 @@ export const BurstInspectorModal: React.FC<BurstInspectorModalProps> = ({
               {/* Status Badges on Viewport */}
               <div className="absolute top-4 left-4 flex flex-col gap-2 pointer-events-none">
                 {isBest && (
-                  <div className="bg-amber-500 text-slate-950 text-xs font-bold px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 border border-amber-300 animate-pulse">
-                    <Award className="w-3.5 h-3.5" />
-                    <span>AI Best Shot Picked</span>
+                  <div className="bg-amber-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 border border-amber-300">
+                    <Crown className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>👑 AI Best Shot ({Math.round(currentItem.composite_score)}/100)</span>
                   </div>
                 )}
                 {isKeepingCurrent && (

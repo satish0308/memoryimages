@@ -688,6 +688,7 @@ export default function PhotosPage() {
       {/* Floating Bulk Action Bar */}
       <BulkActionBar
         selectedIds={selectedIds}
+        selectedPhotos={allPhotos.filter((p) => selectedIds.includes(p.id))}
         apiUrl={API_URL}
         onClearSelection={clearSelection}
         onBatchFavorite={handleBatchFavorite}
@@ -747,6 +748,14 @@ export default function PhotosPage() {
         onNavigateNext={navigateNext}
         hasPrev={hasPrev}
         hasNext={hasNext}
+        onSelectPhoto={(photoOrId) => {
+          if (typeof photoOrId === 'number') {
+            const found = allPhotos.find((p) => p.id === photoOrId);
+            if (found) setSelectedPhoto(found);
+          } else {
+            setSelectedPhoto(photoOrId);
+          }
+        }}
       />
 
       {/* Smart Filters Slide-Out Drawer */}

@@ -10,13 +10,16 @@ import {
   Download, 
   Tag, 
   Plus, 
-  Loader2,
-  Check,
-  MapPin,
-  Sparkles,
-  Share2
+  Loader2, 
+  Check, 
+  MapPin, 
+  Sparkles, 
+  Share2,
+  Layout
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
+import { CollageStudioModal } from '../studio/CollageStudioModal';
+import { MediaItem } from './PhotoCard';
 
 interface AlbumOption {
   id: number;
@@ -25,6 +28,7 @@ interface AlbumOption {
 
 interface BulkActionBarProps {
   selectedIds: number[];
+  selectedPhotos?: MediaItem[];
   apiUrl: string;
   onClearSelection: () => void;
   onBatchFavorite: () => void;
@@ -37,6 +41,7 @@ interface BulkActionBarProps {
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   selectedIds,
+  selectedPhotos = [],
   apiUrl,
   onClearSelection,
   onBatchFavorite,
@@ -51,6 +56,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showEnhanceMenu, setShowEnhanceMenu] = useState(false);
+  const [showCollageModal, setShowCollageModal] = useState(false);
   const [customLocName, setCustomLocName] = useState('');
   const [customLat, setCustomLat] = useState('');
   const [customLon, setCustomLon] = useState('');
@@ -312,6 +318,22 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           )}
           <span>Share</span>
         </button>
+
+        {/* 1-Click Creative Collage & Print Studio */}
+        {selectedIds.length >= 2 && selectedIds.length <= 12 && (
+          <button
+            onClick={() => setShowCollageModal(true)}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
+            title="Create a multi-photo collage or print layout"
+          >
+            <Layout className="w-3.5 h-3.5 text-pink-200" />
+            <span>Collage</span>
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
+              {selectedIds.length}
+            </span>
+          </button>
+        )}
 
         {/* Bulk Download (ZIP) */}
         <button
@@ -663,6 +685,19 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         isOpen={showShareModal}
         onClose={() => setShowShareModal(false)}
         onShareUpdated={() => {}}
+      />
+
+      {/* Creative Collage & Print Studio Modal */}
+      <CollageStudioModal
+        isOpen={showCollageModal}
+        onClose={() => setShowCollageModal(false)}
+        selectedPhotos={selectedPhotos}
+        apiUrl={apiUrl}
+        onSavedToLibrary={() => {
+          setShowCollageModal(false);
+          onClearSelection();
+          if (onBatchCategoryUpdated) onBatchCategoryUpdated();
+        }}
       />
     </div>
   );

@@ -28,7 +28,9 @@ import {
   Sliders,
   Loader2,
   Share2,
-  Search
+  Search,
+  Crown,
+  AlertTriangle
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 import { SharePhotoModal } from './SharePhotoModal';
@@ -56,6 +58,7 @@ interface LightboxModalProps {
   onNavigateNext?: () => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  onSelectPhoto?: (photoOrId: MediaItem | number) => void;
 }
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({
@@ -68,6 +71,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   onNavigateNext,
   hasPrev = false,
   hasNext = false,
+  onSelectPhoto,
 }) => {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -81,6 +85,22 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [editingName, setEditingName] = useState('');
   const [knownPeople, setKnownPeople] = useState<{ id: number; name: string }[]>([]);
   const [isAddingFace, setIsAddingFace] = useState(false);
+
+  // Video Studio Frame Grabber State
+  const [showCaptureModal, setShowCaptureModal] = useState(false);
+  const [capturedFrameData, setCapturedFrameData] = useState<{
+    dataUrl: string;
+    timestamp: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [isSavingFrame, setIsSavingFrame] = useState(false);
+  const [savedFrameSuccess, setSavedFrameSuccess] = useState<string | null>(null);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+
+  // AI Aesthetics & Quality State
+  const [aestheticData, setAestheticData] = useState<any>(null);
+  const [loadingAesthetics, setLoadingAesthetics] = useState(false);
   const [currentCategory, setCurrentCategory] = useState(photo?.category || 'memory');
   const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [locName, setLocName] = useState(photo?.location_name || '');
@@ -196,6 +216,108 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       videoRef.current.currentTime = photo.matched_timestamp;
     }
   }, [photo?.id, photo?.matched_timestamp]);
+
+  // Fetch AI Aesthetics & Best Shot data
+  useEffect(() => {
+    if (!photo) {
+      setAestheticData(null);
+      return;
+    }
+    let isMounted = true;
+    const fetchAesthetics = async () => {
+      try {
+        setLoadingAesthetics(true);
+        const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/aesthetics`, { headers });
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          setAestheticData(data);
+        }
+      } catch {
+        // Fallback gracefully
+      } finally {
+        if (isMounted) setLoadingAesthetics(false);
+      }
+    };
+    fetchAesthetics();
+    return () => { isMounted = false; };
+  }, [photo?.id, apiUrl]);
+
+  // Video Studio Frame Grabber Handlers
+  const handleCaptureFrame = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    setCapturedFrameData({
+      dataUrl,
+      timestamp: video.currentTime,
+      width: canvas.width,
+      height: canvas.height,
+    });
+    setSavedFrameSuccess(null);
+    setShowCaptureModal(true);
+  };
+
+  const handleSaveFrameToLibrary = async () => {
+    if (!capturedFrameData || !photo) return;
+    try {
+      setIsSavingFrame(true);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/capture-frame`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          timestamp_seconds: capturedFrameData.timestamp,
+          image_base64: capturedFrameData.dataUrl,
+          save_to_library: true
+        })
+      });
+      if (!res.ok) throw new Error('Failed to save frame');
+      const data = await res.json();
+      setSavedFrameSuccess(`Saved frame as Photo #${data.media_id}!`);
+      setTimeout(() => setSavedFrameSuccess(null), 4000);
+    } catch (e) {
+      console.error('Frame save error:', e);
+      alert('Failed to save frame to library.');
+    } finally {
+      setIsSavingFrame(false);
+    }
+  };
+
+  const handleDownloadCapturedFrame = () => {
+    if (!capturedFrameData || !photo) return;
+    const link = document.createElement('a');
+    const baseName = photo.filename.replace(/\.[^/.]+$/, '');
+    const tsStr = Math.round(capturedFrameData.timestamp * 100);
+    link.download = `Frame_${baseName}_${tsStr}.jpg`;
+    link.href = capturedFrameData.dataUrl;
+    link.click();
+  };
+
+  const stepVideoFrame = (deltaFrames: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration || 9999, video.currentTime + (deltaFrames / 30)));
+  };
+
+  const changePlaybackRate = (rate: number) => {
+    setPlaybackRate(rate);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = rate;
+    }
+  };
 
   // Reset delete confirm modal when switching photos
   useEffect(() => {
@@ -788,6 +910,69 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                     </button>
                   </div>
                 )}
+
+                {/* Video Studio Controls HUD */}
+                <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-700/70 backdrop-blur-md px-4 py-2 rounded-2xl shadow-xl flex-wrap justify-center z-20">
+                  {/* Capture Best Frame Shutter Button */}
+                  <button
+                    type="button"
+                    onClick={handleCaptureFrame}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl text-xs font-bold shadow-md transition transform hover:scale-105"
+                    title="Capture current video frame as high-resolution photo"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Capture Best Frame</span>
+                  </button>
+
+                  <div className="h-4 w-px bg-slate-700 mx-1" />
+
+                  {/* Frame-by-Frame Stepper */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => stepVideoFrame(-1)}
+                      className="px-2 py-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition text-[11px] font-medium"
+                      title="Step back 1 frame (-0.033s)"
+                    >
+                      ◀ 1F
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => stepVideoFrame(1)}
+                      className="px-2 py-1 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg transition text-[11px] font-medium"
+                      title="Step forward 1 frame (+0.033s)"
+                    >
+                      1F ▶
+                    </button>
+                  </div>
+
+                  <div className="h-4 w-px bg-slate-700 mx-1" />
+
+                  {/* Playback Speed Selector */}
+                  <div className="flex items-center gap-1 text-[11px]">
+                    {[0.5, 1, 1.5, 2].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => changePlaybackRate(rate)}
+                        className={`px-2 py-0.5 rounded-md font-mono transition ${
+                          playbackRate === rate
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        {rate}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {savedFrameSuccess && (
+                  <div className="bg-emerald-600/90 text-white text-xs px-3.5 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 animate-fadeIn">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>{savedFrameSuccess}</span>
+                  </div>
+                )}
               </div>
             ) : isPlayingMotion && photo?.has_motion_photo ? (
               <video
@@ -1306,6 +1491,121 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   )}
                 </div>
 
+                {/* AI Aesthetics & Best Shot Inspector Card */}
+                <div className="bg-gradient-to-br from-amber-950/30 via-slate-900 to-slate-900/90 rounded-xl p-3.5 space-y-3 border border-amber-500/20 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-amber-300 font-semibold text-xs">
+                      <Crown className="w-4 h-4 text-amber-400" />
+                      <span>AI Aesthetics & Quality</span>
+                    </div>
+                    {aestheticData?.is_best_shot ? (
+                      <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                        <Crown className="w-3 h-3 fill-slate-950" />
+                        BEST SHOT
+                      </span>
+                    ) : aestheticData?.burst_info ? (
+                      <span className="bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                        Rank #{aestheticData.burst_info.rank} of {aestheticData.burst_info.total_count}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Overall Score & Verdict */}
+                  <div className="space-y-1">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-slate-400">Composite Score</span>
+                      <span className="text-base font-extrabold text-amber-300 font-mono">
+                        {Math.round(aestheticData?.scores?.composite_score ?? (photo.aesthetic_score || 78))}/100
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 italic">
+                      "{aestheticData?.scores?.verdict || (photo.is_blurry ? 'Out of Focus or Blurry' : 'Sharp focus & balanced lighting')}"
+                    </p>
+                  </div>
+
+                  {/* Breakdown Bars */}
+                  <div className="space-y-2 pt-1">
+                    {/* Sharpness */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                        <span>Sharpness</span>
+                        <span className="font-mono text-slate-200">
+                          {Math.round(aestheticData?.scores?.sharpness_score ?? 80)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(5, aestheticData?.scores?.sharpness_score ?? 80))}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Exposure */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                        <span>Exposure & Lighting</span>
+                        <span className="font-mono text-slate-200">
+                          {Math.round(aestheticData?.scores?.exposure_score ?? 82)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-amber-400 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(5, aestheticData?.scores?.exposure_score ?? 82))}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Expression / Smile */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] text-slate-400">
+                        <span>Expression & Mood</span>
+                        <span className="font-mono text-slate-200">
+                          {Math.round(aestheticData?.scores?.expression_score ?? 60)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-purple-400 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(5, aestheticData?.scores?.expression_score ?? 60))}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions for Burst or Blurry Photos */}
+                  {aestheticData?.burst_info && !aestheticData.is_best_shot && (
+                    <div className="pt-2 border-t border-amber-500/20">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onSelectPhoto && aestheticData.burst_info.best_shot_id) {
+                            onSelectPhoto(aestheticData.burst_info.best_shot_id);
+                          }
+                        }}
+                        className="w-full py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition"
+                      >
+                        <Crown className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Switch to Best Shot in Sequence</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {photo.is_blurry && !photo.is_bokeh && (
+                    <div className="pt-2 border-t border-amber-500/20 flex items-center justify-between">
+                      <span className="text-[11px] text-rose-400 font-medium">Flagged for Cleanup</span>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(photo.id)}
+                        className="px-2.5 py-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-lg text-[11px] font-semibold transition"
+                      >
+                        Move to Trash
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* AI Emotion, Mood & Visual Intelligence Card */}
                 {(photo.mood || photo.dominant_color || photo.is_video) && (
                   <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 rounded-xl p-3.5 space-y-3 border border-indigo-500/20 shadow-md">
@@ -1819,6 +2119,73 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           fetchKnownPeople();
         }}
       />
+
+      {/* Video Studio Frame Grabber Modal */}
+      {showCaptureModal && capturedFrameData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-fadeIn">
+          <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col gap-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
+                <Camera className="w-5 h-5" />
+                <span>Captured Video Frame</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCaptureModal(false)}
+                className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="relative aspect-video max-h-[50vh] bg-black rounded-xl overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
+              <img
+                src={capturedFrameData.dataUrl}
+                alt="Captured Frame"
+                className="w-full h-full object-contain"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>
+                Timestamp: <strong className="text-white font-mono">{capturedFrameData.timestamp.toFixed(2)}s</strong>
+              </span>
+              <span>
+                Resolution: <strong className="text-white font-mono">{capturedFrameData.width} × {capturedFrameData.height}</strong>
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowCaptureModal(false)}
+                className="px-4 py-2 hover:bg-slate-800 text-slate-300 rounded-xl font-semibold text-xs transition"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadCapturedFrame}
+                className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl font-semibold text-xs transition"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Download JPG</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveFrameToLibrary}
+                disabled={isSavingFrame}
+                className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-rose-600/30 transition disabled:opacity-50"
+              >
+                {isSavingFrame ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                <span>Save to Library</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

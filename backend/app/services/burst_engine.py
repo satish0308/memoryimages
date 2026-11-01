@@ -23,8 +23,9 @@ def phash_distance(h1: Optional[str], h2: Optional[str]) -> int:
 
 def calculate_photo_quality(media: Media) -> Dict[str, Any]:
     """
-    Computes technical quality and composite score for ranking burst photos:
+    Computes technical quality and composite aesthetic score for ranking photos & bursts:
     - Sharpness score (Laplacian variance, normalized 0-100)
+    - Exposure & Lighting balance (0-100)
     - Facial expression & Smile bonus (0-100)
     - Resolution & Detail score (0-100)
     - Favorite preference bonus
@@ -38,43 +39,83 @@ def calculate_photo_quality(media: Media) -> Dict[str, Any]:
     elif media.is_blurry:
         sharpness *= 0.35  # Severe penalty for photos marked blurry
 
-    # 2. Expression & Smile score
-    expression = 50.0  # Neutral baseline
-    if media.is_smiling:
-        expression = 100.0
-    elif media.mood == "joyful":
-        expression = 85.0
-    elif media.mood in ("celebratory", "serene", "adventurous"):
-        expression = 70.0
+    # 2. Exposure & Lighting score (0-100)
+    exposure = 82.0
+    if getattr(media, "blur_type", None) == "black_pocket":
+        exposure = 15.0
+    elif getattr(media, "color_hex", None):
+        try:
+            hex_val = media.color_hex.lstrip("#")
+            if len(hex_val) == 6:
+                r = int(hex_val[0:2], 16)
+                g = int(hex_val[2:4], 16)
+                b = int(hex_val[4:6], 16)
+                lum = 0.299 * r + 0.587 * g + 0.114 * b
+                if lum < 30:
+                    exposure = max(20.0, lum * 2.0)
+                elif lum > 235:
+                    exposure = max(30.0, (255 - lum) * 3.5)
+                else:
+                    exposure = min(100.0, 75.0 + (lum / 255.0) * 25.0)
+        except Exception:
+            exposure = 82.0
 
-    # 3. Resolution score
+    # 3. Expression & Smile score
+    expression = 60.0  # Neutral baseline
+    if media.is_smiling:
+        expression = 98.0
+    elif media.mood == "joyful":
+        expression = 88.0
+    elif media.mood in ("celebratory", "serene", "adventurous"):
+        expression = 80.0
+
+    # 4. Resolution score
     width = media.width or 1000
     height = media.height or 1000
     megapixels = (width * height) / 1_000_000.0
-    # Scaled so that 12MP -> 100
     resolution = min(100.0, max(10.0, megapixels * 8.33))
 
-    # 4. Favorite preference
-    favorite_bonus = 30.0 if media.is_favorite else 0.0
+    # 5. Favorite preference
+    favorite_bonus = 25.0 if media.is_favorite else 0.0
 
     # Weighted Composite Score (0 - 100)
-    # Focus / Sharpness: 45%
-    # Expression / Smile: 30%
-    # Resolution / Detail: 15%
-    # User Favorite: 10%
+    # Focus / Sharpness: 40%
+    # Exposure / Lighting: 25%
+    # Expression / Smile: 20%
+    # Resolution / Detail: 10%
+    # User Favorite: 5%
     composite = (
-        0.45 * sharpness +
-        0.30 * expression +
-        0.15 * resolution +
-        0.10 * favorite_bonus
+        0.40 * sharpness +
+        0.25 * exposure +
+        0.20 * expression +
+        0.10 * resolution +
+        0.05 * favorite_bonus
     )
     composite = min(100.0, max(0.0, composite))
 
+    # Verdict & Recommendation
+    if (sharpness < 38 or media.is_blurry) and not getattr(media, "is_bokeh", False):
+        verdict = "Out of Focus or Blurry"
+        recommendation = "Candidate for Cleanup"
+    elif composite >= 85:
+        verdict = "Exceptional — Sharp focus, smiling expression & balanced lighting"
+        recommendation = "Standout Best Shot"
+    elif composite >= 70:
+        verdict = "High Quality — Crisp details and vibrant lighting"
+        recommendation = "Great Shot"
+    else:
+        verdict = "Standard Quality"
+        recommendation = "Keep"
+
     return {
         "sharpness_score": round(sharpness, 1),
+        "exposure_score": round(exposure, 1),
         "expression_score": round(expression, 1),
         "resolution_score": round(resolution, 1),
         "composite_score": round(composite, 1),
+        "aesthetic_score": round(composite, 1),
+        "verdict": verdict,
+        "recommendation": recommendation,
         "raw_blurriness": round(raw_blur, 1),
         "is_smiling": bool(media.is_smiling),
         "is_blurry": bool(media.is_blurry),
@@ -183,9 +224,13 @@ def detect_burst_clusters(
                 "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256",
                 "preview_url": f"/api/v1/media/{m.id}/thumbnail?size=1080",
                 "sharpness_score": q["sharpness_score"],
+                "exposure_score": q.get("exposure_score", 82.0),
                 "expression_score": q["expression_score"],
                 "resolution_score": q["resolution_score"],
                 "composite_score": q["composite_score"],
+                "aesthetic_score": q.get("aesthetic_score", q["composite_score"]),
+                "verdict": q.get("verdict", "Good"),
+                "recommendation": q.get("recommendation", "Keep"),
                 "raw_blurriness": q["raw_blurriness"],
                 "is_smiling": q["is_smiling"],
                 "is_blurry": q["is_blurry"],
@@ -449,3 +494,66 @@ def resolve_all_bursts(db: Session, user_id: Optional[int] = None) -> Dict[str, 
         "reclaimed_bytes": total_reclaimed,
         "reclaimed_mb": round(total_reclaimed / (1024 * 1024), 2)
     }
+
+def get_media_aesthetics(db: Session, media_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Computes and returns a rich aesthetic quality profile for a specific media item:
+    - Detailed scores: Sharpness, Exposure/Lighting, Expression/Smiles, Resolution, Overall Composite.
+    - Burst sequence context: cluster ID, cluster type, total shots, rank of this shot, best shot ID,
+      and sibling photo details.
+    - Flags: is_best_shot, is_blurry, blur_type, verdict, recommendation.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        return {}
+
+    quality = calculate_photo_quality(media)
+
+    # Check if media is part of a burst or duplicate sequence
+    burst = get_burst_for_media(db, media.id, user_id=user_id or media.user_id)
+    
+    burst_info = None
+    is_best = False
+    
+    if burst:
+        is_best = (media.id == burst["best_shot_id"])
+        # Find rank in cluster
+        rank = 1
+        for idx, it in enumerate(burst["items"]):
+            if it["id"] == media.id:
+                rank = idx + 1
+                break
+
+        siblings = [
+            {
+                "id": it["id"],
+                "thumbnail_url": it["thumbnail_url"],
+                "composite_score": it.get("composite_score", 0),
+                "is_best_shot": it["id"] == burst["best_shot_id"],
+                "captured_at": it.get("captured_at"),
+            }
+            for it in burst["items"]
+        ]
+
+        burst_info = {
+            "cluster_id": burst["id"],
+            "cluster_type": burst["cluster_type"],
+            "total_count": burst["count"],
+            "rank": rank,
+            "best_shot_id": burst["best_shot_id"],
+            "siblings": siblings,
+        }
+    else:
+        is_best = quality["composite_score"] >= 80.0
+
+    return {
+        "media_id": media.id,
+        "filename": media.filename,
+        "width": media.width,
+        "height": media.height,
+        "captured_at": media.captured_at.isoformat() if media.captured_at else None,
+        "scores": quality,
+        "is_best_shot": is_best,
+        "burst_info": burst_info
+    }
+

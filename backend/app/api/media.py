@@ -3,9 +3,12 @@ import io
 import json
 import zipfile
 import shutil
+import base64
+import secrets
+import subprocess
 import logging
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
@@ -66,6 +69,8 @@ def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None,
         "is_burst_lead": is_burst_lead,
         "burst_score": burst_score,
         "burst_type": burst_type,
+        "aesthetic_score": burst_score if burst_score is not None else getattr(item, "aesthetic_score", 0.0),
+        "is_best_shot": is_burst_lead or getattr(item, "is_best_shot", False),
     }
 
 @router.get("")
@@ -228,7 +233,9 @@ def get_timeline(
             "burst_media_ids": burst_media_ids,
             "is_burst_lead": is_burst_lead,
             "burst_score": burst_score,
-            "burst_type": burst_type
+            "burst_type": burst_type,
+            "aesthetic_score": burst_score if burst_score is not None else getattr(item, "aesthetic_score", 0.0),
+            "is_best_shot": is_burst_lead or getattr(item, "is_best_shot", False)
         })
         
     return list(timeline_groups.values())
@@ -592,6 +599,198 @@ def get_media_burst(
     if not cluster:
         raise HTTPException(status_code=404, detail="No burst sequence found for this photo")
     return cluster
+
+@router.get("/{media_id}/aesthetics")
+def get_media_aesthetics_endpoint(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns AI aesthetic quality scoring breakdown, sharpness analysis,
+    lighting/exposure balance, smile/expression metrics, and burst comparison rank.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.burst_engine import get_media_aesthetics
+    result = get_media_aesthetics(db, media_id, user_id=current_user.id)
+    return result
+
+@router.post("/{media_id}/set-best-shot")
+def set_media_best_shot(
+    media_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Manually designates a photo as the primary Best Shot for its burst sequence.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.burst_engine import get_burst_for_media
+    burst = get_burst_for_media(db, media_id, user_id=current_user.id)
+    if not burst:
+        media.is_best_shot = True
+        db.commit()
+        return {"status": "success", "media_id": media.id, "is_best_shot": True}
+
+    sibling_ids = [it["id"] for it in burst["items"]]
+    for sid in sibling_ids:
+        m = db.query(Media).filter(Media.id == sid).first()
+        if m:
+            m.is_best_shot = (m.id == media_id)
+    db.commit()
+
+    return {"status": "success", "media_id": media.id, "is_best_shot": True, "burst_id": burst["id"]}
+
+class CaptureFrameRequest(BaseModel):
+    timestamp_seconds: float = 0.0
+    save_to_library: bool = True
+    image_base64: Optional[str] = None
+    title: Optional[str] = None
+
+@router.post("/{media_id}/capture-frame")
+def capture_video_frame(
+    media_id: int,
+    req: CaptureFrameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Extracts a pristine, high-resolution still frame from a video at exact timestamp.
+    Accepts client-side canvas snapshot or runs server-side ffmpeg extraction.
+    Optionally catalogs it directly into user library as an independent photo memory.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if not media:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    ts = max(0.0, float(req.timestamp_seconds))
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    out_filename = f"frame_{media.id}_{int(ts * 100)}_{secrets.token_hex(4)}.jpg"
+    out_path = os.path.join(upload_dir, out_filename)
+
+    if req.image_base64:
+        try:
+            header, encoded = req.image_base64.split(",", 1) if "," in req.image_base64 else ("", req.image_base64)
+            raw_bytes = base64.b64decode(encoded)
+            with open(out_path, "wb") as f:
+                f.write(raw_bytes)
+        except Exception as e:
+            logger.error(f"Failed to decode client frame base64: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid image frame data: {e}")
+    else:
+        video_path = media.original_path
+        if not video_path or not os.path.isfile(video_path):
+            raise HTTPException(status_code=400, detail="Source video file not found on disk for server extraction")
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-ss", str(ts),
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            out_path
+        ]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+            if res.returncode != 0 or not os.path.isfile(out_path):
+                err_msg = res.stderr.decode("utf-8", errors="ignore")
+                logger.error(f"ffmpeg frame extraction failed: {err_msg}")
+                raise HTTPException(status_code=500, detail="Failed to capture frame from video")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Frame capture error: {e}")
+
+    new_media_id = None
+    if req.save_to_library:
+        from app.services.scanner import scan_file
+        new_media = scan_file(db, out_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+        if new_media:
+            if media.captured_at:
+                new_media.captured_at = media.captured_at + timedelta(seconds=ts)
+            new_media.latitude = media.latitude
+            new_media.longitude = media.longitude
+            new_media.location_name = media.location_name
+            new_media.camera_make = media.camera_make
+            new_media.camera_model = media.camera_model
+            new_media.category = MediaCategory.MEMORY
+            db.commit()
+            new_media_id = new_media.id
+
+    return {
+        "status": "success",
+        "saved_to_library": bool(new_media_id),
+        "media_id": new_media_id,
+        "timestamp_seconds": ts,
+        "frame_filename": out_filename,
+        "thumbnail_url": f"/api/v1/media/{new_media_id}/thumbnail?size=256" if new_media_id else None,
+        "preview_url": f"/api/v1/media/{new_media_id}/thumbnail?size=1080" if new_media_id else None,
+        "view_url": f"/api/v1/media/{new_media_id}/view" if new_media_id else None
+    }
+
+class SaveCollageRequest(BaseModel):
+    image_base64: str
+    layout_name: Optional[str] = "grid"
+    aspect_ratio: Optional[str] = "1:1"
+    source_media_ids: Optional[List[int]] = []
+
+@router.post("/save-collage")
+def save_created_collage(
+    req: SaveCollageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Saves a canvas-rendered collage as a high-resolution photo in the user's library.
+    Automatically catalogs and indexes it for immediate viewing on the timeline.
+    """
+    if not req.image_base64:
+        raise HTTPException(status_code=400, detail="Missing collage image data")
+
+    try:
+        header, encoded = req.image_base64.split(",", 1) if "," in req.image_base64 else ("", req.image_base64)
+        image_data = base64.b64decode(encoded)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image data: {e}")
+
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"Collage_{timestamp_str}_{secrets.token_hex(4)}.jpg"
+    dest_path = os.path.join(upload_dir, filename)
+
+    with open(dest_path, "wb") as f:
+        f.write(image_data)
+
+    from app.services.scanner import scan_file
+    new_media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+    if not new_media:
+        raise HTTPException(status_code=500, detail="Failed to catalog saved collage")
+
+    new_media.category = MediaCategory.MEMORY
+    db.commit()
+
+    return {
+        "status": "success",
+        "id": new_media.id,
+        "filename": new_media.filename,
+        "thumbnail_url": f"/api/v1/media/{new_media.id}/thumbnail?size=256",
+        "view_url": f"/api/v1/media/{new_media.id}/view"
+    }
 
 @router.get("/{media_id}/similar")
 def get_similar_media(

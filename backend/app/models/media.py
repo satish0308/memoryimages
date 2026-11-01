@@ -41,6 +41,8 @@ class Media(Base):
     is_bokeh = Column(Boolean, default=False, index=True)
     is_enhanced = Column(Boolean, default=False, index=True)
     enhancement_data = Column(Text, nullable=True)
+    aesthetic_score = Column(Float, default=0.0, index=True)
+    is_best_shot = Column(Boolean, default=False, index=True)
     
     # Timestamps & Expiry
     captured_at = Column(DateTime, default=datetime.utcnow, index=True)

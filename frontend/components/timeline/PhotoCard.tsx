@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Heart, Trash2, Check, Play, Layers, Award, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Heart, Trash2, Check, Play, Layers, Award, Sparkles, Crown, AlertTriangle } from 'lucide-react';
 import { getCachedThumbnailUrl, prefetchAndCacheThumbnail } from '@/utils/thumbnailCache';
 
 export interface MediaItem {
@@ -44,6 +44,9 @@ export interface MediaItem {
   is_burst_lead?: boolean;
   burst_score?: number | null;
   burst_type?: 'burst' | 'duplicate' | null;
+  // AI Aesthetics & Best Shot properties
+  aesthetic_score?: number | null;
+  is_best_shot?: boolean;
   // Subject-Aware Bokeh & Quality Engine
   blur_type?: string | null;
   is_bokeh?: boolean;
@@ -80,6 +83,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 }) => {
   const isBurst = Boolean(item.burst_count && item.burst_count > 1);
   const [isHovered, setIsHovered] = useState(false);
+  const [scrubProgress, setScrubProgress] = useState<number | null>(null);
+  const [scrubTimeLabel, setScrubTimeLabel] = useState<string>('');
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   let filterStyle: string | undefined = undefined;
   if (item.is_enhanced) {
@@ -124,6 +130,26 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     }
   };
 
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!item.is_video || !videoRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const dur = item.duration_seconds || videoRef.current.duration || 10;
+    const targetSec = ratio * dur;
+    try {
+      videoRef.current.currentTime = targetSec;
+    } catch {
+      // Ignore seek boundary errors
+    }
+    setScrubProgress(ratio);
+
+    const m = Math.floor(targetSec / 60);
+    const s = Math.floor(targetSec % 60);
+    const durM = Math.floor(dur / 60);
+    const durS = Math.floor(dur % 60);
+    setScrubTimeLabel(`${m}:${s < 10 ? '0' : ''}${s} / ${durM}:${durS < 10 ? '0' : ''}${durS}`);
+  };
+
   return (
     <div className="relative group">
       {/* 3D Stacked Card Effect for Burst Groups */}
@@ -137,7 +163,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       <div
         onClick={() => onSelect(item)}
         onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => {
+          setIsHovered(false);
+          setScrubProgress(null);
+          setScrubTimeLabel('');
+        }}
         className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition ${
           isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
         }`}
@@ -153,8 +184,22 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           loading="lazy"
         />
 
+        {/* Video Scrubber Preview on Hover */}
+        {item.is_video && isHovered && (
+          <video
+            ref={videoRef}
+            src={`${apiUrl}/api/v1/media/${item.id}/view${token ? `?token=${token}` : ''}`}
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+            className="absolute inset-0 w-full h-full object-cover z-10 animate-fadeIn"
+          />
+        )}
+
         {/* Live Photo / Motion Photo Video Looping on Hover */}
-        {item.has_motion_photo && isHovered && (
+        {item.has_motion_photo && isHovered && !item.is_video && (
           <video
             src={`${apiUrl}/api/v1/media/${item.id}/motion-video${token ? `?token=${token}` : ''}`}
             autoPlay
@@ -163,6 +208,23 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             playsInline
             className="absolute inset-0 w-full h-full object-cover z-10 animate-fadeIn"
           />
+        )}
+
+        {/* Video Hover Scrubber Bar & Timestamp Pill */}
+        {item.is_video && isHovered && (
+          <>
+            <div className="absolute bottom-0 inset-x-0 h-1.5 bg-black/50 z-20 pointer-events-none">
+              <div
+                className="h-full bg-rose-500 transition-all duration-75"
+                style={{ width: `${(scrubProgress ?? 0) * 100}%` }}
+              />
+            </div>
+            {scrubTimeLabel && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 bg-black/85 text-white text-[10px] font-mono px-2 py-0.5 rounded-full backdrop-blur-md shadow-lg pointer-events-none border border-white/20 whitespace-nowrap">
+                {scrubTimeLabel}
+              </div>
+            )}
+          </>
         )}
 
       {/* Select Checkbox Button (Top Left) */}
@@ -183,7 +245,17 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       </button>
 
       {/* Category & Status Pills */}
-      <div className={`absolute top-2 left-9 flex flex-wrap gap-1 transition-opacity ${isSelected ? 'opacity-90' : ''}`}>
+      <div className={`absolute top-2 left-9 flex flex-wrap gap-1 transition-opacity z-20 ${isSelected ? 'opacity-90' : ''}`}>
+        {/* Best Shot Gold Crown Badge */}
+        {(item.is_best_shot || item.is_burst_lead) && (
+          <span
+            className="bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-md border border-amber-300"
+            title={`AI Best Shot in sequence (Score: ${Math.round(item.aesthetic_score || item.burst_score || 90)}/100)`}
+          >
+            <Crown className="w-2.5 h-2.5 fill-slate-950 text-slate-950" />
+            <span>BEST SHOT</span>
+          </span>
+        )}
         {item.category === 'screenshot' && (
           <span className="bg-blue-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
             Screenshot
@@ -197,10 +269,16 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         {item.is_video && (
           <span className="bg-rose-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm">
             <Play className="w-2.5 h-2.5 fill-white" />
-            <span>{item.matched_timestamp_label ? `At ${item.matched_timestamp_label}` : 'Video'}</span>
+            <span>
+              {item.matched_timestamp_label
+                ? `At ${item.matched_timestamp_label}`
+                : item.duration_seconds
+                ? `${Math.floor(item.duration_seconds / 60)}:${Math.floor(item.duration_seconds % 60).toString().padStart(2, '0')}`
+                : 'Video'}
+            </span>
           </span>
         )}
-        {item.has_motion_photo && (
+        {item.has_motion_photo && !item.is_video && (
           <span className="bg-amber-500/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm" title="Live / Motion Photo">
             <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             <span>LIVE</span>
@@ -218,8 +296,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
           </span>
         )}
         {item.is_blurry && !item.is_bokeh && (
-          <span className="bg-amber-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
-            {item.blur_type === 'motion_blur' ? '💨 Shake' : item.blur_type === 'black_pocket' ? '🌑 Dark' : 'Blurry'}
+          <span className="bg-rose-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm">
+            <AlertTriangle className="w-2.5 h-2.5 text-white" />
+            <span>{item.blur_type === 'motion_blur' ? 'Shake' : 'Blurry'}</span>
           </span>
         )}
         {item.mood && !item.is_video && (
