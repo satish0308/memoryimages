@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, extract
@@ -18,8 +18,9 @@ from sqlalchemy import func, desc, extract
 from app.database import get_db
 from app.models.user import User
 from app.models.media import Media, MediaCategory, SourceType
+from app.models.album import Album
 from app.api.auth import get_current_user, get_optional_current_user
-from app.services.scanner import scan_file, extract_exif, reverse_geocode
+from app.services.scanner import scan_file, extract_exif, reverse_geocode, compute_file_hash
 from app.services.settings_service import get_storage_mode, get_setting
 from app.services.drive_cache import get_google_drive_thumbnail_url, stream_google_drive_file, fetch_google_drive_thumbnail_bytes
 from app.services.google_sync import delete_file_from_google_drive
@@ -1510,10 +1511,11 @@ def download_original(
 @router.post("/upload")
 def upload_photo(
     file: UploadFile = File(...),
+    album_id: Optional[int] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Directly uploads a photo into user account directory and catalogs with user_id."""
+    """Directly uploads a photo into user account directory and catalogs with user_id with 100% bit-for-bit fidelity."""
     upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
     os.makedirs(upload_dir, exist_ok=True)
     
@@ -1526,14 +1528,363 @@ def upload_photo(
         
     media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
     if not media:
-        raise HTTPException(status_code=400, detail="Uploaded file is not a supported image")
+        raise HTTPException(status_code=400, detail="Uploaded file is not a supported media format")
         
+    if album_id:
+        album = db.query(Album).filter(Album.id == album_id).first()
+        if album and (album.user_id == current_user.id or current_user.is_admin):
+            if media not in album.media:
+                album.media.append(media)
+                if not album.cover_media_id:
+                    album.cover_media_id = media.id
+                db.commit()
+
     return {
         "status": "success",
         "id": media.id,
         "user_id": current_user.id,
-        "category": media.category,
-        "filename": media.filename
+        "category": media.category.value if hasattr(media.category, "value") else str(media.category),
+        "filename": media.filename,
+        "item": _format_media_item(media)
+    }
+
+@router.post("/upload-batch")
+async def upload_batch(
+    files: List[UploadFile] = File(...),
+    album_id: Optional[int] = Form(None),
+    relative_paths: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    High-throughput batch upload endpoint processing up to 50 items at once.
+    Preserves original file quality, EXIF metadata, folder relative paths, and auto-pairs Apple Live Photos (.heic + .mov).
+    """
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    parsed_paths = {}
+    if relative_paths:
+        try:
+            parsed_paths = json.loads(relative_paths)
+            if not isinstance(parsed_paths, dict):
+                parsed_paths = {}
+        except Exception:
+            parsed_paths = {}
+
+    album = None
+    if album_id:
+        album = db.query(Album).filter(Album.id == album_id).first()
+        if album and album.user_id != current_user.id and not current_user.is_admin:
+            album = None
+
+    uploaded_items = []
+    duplicate_items = []
+    failed_items = []
+
+    batch_prefix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    stem_tokens = {}
+    
+    # Save files to disk preserving bit-for-bit uncompressed content
+    saved_files = []
+    for idx, file in enumerate(files):
+        try:
+            clean_filename = os.path.basename(file.filename or f"upload_{idx}.jpg")
+            stem, ext = os.path.splitext(clean_filename)
+            stem_key = stem.lower()
+            if stem_key not in stem_tokens:
+                stem_tokens[stem_key] = f"{idx:02d}_{secrets.token_hex(2)}"
+            unique_token = stem_tokens[stem_key]
+            dest_filename = f"{batch_prefix}_{unique_token}_{clean_filename}"
+
+            rel_path = parsed_paths.get(clean_filename) or parsed_paths.get(file.filename)
+            if rel_path:
+                rel_dir = os.path.dirname(rel_path).strip("/\\")
+                target_dir = os.path.join(upload_dir, rel_dir) if rel_dir else upload_dir
+                os.makedirs(target_dir, exist_ok=True)
+                dest_path = os.path.join(target_dir, dest_filename)
+            else:
+                dest_path = os.path.join(upload_dir, dest_filename)
+
+            with open(dest_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            
+            saved_files.append((clean_filename, dest_path))
+        except Exception as e:
+            logger.error(f"Failed to save uploaded file {file.filename}: {e}")
+            failed_items.append({"filename": file.filename, "error": str(e)})
+
+    # Sort files so still images (.heic, .jpg, .dng) are scanned before companion video (.mov, .mp4)
+    def file_sort_key(item):
+        ext = os.path.splitext(item[0])[1].lower()
+        return 1 if ext in [".mov", ".mp4", ".mkv", ".webm"] else 0
+
+    saved_files.sort(key=file_sort_key)
+
+    for clean_filename, dest_path in saved_files:
+        try:
+            file_hash = compute_file_hash(dest_path)
+            existing = db.query(Media).filter(Media.file_hash == file_hash).first()
+            if existing:
+                if existing.user_id != current_user.id and not existing.user_id:
+                    existing.user_id = current_user.id
+                    db.commit()
+                if album and existing not in album.media:
+                    album.media.append(existing)
+                    if not album.cover_media_id:
+                        album.cover_media_id = existing.id
+                    db.commit()
+                if os.path.exists(dest_path) and dest_path != existing.original_path:
+                    try:
+                        os.remove(dest_path)
+                    except Exception:
+                        pass
+                duplicate_items.append({
+                    "id": existing.id,
+                    "filename": clean_filename,
+                    "item": _format_media_item(existing)
+                })
+                continue
+
+            media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+            if media:
+                if album and media not in album.media:
+                    album.media.append(media)
+                    if not album.cover_media_id:
+                        album.cover_media_id = media.id
+                    db.commit()
+                uploaded_items.append({
+                    "id": media.id,
+                    "filename": clean_filename,
+                    "item": _format_media_item(media)
+                })
+            else:
+                failed_items.append({"filename": clean_filename, "error": "Unsupported media format or corrupted file"})
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error scanning uploaded file {clean_filename}: {e}")
+            failed_items.append({"filename": clean_filename, "error": str(e)})
+
+    return {
+        "status": "success",
+        "total": len(files),
+        "uploaded_count": len(uploaded_items),
+        "duplicates_count": len(duplicate_items),
+        "failed_count": len(failed_items),
+        "items": uploaded_items,
+        "duplicates": duplicate_items,
+        "errors": failed_items
+    }
+
+class CheckDuplicatesRequest(BaseModel):
+    hashes: List[str]
+
+@router.post("/check-duplicates")
+def check_duplicates(
+    payload: CheckDuplicatesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Checks if a list of SHA-256 hashes already exists in the system or library.
+    Returns list of existing hashes, allowing client pre-flight duplicate detection.
+    """
+    if not payload.hashes:
+        return {"existing_hashes": []}
+
+    query_hashes = [h.strip().lower() for h in payload.hashes[:500] if h.strip()]
+    if not query_hashes:
+        return {"existing_hashes": []}
+
+    existing = db.query(Media.file_hash).filter(Media.file_hash.in_(query_hashes)).all()
+    existing_hashes = [h[0] for h in existing if h[0]]
+    return {"existing_hashes": existing_hashes}
+
+# ==============================================================================
+# Chunked & Resumable Upload Endpoints (For Large 4K Videos & RAW Files > 25MB)
+# ==============================================================================
+
+@router.post("/upload-chunk/init")
+def init_chunked_upload(
+    filename: str = Form(...),
+    file_size: int = Form(...),
+    total_chunks: int = Form(...),
+    chunk_size: int = Form(5242880), # 5MB default chunk
+    album_id: Optional[int] = Form(None),
+    current_user: User = Depends(get_current_user)
+):
+    """Initializes a resumable chunked upload session for large files."""
+    upload_id = secrets.token_hex(16)
+    chunk_dir = os.path.join(settings.MEDIA_DIR, "uploads", ".chunks", upload_id)
+    os.makedirs(chunk_dir, exist_ok=True)
+
+    meta = {
+        "upload_id": upload_id,
+        "user_id": current_user.id,
+        "filename": filename,
+        "file_size": file_size,
+        "total_chunks": total_chunks,
+        "chunk_size": chunk_size,
+        "album_id": album_id,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    with open(os.path.join(chunk_dir, "meta.json"), "w") as f:
+        json.dump(meta, f)
+
+    return {
+        "status": "initialized",
+        "upload_id": upload_id,
+        "chunk_size": chunk_size,
+        "total_chunks": total_chunks
+    }
+
+@router.post("/upload-chunk")
+def upload_chunk_part(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Uploads a single 5MB chunk slice."""
+    chunk_dir = os.path.join(settings.MEDIA_DIR, "uploads", ".chunks", upload_id)
+    if not os.path.isdir(chunk_dir):
+        raise HTTPException(status_code=404, detail="Upload session expired or invalid")
+
+    chunk_path = os.path.join(chunk_dir, f"chunk_{chunk_index:05d}")
+    with open(chunk_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return {
+        "status": "chunk_saved",
+        "upload_id": upload_id,
+        "chunk_index": chunk_index,
+        "received": True
+    }
+
+@router.get("/upload-chunk/status/{upload_id}")
+def get_chunked_upload_status(
+    upload_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """Returns list of already uploaded chunks for resumable recovery."""
+    chunk_dir = os.path.join(settings.MEDIA_DIR, "uploads", ".chunks", upload_id)
+    if not os.path.isdir(chunk_dir):
+        raise HTTPException(status_code=404, detail="Upload session not found")
+
+    meta_path = os.path.join(chunk_dir, "meta.json")
+    meta = {}
+    if os.path.isfile(meta_path):
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+
+    uploaded_chunks = []
+    for f in os.listdir(chunk_dir):
+        if f.startswith("chunk_"):
+            try:
+                uploaded_chunks.append(int(f.replace("chunk_", "")))
+            except Exception:
+                pass
+    uploaded_chunks.sort()
+
+    return {
+        "upload_id": upload_id,
+        "uploaded_chunks": uploaded_chunks,
+        "total_chunks": meta.get("total_chunks", 0),
+        "filename": meta.get("filename")
+    }
+
+@router.post("/upload-chunk/complete")
+def complete_chunked_upload(
+    upload_id: str = Form(...),
+    filename: Optional[str] = Form(None),
+    album_id: Optional[int] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reassembles chunk slices in order into an authoritative master file, runs scan_file, and cleans up temp slices."""
+    chunk_dir = os.path.join(settings.MEDIA_DIR, "uploads", ".chunks", upload_id)
+    if not os.path.isdir(chunk_dir):
+        raise HTTPException(status_code=404, detail="Upload session not found")
+
+    meta_path = os.path.join(chunk_dir, "meta.json")
+    meta = {}
+    if os.path.isfile(meta_path):
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+
+    target_filename = filename or meta.get("filename") or f"video_{secrets.token_hex(4)}.mp4"
+    total_chunks = meta.get("total_chunks", 0)
+    target_album_id = album_id if album_id is not None else meta.get("album_id")
+
+    upload_dir = os.path.join(settings.MEDIA_DIR, "uploads", f"user_{current_user.id}")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    dest_filename = f"{timestamp}_{target_filename}"
+    dest_path = os.path.join(upload_dir, dest_filename)
+
+    try:
+        with open(dest_path, "wb") as out_file:
+            for i in range(total_chunks):
+                c_path = os.path.join(chunk_dir, f"chunk_{i:05d}")
+                if not os.path.isfile(c_path):
+                    raise HTTPException(status_code=400, detail=f"Missing chunk index {i} out of {total_chunks}")
+                with open(c_path, "rb") as c_in:
+                    shutil.copyfileobj(c_in, out_file)
+    except Exception as e:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise HTTPException(status_code=500, detail=f"Failed to reassemble chunks: {e}")
+
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+
+    # Check for duplicates before creating new record
+    file_hash = compute_file_hash(dest_path)
+    existing = db.query(Media).filter(Media.file_hash == file_hash).first()
+    if existing:
+        if existing.user_id != current_user.id and not existing.user_id:
+            existing.user_id = current_user.id
+            db.commit()
+        if target_album_id:
+            album = db.query(Album).filter(Album.id == target_album_id).first()
+            if album and (album.user_id == current_user.id or current_user.is_admin):
+                if existing not in album.media:
+                    album.media.append(existing)
+                    if not album.cover_media_id:
+                        album.cover_media_id = existing.id
+                    db.commit()
+        # Clean up temporary reassembled duplicate file from app storage
+        if os.path.exists(dest_path) and dest_path != existing.original_path:
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+        return {
+            "status": "duplicate",
+            "is_duplicate": True,
+            "id": existing.id,
+            "filename": target_filename,
+            "item": _format_media_item(existing)
+        }
+
+    media = scan_file(db, dest_path, SourceType.MANUAL_UPLOAD, user_id=current_user.id)
+    if not media:
+        raise HTTPException(status_code=400, detail="Reassembled file is not a supported media format")
+
+    if target_album_id:
+        album = db.query(Album).filter(Album.id == target_album_id).first()
+        if album and (album.user_id == current_user.id or current_user.is_admin):
+            if media not in album.media:
+                album.media.append(media)
+                if not album.cover_media_id:
+                    album.cover_media_id = media.id
+                db.commit()
+
+    return {
+        "status": "success",
+        "id": media.id,
+        "filename": media.filename,
+        "item": _format_media_item(media)
     }
 
 @router.patch("/{media_id}/favorite")

@@ -12,14 +12,21 @@ from sqlalchemy.orm import Session
 Image.MAX_IMAGE_PIXELS = None
 
 from app.models.media import Media, SourceType
-from app.services.thumbnail import generate_thumbnails
+from app.services.thumbnail import generate_thumbnails, open_image_for_thumbnail
 from app.services.triage_engine import classify_media_item
 from app.config import settings
 
-SUPPORTED_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".bmp",
-    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"
-}
+# Register pillow-heif for transparent HEIC / HEIF loading
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+RAW_EXTENSIONS = {".dng", ".cr2", ".nef", ".arw", ".rw2", ".orf", ".pef", ".raf"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".tiff", ".bmp"}
+SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | RAW_EXTENSIONS
 
 _GEOCODE_CACHE: Dict[Tuple[float, float], str] = {}
 
@@ -322,12 +329,18 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     
     # Open image to inspect & extract EXIF
     try:
-        with Image.open(file_path) as img:
+        img = open_image_for_thumbnail(file_path)
+        try:
             exif = extract_exif(img, file_path=file_path)
             if exif["captured_at"]:
                 captured_at = exif["captured_at"]
                 
             width, height = img.size
+        finally:
+            try:
+                img.close()
+            except Exception:
+                pass
     except Exception:
         # Not a valid image file
         return None
@@ -373,9 +386,16 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         source_id=source_id
     )
     
-    db.add(media)
-    db.commit()
-    db.refresh(media)
+    try:
+        db.add(media)
+        db.commit()
+        db.refresh(media)
+    except Exception as e:
+        db.rollback()
+        existing = db.query(Media).filter(Media.original_path == file_path).first()
+        if existing:
+            return existing
+        raise e
     
     # Generate multi-tier WebP thumbnails & blurriness/phash
     try:
@@ -520,9 +540,16 @@ def scan_file_in_memory(
         source_id=source_id
     )
 
-    db.add(media)
-    db.commit()
-    db.refresh(media)
+    try:
+        db.add(media)
+        db.commit()
+        db.refresh(media)
+    except Exception as e:
+        db.rollback()
+        existing = db.query(Media).filter(Media.original_path == file_path).first()
+        if existing:
+            return existing
+        raise e
 
     # In-memory face detection
     try:

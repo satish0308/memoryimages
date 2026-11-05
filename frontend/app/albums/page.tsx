@@ -219,6 +219,9 @@ export default function AlbumsPage() {
 
   useEffect(() => {
     loadData();
+    const handleUploaded = () => loadData();
+    window.addEventListener('media-uploaded', handleUploaded);
+    return () => window.removeEventListener('media-uploaded', handleUploaded);
   }, [loadData]);
 
   // Open custom album

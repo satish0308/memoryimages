@@ -42,6 +42,10 @@ thumbnails/
 cache/
 *.db
 *.sqlite3
+*.zip
+*.tar
+*.tar.gz
+*.tgz
 
 # Environment variables & secrets
 .env

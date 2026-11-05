@@ -96,7 +96,7 @@ services:
         condition: service_started
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/aistor/minio:latest
     container_name: memorypics-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"

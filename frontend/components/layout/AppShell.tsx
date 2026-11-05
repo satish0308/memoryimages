@@ -19,6 +19,9 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { MainContentWrapper } from '@/components/layout/MainContentWrapper';
+import { GlobalDropzoneOverlay } from '@/components/upload/GlobalDropzoneOverlay';
+import { UploadStagingModal } from '@/components/upload/UploadStagingModal';
+import { UploadProgressDock } from '@/components/upload/UploadProgressDock';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -277,6 +280,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </MainContentWrapper>
       </div>
+
+      {/* Global Drag-and-Drop, Upload Staging & Floating Progress Dock */}
+      <GlobalDropzoneOverlay />
+      <UploadStagingModal />
+      <UploadProgressDock />
     </div>
   );
 }

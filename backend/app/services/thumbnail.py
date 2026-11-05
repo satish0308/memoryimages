@@ -1,10 +1,42 @@
 import os
-from typing import Tuple, Dict, Any
+import io
+from typing import Tuple, Dict, Any, Optional
 from PIL import Image, ImageOps, ImageFilter
 import imagehash
 import numpy as np
 
 from app.config import settings
+
+# Register pillow-heif for transparent HEIC / HEIF loading
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+RAW_EXTENSIONS = {".dng", ".cr2", ".nef", ".arw", ".rw2", ".orf", ".pef", ".raf"}
+
+def open_image_for_thumbnail(file_path: str) -> Image.Image:
+    """
+    Opens an image file safely supporting standard formats, HEIC, and RAW files (CR2, NEF, ARW, DNG).
+    Preserves original files on disk with zero alteration or quality degradation.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in RAW_EXTENSIONS:
+        try:
+            import rawpy
+            with rawpy.imread(file_path) as raw:
+                try:
+                    thumb = raw.extract_thumb()
+                    if thumb.format == rawpy.ThumbFormat.JPEG:
+                        return Image.open(io.BytesIO(thumb.data))
+                except Exception:
+                    pass
+                rgb = raw.postprocess(half_size=True)
+                return Image.fromarray(rgb)
+        except Exception:
+            pass
+    return Image.open(file_path)
 
 def calculate_blurriness(image: Image.Image) -> float:
     """
@@ -50,7 +82,8 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
     thumb_256_path = os.path.join(settings.THUMBNAIL_DIR, thumb_256_rel)
     thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, thumb_1080_rel)
     
-    with Image.open(original_path) as img:
+    img = open_image_for_thumbnail(original_path)
+    try:
         # Auto-rotate based on EXIF orientation
         img = ImageOps.exif_transpose(img)
         
@@ -97,6 +130,11 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
         if icc_profile:
             thumb_1080_kwargs["icc_profile"] = icc_profile
         img_1080.save(thumb_1080_path, "WEBP", **thumb_1080_kwargs)
+    finally:
+        try:
+            img.close()
+        except Exception:
+            pass
         
     return {
         "thumbnail_256_path": thumb_256_path,

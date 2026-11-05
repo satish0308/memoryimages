@@ -116,6 +116,16 @@ export default function PhotosPage() {
     }
   }, [isAuthenticated, isLoading, activeCategory, scale, searchQuery, isSemanticSearch, smartFilters, collapseBursts]);
 
+  // Listen to background uploads completing for seamless zero-reload refresh
+  useEffect(() => {
+    const handleUploaded = () => {
+      fetchTimeline();
+      fetchEvents();
+    };
+    window.addEventListener('media-uploaded', handleUploaded);
+    return () => window.removeEventListener('media-uploaded', handleUploaded);
+  }, []);
+
   // Selection handlers
   const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
