@@ -63,6 +63,16 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN share_token VARCHAR(64)"))
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN user_id INTEGER"))
+                if "is_backed_up_gdrive" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN is_backed_up_gdrive BOOLEAN DEFAULT FALSE"))
+                if "gdrive_backup_file_id" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backup_file_id VARCHAR(255)"))
+                if "gdrive_backup_folder_id" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backup_folder_id VARCHAR(255)"))
+                if "gdrive_backup_folder_name" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backup_folder_name VARCHAR(255)"))
+                if "gdrive_backed_up_at" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at DATETIME"))
                 # Associate existing unassigned photos with primary owner (admin user_id=1)
                 conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()

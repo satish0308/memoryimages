@@ -73,6 +73,10 @@ def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None,
         "aesthetic_score": burst_score if burst_score is not None else getattr(item, "aesthetic_score", 0.0),
         "is_best_shot": is_burst_lead or getattr(item, "is_best_shot", False),
         "edit_recipe": getattr(item, "edit_recipe", None),
+        "is_backed_up_gdrive": bool(getattr(item, "is_backed_up_gdrive", False)),
+        "gdrive_backup_file_id": getattr(item, "gdrive_backup_file_id", None),
+        "gdrive_backup_folder_name": getattr(item, "gdrive_backup_folder_name", None),
+        "gdrive_backed_up_at": item.gdrive_backed_up_at.isoformat() if getattr(item, "gdrive_backed_up_at", None) else None,
     }
 
 @router.get("")

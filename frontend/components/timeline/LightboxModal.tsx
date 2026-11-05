@@ -28,6 +28,8 @@ import {
   Sliders,
   Loader2,
   Share2,
+  Cloud,
+  ShieldCheck,
   Search,
   Crown,
   AlertTriangle
@@ -59,6 +61,7 @@ interface LightboxModalProps {
   hasPrev?: boolean;
   hasNext?: boolean;
   onSelectPhoto?: (photoOrId: MediaItem | number) => void;
+  onBackupToDrive?: (photo: MediaItem) => void;
 }
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({
@@ -72,6 +75,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   hasPrev = false,
   hasNext = false,
   onSelectPhoto,
+  onBackupToDrive,
 }) => {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -1618,6 +1622,61 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   )}
                 </div>
 
+                {/* Google Drive Cloud Backup Card */}
+                <div className="bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-900/90 rounded-xl p-3.5 space-y-2.5 border border-indigo-500/30 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-indigo-300 font-semibold text-xs">
+                      <Cloud className="w-4 h-4 text-indigo-400" />
+                      <span>Google Drive Cloud Backup</span>
+                    </div>
+                    {photo.is_backed_up_gdrive ? (
+                      <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                        <Check className="w-2.5 h-2.5" />
+                        BACKED UP
+                      </span>
+                    ) : (
+                      <span className="bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                        Not Backed Up
+                      </span>
+                    )}
+                  </div>
+
+                  {photo.is_backed_up_gdrive ? (
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-slate-300">
+                        <span className="text-slate-400">Target Folder:</span>
+                        <span className="font-semibold text-indigo-200">
+                          📁 {photo.gdrive_backup_folder_name || 'Google Drive'}
+                        </span>
+                      </div>
+                      {photo.gdrive_backed_up_at && (
+                        <div className="flex items-center justify-between text-slate-300 text-[11px]">
+                          <span className="text-slate-400">Backed up on:</span>
+                          <span className="text-slate-400 font-mono">
+                            {new Date(photo.gdrive_backed_up_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-slate-400">
+                        Lossless bit-for-bit master backup
+                      </span>
+                      {onBackupToDrive && (
+                        <button
+                          type="button"
+                          onClick={() => onBackupToDrive(photo)}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
+                        >
+                          <Cloud className="w-3 h-3" />
+                          <span>Backup Now</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* AI Emotion, Mood & Visual Intelligence Card */}
                 {(photo.mood || photo.dominant_color || photo.is_video) && (
                   <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 rounded-xl p-3.5 space-y-3 border border-indigo-500/20 shadow-md">
@@ -2050,6 +2109,24 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               >
                 <Sliders className="w-4 h-4" />
               </a>
+            )}
+            {onBackupToDrive && (
+              <button
+                type="button"
+                onClick={() => onBackupToDrive(photo)}
+                className={`p-2 rounded-lg border transition ${
+                  photo.is_backed_up_gdrive
+                    ? 'border-emerald-500/50 bg-emerald-950/40 text-emerald-400 hover:bg-emerald-900/50'
+                    : 'border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white'
+                }`}
+                title={
+                  photo.is_backed_up_gdrive
+                    ? `Backed up to Google Drive: ${photo.gdrive_backup_folder_name || 'Drive'}`
+                    : 'Backup to Google Drive'
+                }
+              >
+                <Cloud className="w-4 h-4" />
+              </button>
             )}
             <button
               onClick={() => setShowShareModal(true)}

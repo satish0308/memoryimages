@@ -18,6 +18,7 @@ import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowMod
 import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
+import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
 
 export default function PhotosPage() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -44,6 +45,23 @@ export default function PhotosPage() {
   const [collapseBursts, setCollapseBursts] = useState(true);
   const [inspectingBurstLead, setInspectingBurstLead] = useState<MediaItem | null>(null);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+
+  // Google Drive Outbound Backup state
+  const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [backupModalDefaultFolder, setBackupModalDefaultFolder] = useState<string>('MyMemoryPics / Backups');
+
+  const handleBackupSinglePhoto = (photo: MediaItem) => {
+    setBackupModalMediaIds([photo.id]);
+    setBackupModalDefaultFolder('MyMemoryPics / Backups');
+    setIsBackupModalOpen(true);
+  };
+
+  const handleBackupBulkPhotos = (ids: number[]) => {
+    setBackupModalMediaIds(ids);
+    setBackupModalDefaultFolder('MyMemoryPics / Backups');
+    setIsBackupModalOpen(true);
+  };
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -685,6 +703,7 @@ export default function PhotosPage() {
               onToggleFavorite={toggleFavorite}
               onDelete={deletePhoto}
               onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
+              onBackupToDrive={handleBackupSinglePhoto}
             />
           ))}
         </div>
@@ -718,6 +737,7 @@ export default function PhotosPage() {
           fetchTimeline();
           clearSelection();
         }}
+        onBatchBackupToDrive={handleBackupBulkPhotos}
       />
 
       {/* Moment & Outing Story Detail Modal */}
@@ -766,6 +786,7 @@ export default function PhotosPage() {
             setSelectedPhoto(photoOrId);
           }
         }}
+        onBackupToDrive={handleBackupSinglePhoto}
       />
 
       {/* Smart Filters Slide-Out Drawer */}
@@ -805,6 +826,18 @@ export default function PhotosPage() {
         itemType="photos"
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={executeBatchDelete}
+      />
+
+      {/* Google Drive Outbound Backup Modal */}
+      <GoogleDriveBackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        mediaIds={backupModalMediaIds}
+        defaultFolderName={backupModalDefaultFolder}
+        onBackupSuccess={() => {
+          fetchTimeline();
+          clearSelection();
+        }}
       />
     </div>
   );

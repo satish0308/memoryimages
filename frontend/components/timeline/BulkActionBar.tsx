@@ -16,7 +16,8 @@ import {
   Sparkles, 
   Share2,
   Layout,
-  Film
+  Film,
+  Cloud
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
 import { HighlightReelModal } from '../studio/HighlightReelModal';
@@ -38,6 +39,7 @@ interface BulkActionBarProps {
   onAlbumAdded?: () => void;
   onBatchLocationUpdated?: () => void;
   onBatchEnhanced?: () => void;
+  onBatchBackupToDrive?: (mediaIds: number[]) => void;
 }
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
@@ -51,6 +53,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onAlbumAdded,
   onBatchLocationUpdated,
   onBatchEnhanced,
+  onBatchBackupToDrive,
 }) => {
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
@@ -350,6 +353,22 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
             <Film className="w-3.5 h-3.5 text-indigo-200" />
             <span>Highlight Reel</span>
             <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
+              {selectedIds.length}
+            </span>
+          </button>
+        )}
+
+        {/* Google Drive Bulk Backup */}
+        {onBatchBackupToDrive && (
+          <button
+            onClick={() => onBatchBackupToDrive(selectedIds)}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/80 hover:bg-indigo-900/90 text-indigo-300 hover:text-white border border-indigo-700/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            title="Backup selected photos to Google Drive with lossless quality"
+          >
+            <Cloud className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Backup to Drive</span>
+            <span className="text-[10px] bg-indigo-800 text-indigo-200 px-1.5 py-0.2 rounded-full font-bold">
               {selectedIds.length}
             </span>
           </button>

@@ -87,6 +87,13 @@ class Media(Base):
     has_motion_photo = Column(Boolean, default=False, index=True)
     share_token = Column(String(64), unique=True, index=True, nullable=True)
 
+    # Google Drive Backup Tracking
+    is_backed_up_gdrive = Column(Boolean, default=False, index=True)
+    gdrive_backup_file_id = Column(String(255), nullable=True, index=True)
+    gdrive_backup_folder_id = Column(String(255), nullable=True)
+    gdrive_backup_folder_name = Column(String(255), nullable=True)
+    gdrive_backed_up_at = Column(DateTime, nullable=True)
+
     # Relationships
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     user = relationship("app.models.user.User", backref="media_items")

@@ -11,7 +11,7 @@ os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
 from app.config import settings
 from app.models.sync import SyncSource, SyncStatus, SyncType
@@ -625,3 +625,161 @@ def propagate_locations_to_clusters(db: Session, user_id: int, max_gap_hours: fl
     if updated_count > 0:
         db.commit()
     return updated_count
+
+# ==============================================================================
+# Google Drive Bulk Outbound Backup Engine
+# ==============================================================================
+
+def get_google_drive_service(db: Session, user_id: int):
+    """
+    Returns an authorized Google Drive v3 API service resource for the user.
+    Refreshes expired access tokens automatically.
+    """
+    source = db.query(SyncSource).filter(
+        SyncSource.user_id == user_id,
+        SyncSource.sync_type == SyncType.GOOGLE_DRIVE
+    ).order_by(SyncSource.id.desc()).first()
+
+    if not source:
+        # Fallback to any active Google Drive source if user is admin
+        source = db.query(SyncSource).filter(
+            SyncSource.sync_type == SyncType.GOOGLE_DRIVE
+        ).order_by(SyncSource.id.desc()).first()
+
+    if not source or not source.oauth_tokens_json:
+        return None
+
+    try:
+        creds_info = json.loads(source.oauth_tokens_json)
+        credentials = Credentials(
+            token=creds_info.get("token"),
+            refresh_token=creds_info.get("refresh_token"),
+            token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
+            client_id=creds_info.get("client_id") or settings.GOOGLE_CLIENT_ID,
+            client_secret=creds_info.get("client_secret") or settings.GOOGLE_CLIENT_SECRET,
+            scopes=creds_info.get("scopes") or SCOPES
+        )
+
+        from google.auth.transport.requests import Request
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            creds_info["token"] = credentials.token
+            source.oauth_tokens_json = json.dumps(creds_info)
+            db.commit()
+
+        service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        return service
+    except Exception as e:
+        logger.error(f"Failed to create Google Drive service: {e}")
+        return None
+
+def get_or_create_drive_folder(service, folder_path: str, parent_id: Optional[str] = None) -> str:
+    """
+    Resolves or creates a Google Drive folder hierarchy (e.g. 'MyMemoryPics/Vacations').
+    Returns the target folder ID.
+    """
+    clean_path = folder_path.strip().strip("/\\")
+    if not clean_path:
+        clean_path = "MyMemoryPics_Backup"
+
+    parts = [p.strip() for p in clean_path.split("/") if p.strip()]
+    current_parent = parent_id
+
+    for part in parts:
+        safe_part = part.replace("'", "\\'")
+        query = f"mimeType = 'application/vnd.google-apps.folder' and name = '{safe_part}' and trashed = false"
+        if current_parent:
+            query += f" and '{current_parent}' in parents"
+        else:
+            query += " and 'root' in parents"
+
+        res = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        files = res.get('files', [])
+
+        if files:
+            current_parent = files[0]['id']
+        else:
+            meta = {
+                'name': part,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            if current_parent:
+                meta['parents'] = [current_parent]
+            created = service.files().create(body=meta, fields='id').execute()
+            current_parent = created.get('id')
+
+    return current_parent
+
+def upload_media_to_drive(
+    service,
+    file_path: str,
+    filename: str,
+    mime_type: str,
+    folder_id: str,
+    captured_at: Optional[datetime] = None
+) -> str:
+    """
+    Uploads a bit-for-bit lossless master file to Google Drive.
+    Uses chunked resumable upload for files >= 10MB to guarantee stability.
+    Returns the Drive File ID.
+    """
+    import time
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Source master file not found at {file_path}")
+
+    file_size = os.path.getsize(file_path)
+    file_metadata = {
+        'name': filename,
+        'parents': [folder_id]
+    }
+    if captured_at:
+        file_metadata['createdTime'] = captured_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    is_large = file_size >= (10 * 1024 * 1024)
+    media = MediaFileUpload(
+        file_path,
+        mimetype=mime_type or "application/octet-stream",
+        resumable=is_large,
+        chunksize=5 * 1024 * 1024 if is_large else -1
+    )
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if is_large:
+                request = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, name, size'
+                )
+                response = None
+                while response is None:
+                    status, response = request.next_chunk()
+                return response.get('id')
+            else:
+                uploaded = service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id, name, size'
+                ).execute()
+                return uploaded.get('id')
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            time.sleep(2 ** attempt)
+
+def list_user_drive_folders(service, max_results: int = 50):
+    """Returns top-level Google Drive folders for easy auto-complete selection."""
+    try:
+        query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res = service.files().list(
+            q=query,
+            pageSize=max_results,
+            fields="files(id, name, modifiedTime)",
+            orderBy="modifiedTime desc"
+        ).execute()
+        return [{"id": f["id"], "name": f["name"]} for f in res.get("files", [])]
+    except Exception as e:
+        logger.warning(f"Failed to list drive folders: {e}")
+        return []
+

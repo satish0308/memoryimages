@@ -26,13 +26,15 @@ import {
   ChevronRight,
   Filter,
   QrCode,
-  Share2
+  Share2,
+  Cloud
 } from 'lucide-react';
 import { PhotoCard, MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { ShareEventModal } from '@/components/albums/ShareEventModal';
+import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
 
 interface AlbumItem {
   id: number;
@@ -144,6 +146,29 @@ export default function AlbumsPage() {
   const [collectionSelectedIds, setCollectionSelectedIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [isRemovingFromAlbum, setIsRemovingFromAlbum] = useState(false);
+
+  // Google Drive Outbound Backup state
+  const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [backupModalDefaultFolder, setBackupModalDefaultFolder] = useState<string>('MyMemoryPics / Backups');
+
+  const handleBackupSinglePhoto = (photo: MediaItem) => {
+    setBackupModalMediaIds([photo.id]);
+    setBackupModalDefaultFolder(
+      selectedCollection ? `MyMemoryPics / ${selectedCollection.name}` : 'MyMemoryPics / Backups'
+    );
+    setIsBackupModalOpen(true);
+  };
+
+  const handleBackupAlbumToDrive = () => {
+    if (!selectedCollection || selectedCollection.photos.length === 0) return;
+    const mediaIds = collectionSelectedIds.length > 0
+      ? collectionSelectedIds
+      : selectedCollection.photos.map((p) => p.id);
+    setBackupModalMediaIds(mediaIds);
+    setBackupModalDefaultFolder(`MyMemoryPics / ${selectedCollection.name}`);
+    setIsBackupModalOpen(true);
+  };
 
   // Clear selection when active collection changes
   useEffect(() => {
@@ -699,6 +724,15 @@ export default function AlbumsPage() {
                   </button>
 
                   <button
+                    onClick={handleBackupAlbumToDrive}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold shadow-sm transition"
+                    title="Backup album photos to Google Drive with lossless quality"
+                  >
+                    <Cloud className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Backup to Drive</span>
+                  </button>
+
+                  <button
                     onClick={() => setIsSlideshowOpen(true)}
                     className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
                   >
@@ -1163,6 +1197,7 @@ export default function AlbumsPage() {
                         onSelect={setSelectedPhoto}
                         onToggleFavorite={() => {}}
                         onDelete={() => {}}
+                        onBackupToDrive={(item) => handleBackupSinglePhoto(item)}
                       />
 
                       {/* Multi-Select Checkbox */}
@@ -1470,6 +1505,7 @@ export default function AlbumsPage() {
         hasNext={hasNext}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
+        onBackupToDrive={(item) => handleBackupSinglePhoto(item)}
       />
 
       {/* Ambient Slideshow Modal */}
@@ -1497,6 +1533,18 @@ export default function AlbumsPage() {
         onClose={() => setSharingAlbum(null)}
         onShareUpdated={() => {
           loadData();
+        }}
+      />
+
+      {/* Google Drive Outbound Backup Modal */}
+      <GoogleDriveBackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        mediaIds={backupModalMediaIds}
+        defaultFolderName={backupModalDefaultFolder}
+        onBackupSuccess={() => {
+          loadData();
+          setCollectionSelectedIds([]);
         }}
       />
     </div>

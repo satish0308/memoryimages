@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Heart, Trash2, Check, Play, Layers, Award, Sparkles, Crown, AlertTriangle } from 'lucide-react';
+import { Heart, Trash2, Check, Play, Layers, Award, Sparkles, Crown, AlertTriangle, Cloud } from 'lucide-react';
 import { getCachedThumbnailUrl, prefetchAndCacheThumbnail } from '@/utils/thumbnailCache';
 
 export interface MediaItem {
@@ -58,6 +58,11 @@ export interface MediaItem {
   // Motion Photos / Live Photos
   has_motion_photo?: boolean;
   motion_video_url?: string | null;
+  // Google Drive Outbound Backup
+  is_backed_up_gdrive?: boolean;
+  gdrive_backup_file_id?: string | null;
+  gdrive_backup_folder_name?: string | null;
+  gdrive_backed_up_at?: string | null;
 }
 
 interface PhotoCardProps {
@@ -69,6 +74,7 @@ interface PhotoCardProps {
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
   onOpenBurst?: (item: MediaItem, e: React.MouseEvent) => void;
+  onBackupToDrive?: (item: MediaItem, e: React.MouseEvent) => void;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -80,6 +86,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   onToggleFavorite,
   onDelete,
   onOpenBurst,
+  onBackupToDrive,
 }) => {
   const isBurst = Boolean(item.burst_count && item.burst_count > 1);
   const [isHovered, setIsHovered] = useState(false);
@@ -295,6 +302,15 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             <span>✨</span>
           </span>
         )}
+        {item.is_backed_up_gdrive && (
+          <span
+            className="bg-emerald-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm"
+            title={`Backed up to Google Drive: ${item.gdrive_backup_folder_name || 'Drive'}`}
+          >
+            <Cloud className="w-2.5 h-2.5 text-white" />
+            <span className="hidden sm:inline">Backed Up</span>
+          </span>
+        )}
         {item.is_blurry && !item.is_bokeh && (
           <span className="bg-rose-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm">
             <AlertTriangle className="w-2.5 h-2.5 text-white" />
@@ -331,6 +347,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
       {/* Hover Overlay Controls */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2 pointer-events-none">
         <div className="flex justify-end items-center gap-1.5 pointer-events-auto">
+          {onBackupToDrive && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onBackupToDrive(item, e);
+              }}
+              className="p-1.5 bg-black/40 hover:bg-indigo-600 rounded-full text-white backdrop-blur-sm transition"
+              title={item.is_backed_up_gdrive ? `Backed up to Google Drive (${item.gdrive_backup_folder_name || 'Drive'})` : "Backup to Google Drive"}
+            >
+              <Cloud className={`w-3.5 h-3.5 ${item.is_backed_up_gdrive ? 'text-emerald-400' : 'text-indigo-200'}`} />
+            </button>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
