@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.person import Person, FaceDetection
 from app.models.media import Media
 from app.api.auth import get_current_user, get_optional_current_user
+from app.services.task_queue import TaskQueue
 from app.services.face_engine import (
     process_faces_for_media, 
     index_all_library_faces,
@@ -244,20 +245,42 @@ def get_unnamed_faces(
 
 @router.post("/auto-cluster")
 def trigger_auto_cluster(
+    background: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Auto-clusters detected faces into Person groups using ArcFace 512-d embeddings."""
+    if background:
+        task = TaskQueue.enqueue(
+            task_type="face_cluster_all",
+            payload={"user_id": current_user.id},
+            name="Vision Person Face Clustering"
+        )
+        return {"status": "queued", "task_id": task["id"]}
     res = auto_cluster_faces(db, user_id=current_user.id)
     return res
 
 @router.post("/scan-faces")
 def scan_faces(
     max_photos: int = Query(250, ge=1, le=1000),
+    background: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Deep scans library photos for human faces (UltraFace + ArcFace) and household pets (YOLOv8)."""
+    if background:
+        task = TaskQueue.enqueue(
+            task_type="face_detect_all",
+            payload={"user_id": current_user.id, "max_photos": max_photos},
+            name="UltraFace Face Detection"
+        )
+        return {
+            "status": "queued",
+            "task_id": task["id"],
+            "message": "Face detection background task started.",
+            "photos_processed": 0,
+            "faces_detected": 0
+        }
     scan_res = index_all_library_faces(db, user_id=current_user.id, max_photos=max_photos)
     cluster_res = auto_cluster_faces(db, user_id=current_user.id)
     return {
@@ -337,26 +360,30 @@ def get_merge_suggestions(
     if not current_user:
         return []
 
-    people = db.query(Person).filter(
-        Person.user_id == current_user.id,
+    people_query = db.query(Person).filter(
         Person.is_hidden == False
-    ).all()
+    )
+    if not current_user.is_admin:
+        people_query = people_query.filter((Person.user_id == current_user.id) | (Person.user_id == None))
+    people = people_query.all()
 
     people_ids = [p.id for p in people]
     if not people_ids:
         return []
 
     # Single batch query for all faces across all identified people
-    all_faces = (
+    faces_query = (
         db.query(FaceDetection.person_id, FaceDetection.media_id, FaceDetection.embedding_str)
         .join(Media, FaceDetection.media_id == Media.id)
         .filter(
             FaceDetection.person_id.in_(people_ids),
-            Media.user_id == current_user.id,
             Media.is_deleted == False,
             FaceDetection.embedding_str != None
-        ).all()
+        )
     )
+    if not current_user.is_admin:
+        faces_query = faces_query.filter((Media.user_id == current_user.id) | (Media.user_id == None))
+    all_faces = faces_query.all()
 
     faces_by_pid = {}
     for pid, mid, emb_str in all_faces:
@@ -890,13 +917,25 @@ def merge_people(
     db: Session = Depends(get_db)
 ):
     """Merges source person into target person (reassigns all face detections)."""
+    if req.source_person_id == req.target_person_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a person into themselves.")
+
     source = db.query(Person).filter(Person.id == req.source_person_id).first()
     target = db.query(Person).filter(Person.id == req.target_person_id).first()
     
     if not source or not target:
-        raise HTTPException(status_code=404, detail="One or both person IDs not found")
-    if (source.user_id != current_user.id or target.user_id != current_user.id) and not current_user.is_admin:
+        raise HTTPException(status_code=404, detail="One or both person profiles not found")
+
+    def can_modify(p: Person) -> bool:
+        if current_user.is_admin:
+            return True
+        return p.user_id is None or p.user_id == current_user.id
+
+    if not can_modify(source) or not can_modify(target):
         raise HTTPException(status_code=403, detail="Access denied")
+
+    if target.user_id is None and current_user.id:
+        target.user_id = current_user.id
         
     db.query(FaceDetection).filter(
         FaceDetection.person_id == req.source_person_id
@@ -906,9 +945,18 @@ def merge_people(
         target.cover_media_id = source.cover_media_id
     if not target.relationship_type and source.relationship_type:
         target.relationship_type = source.relationship_type
+    if not target.is_pet and source.is_pet:
+        target.is_pet = source.is_pet
+        target.pet_type = source.pet_type
 
     db.delete(source)
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error executing person merge {req.source_person_id} -> {req.target_person_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Database error during merge: {str(e)}")
+
     return {"status": "merged", "target_id": target.id, "target_name": target.name}
 
 @router.delete("/{person_id}")

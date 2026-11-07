@@ -25,6 +25,7 @@ import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { SearchPersonModal } from '@/components/people/SearchPersonModal';
 import { useAuth } from '@/context/AuthContext';
+import { useTaskQueue } from '@/context/TaskQueueContext';
 
 interface PersonItem {
   id: number;
@@ -99,6 +100,9 @@ const RELATIONSHIP_FILTERS = [
 
 export default function PeoplePage() {
   const { token: authContextToken } = useAuth();
+  const { activeTasks = [], recentTasks = [] } = useTaskQueue() || {};
+  const isFaceDetectActive = activeTasks.some((t) => t.type === 'face_detect_all');
+  const isFaceClusterActive = activeTasks.some((t) => t.type === 'face_cluster_all');
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [stats, setStats] = useState<PeopleStats | null>(null);
   const [unnamedFaces, setUnnamedFaces] = useState<UnnamedFaceItem[]>([]);
@@ -134,6 +138,8 @@ export default function PeoplePage() {
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [mergeSourceId, setMergeSourceId] = useState<number | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<number | null>(null);
+  const [isMergingModal, setIsMergingModal] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   // Visual Face Search Modal
   const [searchModalFaceId, setSearchModalFaceId] = useState<number | null>(null);
@@ -218,6 +224,20 @@ export default function PeoplePage() {
       fetchUnnamedFaces();
     }
   }, [activeTab, fetchUnnamedFaces]);
+
+  // Automatically refresh people, stats, and merge suggestions when face tasks complete
+  const prevCompletedTasksCount = React.useRef(0);
+  useEffect(() => {
+    const completedFaceTasks = recentTasks.filter(
+      (t) => (t.type === 'face_detect_all' || t.type === 'face_cluster_all') && t.status === 'completed'
+    ).length;
+    if (completedFaceTasks > prevCompletedTasksCount.current) {
+      prevCompletedTasksCount.current = completedFaceTasks;
+      fetchPeople();
+      fetchMergeSuggestions();
+      if (activeTab === 'unnamed') fetchUnnamedFaces();
+    }
+  }, [recentTasks, fetchPeople, fetchMergeSuggestions, fetchUnnamedFaces, activeTab]);
 
   // Load photos when a person is selected
   const openPersonGallery = async (person: PersonItem) => {
@@ -351,15 +371,28 @@ export default function PeoplePage() {
       });
 
       if (res.ok) {
+        // Purge any suggestion containing the dissolved source person ID
         setMergeSuggestions((prev) =>
-          prev.filter((s) => !(s.source_person.id === sourceId && s.target_person.id === targetId))
+          prev.filter((s) => s.source_person.id !== sourceId && s.target_person.id !== sourceId)
         );
         fetchPeople();
         setStatusMessage('Profiles merged successfully!');
         setTimeout(() => setStatusMessage(null), 3000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Merge failed.' }));
+        if (res.status === 404) {
+          // Already merged in a prior action, remove stale card
+          setMergeSuggestions((prev) =>
+            prev.filter((s) => s.source_person.id !== sourceId && s.target_person.id !== sourceId)
+          );
+        }
+        setStatusMessage(err.detail || 'Merge failed.');
+        setTimeout(() => setStatusMessage(null), 4000);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Quick merge failed:', e);
+      setStatusMessage(e?.message || 'Quick merge failed.');
+      setTimeout(() => setStatusMessage(null), 4000);
     } finally {
       setMergingId(null);
     }
@@ -380,6 +413,9 @@ export default function PeoplePage() {
         fetchMergeSuggestions();
         setStatusMessage('ArcFace clustering complete!');
         setTimeout(() => setStatusMessage(null), 3500);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Clustering failed.' }));
+        setStatusMessage(err.detail || 'Clustering failed.');
       }
     } catch (e) {
       console.error(e);
@@ -393,18 +429,25 @@ export default function PeoplePage() {
   const handleScanFaces = async () => {
     try {
       setIsScanning(true);
-      setStatusMessage('Scanning library photos with UltraFace, ArcFace & YOLOv8 for pets...');
+      setStatusMessage('Starting deep biometric scan across library photos...');
       const token = getActiveToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch(`${API_URL}/api/v1/people/scan-faces?max_photos=250`, { method: 'POST', headers });
       if (res.ok) {
-        await fetch(`${API_URL}/api/v1/people/auto-cluster`, { method: 'POST', headers });
-        setStatusMessage('Deep scan & clustering complete!');
-        fetchPeople();
-        fetchMergeSuggestions();
-        setTimeout(() => setStatusMessage(null), 4000);
+        const data = await res.json().catch(() => ({}));
+        if (data.status === 'queued') {
+          setStatusMessage('Biometric scan running in background! Check Task Queue in header for live progress.');
+        } else {
+          setStatusMessage('Deep scan complete!');
+          fetchPeople();
+          fetchMergeSuggestions();
+        }
+        setTimeout(() => setStatusMessage(null), 5000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Scan failed.' }));
+        setStatusMessage(err.detail || 'Scan failed.');
       }
     } catch (e) {
       console.error(e);
@@ -416,8 +459,10 @@ export default function PeoplePage() {
 
   // Manual Merge from Modal
   const handleMergePeople = async () => {
-    if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return;
+    if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId || isMergingModal) return;
     try {
+      setIsMergingModal(true);
+      setModalError(null);
       const token = getActiveToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -434,6 +479,7 @@ export default function PeoplePage() {
         setShowMergeModal(false);
         setMergeSourceId(null);
         setMergeTargetId(null);
+        setModalError(null);
         if (selectedPerson && selectedPerson.id === mergeSourceId) {
           setSelectedPerson(null);
         }
@@ -441,9 +487,15 @@ export default function PeoplePage() {
         fetchMergeSuggestions();
         setStatusMessage('People successfully merged!');
         setTimeout(() => setStatusMessage(null), 3000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Merge failed.' }));
+        setModalError(err.detail || 'Merge failed.');
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setModalError(e?.message || 'Merge failed.');
+    } finally {
+      setIsMergingModal(false);
     }
   };
 
@@ -521,22 +573,22 @@ export default function PeoplePage() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={handleAutoCluster}
-              disabled={isClustering}
+              disabled={isClustering || isFaceClusterActive}
               className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
               title="Automatically cluster faces with ArcFace biometric embeddings"
             >
-              <Sparkles className={`w-3.5 h-3.5 ${isClustering ? 'animate-spin text-amber-300' : ''}`} />
-              <span>{isClustering ? 'Clustering...' : 'Auto-Cluster Faces'}</span>
+              <Sparkles className={`w-3.5 h-3.5 ${(isClustering || isFaceClusterActive) ? 'animate-spin text-amber-300' : ''}`} />
+              <span>{isClustering || isFaceClusterActive ? 'Clustering...' : 'Auto-Cluster Faces'}</span>
             </button>
 
             <button
               onClick={handleScanFaces}
-              disabled={isScanning}
+              disabled={isScanning || isFaceDetectActive}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
               title="Scan library photos for new faces"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-indigo-500' : ''}`} />
-              <span className="hidden sm:inline">Scan Library</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${(isScanning || isFaceDetectActive) ? 'animate-spin text-indigo-500' : ''}`} />
+              <span className="hidden sm:inline">{isFaceDetectActive ? 'Scanning Library...' : 'Scan Library'}</span>
             </button>
 
             <button
@@ -1194,19 +1246,29 @@ export default function PeoplePage() {
               </div>
             </div>
 
+            {modalError && (
+              <p className="text-xs text-rose-500 bg-rose-50 dark:bg-rose-950/50 p-2.5 rounded-xl border border-rose-200 dark:border-rose-900/50">
+                {modalError}
+              </p>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
-                onClick={() => setShowMergeModal(false)}
+                onClick={() => {
+                  setShowMergeModal(false);
+                  setModalError(null);
+                }}
                 className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-semibold"
               >
                 Cancel
               </button>
               <button
                 onClick={handleMergePeople}
-                disabled={!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                disabled={!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId || isMergingModal}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
               >
-                Confirm Merge
+                {isMergingModal && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isMergingModal ? 'Merging...' : 'Confirm Merge'}</span>
               </button>
             </div>
           </div>

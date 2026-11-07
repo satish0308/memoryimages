@@ -144,15 +144,29 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     from app.services.face_engine import process_faces_for_media, auto_cluster_faces
 
     with SessionLocal() as db:
-        # Check all unscanned non-deleted image photos (defer extracted_text to eliminate memory bloat)
-        photos = db.query(Media).options(defer(Media.extracted_text)).filter(
+        user_id = payload.get("user_id") if payload else None
+        max_photos = payload.get("max_photos") if payload else None
+
+        # Check unscanned non-deleted image photos (defer extracted_text to eliminate memory bloat)
+        query = db.query(Media).options(defer(Media.extracted_text)).filter(
             Media.is_deleted == False,
             (Media.mime_type == None) | (~Media.mime_type.startswith("video/")),
             (Media.faces_scanned == False) | (Media.faces_scanned == None)
-        ).all()
+        )
+        if user_id:
+            query = query.filter(Media.user_id == user_id)
 
+        query = query.order_by(Media.captured_at.desc())
+        if max_photos:
+            query = query.limit(max_photos)
+
+        photos = query.all()
         total = len(photos)
         if total == 0:
+            try:
+                auto_cluster_faces(db, user_id=user_id)
+            except Exception as e:
+                logger.warning(f"Post-detection face clustering notice: {e}")
             return {"photos_scanned": 0, "faces_detected": 0}
 
         TaskQueue.update_task(
@@ -192,7 +206,7 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
         # Automatically cluster newly detected faces into People
         try:
-            auto_cluster_faces(db)
+            auto_cluster_faces(db, user_id=user_id)
         except Exception as e:
             logger.warning(f"Post-detection face clustering notice: {e}")
 
@@ -209,8 +223,9 @@ def run_face_clustering(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         message="Computing vision embeddings for detected face crops..."
     )
 
+    user_id = payload.get("user_id") if payload else None
     with SessionLocal() as db:
-        res = auto_cluster_faces(db)
+        res = auto_cluster_faces(db, user_id=user_id)
         
         TaskQueue.update_task(
             task_id,
