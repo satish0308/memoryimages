@@ -175,7 +175,8 @@ class TaskQueue:
         _memory_queue.append(task_id)
         _memory_history.insert(0, task_id)
         if len(_memory_history) > 100:
-            _memory_history.pop()
+            popped_id = _memory_history.pop()
+            _memory_tasks.pop(popped_id, None)
         logger.info(f"Task {task_id} ({task_type}) enqueued to local in-memory queue.")
         return task_data
 

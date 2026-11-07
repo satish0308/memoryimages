@@ -199,12 +199,11 @@ def backup_database_to_s3(db: Session, label: Optional[str] = None) -> Dict[str,
     filename = meta["filename"]
     local_path = get_backup_path(filename)
     
-    # 2. Upload to MinIO S3
+    # 2. Upload to MinIO S3 via streaming upload without buffering archive into RAM
     s3_key = f"backups/{filename}"
-    with open(local_path, "rb") as f:
-        data = f.read()
-    
-    upload_bytes_to_s3(data, s3_key, content_type="application/gzip")
+    s3 = get_s3_client()
+    ensure_bucket_exists(settings.S3_BUCKET_NAME)
+    s3.upload_file(local_path, Bucket=settings.S3_BUCKET_NAME, Key=s3_key, ExtraArgs={"ContentType": "application/gzip"})
     logger.info(f"Uploaded database backup to MinIO: {s3_key}")
     
     meta["s3_key"] = s3_key

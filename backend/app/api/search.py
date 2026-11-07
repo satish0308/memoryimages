@@ -49,13 +49,13 @@ def search_photos(
     # 1. AI Semantic Natural Language Search (Photos + Video Keyframes)
     if semantic and q and q.strip():
         # A. Semantic search across photos
-        photo_results = semantic_search(db, q.strip(), top_k=limit)
+        photo_results = semantic_search(db, q.strip(), user_id=current_user.id, top_k=limit)
         
         # B. Video keyframe search
         q_vec = embed_text(q.strip())
         video_results = []
         if q_vec is not None:
-            video_results = search_video_keyframes(db, q_vec, top_k=15)
+            video_results = search_video_keyframes(db, q_vec, user_id=current_user.id, top_k=15)
 
         # Merge results, strictly enforcing current_user.id ownership via single batch query (eliminating N+1)
         all_candidate_ids = list(set([p["id"] for p in photo_results] + [v["id"] for v in video_results]))

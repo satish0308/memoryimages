@@ -476,15 +476,30 @@ def get_person_avatar(
     first_face = db.query(FaceDetection).filter(FaceDetection.person_id == person.id).first()
     if not first_face:
         raise HTTPException(status_code=404, detail="No faces for this person")
-        
+
+    face_cache_path = os.path.join(settings.THUMBNAIL_DIR, f"face_{first_face.id}_180.webp")
+    if os.path.isfile(face_cache_path):
+        return FileResponse(
+            face_cache_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+
     crop_bytes = get_face_crop_image(db, first_face)
     if not crop_bytes:
         raise HTTPException(status_code=404, detail="Could not generate face crop")
-        
+
+    if os.path.isfile(face_cache_path):
+        return FileResponse(
+            face_cache_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+
     return Response(
         content=crop_bytes, 
         media_type="image/webp", 
-        headers={"Cache-Control": "public, max-age=86400"}
+        headers={"Cache-Control": "public, max-age=31536000, immutable"}
     )
 
 @router.get("/{person_id}/photos")
@@ -651,7 +666,10 @@ def search_by_face(
     if query_emb is None:
         raise HTTPException(status_code=400, detail="Could not extract biometric face features from the specified area. Please ensure a face is visible.")
 
-    # 3. Query all face embeddings for current user
+    # 3. Query all face embeddings for current user and preload people (eliminating N+1 queries)
+    user_people = db.query(Person).filter(Person.user_id == current_user.id).all()
+    person_map = {p.id: p for p in user_people}
+
     all_faces = (
         db.query(FaceDetection, Media)
         .join(Media, FaceDetection.media_id == Media.id)
@@ -664,38 +682,54 @@ def search_by_face(
 
     matches_by_media: Dict[int, Dict[str, Any]] = {}
     suggested_person_counts: Dict[int, int] = {}
+    threshold = req.similarity_threshold or 0.38
 
+    # Fast vectorized ArcFace matrix comparison
+    valid_face_data = []
+    emb_vectors = []
     for face_item, media_item in all_faces:
         try:
-            target_emb = np.array([float(x) for x in face_item.embedding_str.split(",")])
-            sim = float(np.dot(query_emb, target_emb))
+            vec = [float(x) for x in face_item.embedding_str.split(",")]
+            if len(vec) == 512:
+                valid_face_data.append((face_item, media_item))
+                emb_vectors.append(vec)
         except Exception:
             continue
 
-        if sim >= (req.similarity_threshold or 0.38):
-            conf_pct = min(99, max(50, int(round((sim - 0.25) / (0.75 - 0.25) * 50 + 50))))
-            
-            if media_item.id not in matches_by_media or sim > matches_by_media[media_item.id]["similarity"]:
-                person_obj = db.query(Person).filter(Person.id == face_item.person_id).first() if face_item.person_id else None
-                
-                if person_obj and person_obj.name and not person_obj.name.startswith("Person "):
-                    suggested_person_counts[person_obj.id] = suggested_person_counts.get(person_obj.id, 0) + 1
+    if emb_vectors and query_emb is not None:
+        emb_matrix = np.array(emb_vectors, dtype=np.float32)
+        q_norm = query_emb / (np.linalg.norm(query_emb) or 1.0)
+        norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        emb_matrix_norm = emb_matrix / norms
+        scores = emb_matrix_norm @ q_norm
 
-                matches_by_media[media_item.id] = {
-                    "media_id": media_item.id,
-                    "face_id": face_item.id,
-                    "filename": media_item.filename,
-                    "thumbnail_url": f"/api/v1/media/{media_item.id}/thumbnail?size=256",
-                    "captured_at": media_item.captured_at.isoformat() if media_item.captured_at else None,
-                    "similarity": round(sim, 3),
-                    "confidence_pct": conf_pct,
-                    "current_person_id": person_obj.id if person_obj else None,
-                    "current_person_name": person_obj.name if person_obj else None,
-                    "box_x": face_item.box_x,
-                    "box_y": face_item.box_y,
-                    "box_w": face_item.box_w,
-                    "box_h": face_item.box_h
-                }
+        for idx, (face_item, media_item) in enumerate(valid_face_data):
+            sim = float(scores[idx])
+            if sim >= threshold:
+                conf_pct = min(99, max(50, int(round((sim - 0.25) / (0.75 - 0.25) * 50 + 50))))
+                
+                if media_item.id not in matches_by_media or sim > matches_by_media[media_item.id]["similarity"]:
+                    person_obj = person_map.get(face_item.person_id) if face_item.person_id else None
+                    
+                    if person_obj and person_obj.name and not person_obj.name.startswith("Person "):
+                        suggested_person_counts[person_obj.id] = suggested_person_counts.get(person_obj.id, 0) + 1
+
+                    matches_by_media[media_item.id] = {
+                        "media_id": media_item.id,
+                        "face_id": face_item.id,
+                        "filename": media_item.filename,
+                        "thumbnail_url": f"/api/v1/media/{media_item.id}/thumbnail?size=256",
+                        "captured_at": media_item.captured_at.isoformat() if media_item.captured_at else None,
+                        "similarity": round(sim, 3),
+                        "confidence_pct": conf_pct,
+                        "current_person_id": person_obj.id if person_obj else None,
+                        "current_person_name": person_obj.name if person_obj else None,
+                        "box_x": face_item.box_x,
+                        "box_y": face_item.box_y,
+                        "box_w": face_item.box_w,
+                        "box_h": face_item.box_h
+                    }
 
     matches_list = sorted(list(matches_by_media.values()), key=lambda x: x["similarity"], reverse=True)
 

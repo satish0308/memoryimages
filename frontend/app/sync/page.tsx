@@ -55,7 +55,7 @@ export default function SyncPage() {
   const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
 
   const getAuthHeaders = () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     return headers;
@@ -98,7 +98,7 @@ export default function SyncPage() {
       formData.append('files', files[i]);
     }
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null;
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/api/v1/storage/s3/upload`, {

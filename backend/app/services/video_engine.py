@@ -213,20 +213,27 @@ def extract_video_keyframes(
 def search_video_keyframes(
     db: Session,
     query_vector: np.ndarray,
+    user_id: Optional[int] = None,
     top_k: int = 15,
     min_similarity: float = 0.16
 ) -> List[Dict[str, Any]]:
     """
-    Finds exact matching moments / keyframes across all indexed videos.
+    Finds exact matching moments / keyframes across indexed videos for user_id.
     Returns matched video details, timestamp in seconds, timestamp label, and preview crop.
     """
-    rows = db.query(
+    q_rows = db.query(
         VideoKeyframe.id,
         VideoKeyframe.media_id,
         VideoKeyframe.timestamp_seconds,
         VideoKeyframe.thumbnail_path,
         VideoKeyframe.vector
-    ).filter(VideoKeyframe.vector.isnot(None)).all()
+    ).join(Media, VideoKeyframe.media_id == Media.id).filter(
+        VideoKeyframe.vector.isnot(None),
+        Media.is_deleted == False
+    )
+    if user_id:
+        q_rows = q_rows.filter(Media.user_id == user_id)
+    rows = q_rows.all()
 
     if not rows:
         return []
@@ -263,7 +270,10 @@ def search_video_keyframes(
 
     # Enrich with Media details via single batch query (eliminates N+1 DB roundtrips)
     target_mids = [item["media_id"] for item in final_results]
-    media_records = db.query(Media).filter(Media.id.in_(target_mids), Media.is_deleted == False).all()
+    media_q = db.query(Media).filter(Media.id.in_(target_mids), Media.is_deleted == False)
+    if user_id:
+        media_q = media_q.filter(Media.user_id == user_id)
+    media_records = media_q.all()
     media_map = {m.id: m for m in media_records}
 
     enriched = []

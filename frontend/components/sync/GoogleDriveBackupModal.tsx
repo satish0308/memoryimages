@@ -88,7 +88,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
       return;
     }
 
-    const token = localStorage.getItem('token');
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -141,7 +141,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
     setIsBackingUp(true);
     setBackupResult(null);
 
-    const token = localStorage.getItem('token');
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 

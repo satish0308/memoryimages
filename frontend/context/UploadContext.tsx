@@ -135,7 +135,7 @@ export const UploadProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Fetch available albums when staging modal opens
   const fetchAlbums = useCallback(async () => {
     try {
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token || (typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null);
       const headers: Record<string, string> = {};
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
@@ -227,7 +227,7 @@ export const UploadProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const createNewAlbum = async (name: string): Promise<number | null> => {
     if (!name.trim()) return null;
     try {
-      const authToken = token || localStorage.getItem('token');
+      const authToken = token || (typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
@@ -381,7 +381,7 @@ export const UploadProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     initialUploadedBytes: number,
     initialCompletedCount: number
   ) => {
-    const authToken = token || localStorage.getItem('token');
+    const authToken = token || (typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null);
     let runningUploadedBytes = initialUploadedBytes;
     let completedItemCount = initialCompletedCount;
 

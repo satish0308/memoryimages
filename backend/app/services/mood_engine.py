@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import colorsys
 import numpy as np
 from PIL import Image

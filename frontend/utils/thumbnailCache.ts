@@ -10,8 +10,21 @@ const DB_NAME = 'mymemorypics_thumbnail_cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'thumbnails';
 
-// In-memory LRU object URL cache to prevent repeated URL.createObjectURL calls
+// In-memory bounded LRU object URL cache to prevent repeated URL.createObjectURL calls and DOM memory leaks
+const MAX_MEMORY_URLS = 250;
 const memoryUrlCache = new Map<string, string>();
+
+function setMemoryUrl(key: string, url: string) {
+  if (memoryUrlCache.size >= MAX_MEMORY_URLS) {
+    const oldestKey = memoryUrlCache.keys().next().value;
+    if (oldestKey) {
+      const oldUrl = memoryUrlCache.get(oldestKey);
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+      memoryUrlCache.delete(oldestKey);
+    }
+  }
+  memoryUrlCache.set(key, url);
+}
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
@@ -72,7 +85,7 @@ export async function getCachedThumbnailUrl(mediaId: number, size: number = 256)
       req.onsuccess = () => {
         if (req.result && req.result.blob) {
           const objectUrl = URL.createObjectURL(req.result.blob);
-          memoryUrlCache.set(cacheKey, objectUrl);
+          setMemoryUrl(cacheKey, objectUrl);
           resolve(objectUrl);
         } else {
           resolve(null);
@@ -108,7 +121,7 @@ export async function cacheThumbnailBlob(mediaId: number, size: number = 256, bl
     });
 
     if (!memoryUrlCache.has(cacheKey)) {
-      memoryUrlCache.set(cacheKey, URL.createObjectURL(blob));
+      setMemoryUrl(cacheKey, URL.createObjectURL(blob));
     }
   } catch (e) {
     // Graceful degradation on quota exceeded or permission errors

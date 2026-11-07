@@ -178,7 +178,7 @@ def hard_nms(box_scores: np.ndarray, iou_threshold: float = 0.3, top_k: int = -1
         
     return box_scores[picked, :]
 
-def load_media_image(media: Media, db: Session, prefer_preview: bool = False) -> Optional[Image.Image]:
+def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> Optional[Image.Image]:
     """Loads an image into a PIL Image object from local disk or in-memory cloud stream."""
     if media.mime_type and media.mime_type.startswith("video/"):
         return None

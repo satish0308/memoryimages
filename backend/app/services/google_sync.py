@@ -607,17 +607,32 @@ def propagate_locations_to_clusters(db: Session, user_id: int, max_gap_hours: fl
         Media.is_deleted == False
     ).all()
 
+    import bisect
+
+    anchors.sort(key=lambda a: a.captured_at)
+    anchor_times = [a.captured_at.timestamp() for a in anchors]
+    num_anchors = len(anchor_times)
     max_gap_seconds = max_gap_hours * 3600.0
     updated_count = 0
 
     for item in non_geo:
+        item_time = item.captured_at.timestamp()
+        idx = bisect.bisect_left(anchor_times, item_time)
+
         best_anchor = None
         min_gap = max_gap_seconds
-        for anc in anchors:
-            gap = abs((item.captured_at - anc.captured_at).total_seconds())
+
+        if idx > 0:
+            gap = item_time - anchor_times[idx - 1]
             if gap <= min_gap:
                 min_gap = gap
-                best_anchor = anc
+                best_anchor = anchors[idx - 1]
+
+        if idx < num_anchors:
+            gap = anchor_times[idx] - item_time
+            if gap <= min_gap:
+                min_gap = gap
+                best_anchor = anchors[idx]
 
         if best_anchor:
             item.latitude = best_anchor.latitude

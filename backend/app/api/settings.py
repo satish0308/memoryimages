@@ -33,7 +33,10 @@ class ClearCacheRequest(BaseModel):
     clear_local_disk_thumbnails: bool = False
 
 @router.get("")
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Returns all application settings and live telemetry on RAM/disk storage."""
     return get_all_settings(db)
 
@@ -123,6 +126,9 @@ def clear_application_cache(
     return result
 
 @router.get("/metrics")
-def get_storage_metrics_endpoint(db: Session = Depends(get_db)):
+def get_storage_metrics_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Returns live storage statistics across RAM cache, originals, and thumbnails."""
     return get_storage_metrics(db)

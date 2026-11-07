@@ -140,10 +140,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   }, [item.id, thumbSrc]);
 
   const handleImageLoaded = () => {
-    // If loaded from network, pre-warm IndexedDB cache in background
-    if (displaySrc === thumbSrc && typeof window !== 'undefined') {
-      prefetchAndCacheThumbnail(thumbSrc, item.id, 256);
-    }
+    // Browser HTTP disk cache with max-age=31536000 handles instant loading with zero redundant network fetch
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {

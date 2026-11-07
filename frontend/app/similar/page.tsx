@@ -105,7 +105,7 @@ function SimilarPhotosContent() {
     return `${fullUrl}${separator}token=${encodeURIComponent(token)}`;
   }, [API_URL]);
 
-  const loadSimilarPhotos = useCallback(async (facet: string = activeFacet) => {
+  const loadSimilarPhotos = useCallback(async (facet: string = 'all') => {
     if (!mediaId) {
       setError('No target photo ID provided.');
       setLoading(false);
@@ -138,11 +138,11 @@ function SimilarPhotosContent() {
     } finally {
       setLoading(false);
     }
-  }, [mediaId, activeFacet, API_URL]);
+  }, [mediaId, API_URL]);
 
   useEffect(() => {
-    loadSimilarPhotos(activeFacet);
-  }, [loadSimilarPhotos, activeFacet]);
+    loadSimilarPhotos('all');
+  }, [loadSimilarPhotos]);
 
   const displayedItems = React.useMemo(() => {
     if (!data) return [];

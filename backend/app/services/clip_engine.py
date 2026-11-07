@@ -177,11 +177,12 @@ def index_all_unindexed(db: Session, limit: int = 500) -> int:
 def semantic_search(
     db: Session, 
     query: str, 
+    user_id: Optional[int] = None,
     top_k: int = 50, 
     min_similarity: float = 0.16
 ) -> List[Dict[str, Any]]:
     """
-    Performs vector cosine similarity search across all indexed photos.
+    Performs vector cosine similarity search across indexed photos scoped to user_id.
     Uses native PostgreSQL pgvector HNSW index when available, with
     graceful fallback to NumPy in-memory dot product (SQLite).
     """
@@ -197,14 +198,33 @@ def semantic_search(
             from sqlalchemy import text
             max_dist = max(0.0, 1.0 - min_similarity)
             vec_str = "[" + ",".join(f"{x:.6f}" for x in q_vec) + "]"
-            sql = text("""
-                SELECT media_id, (1.0 - (embedding <=> :q_vec::vector)) AS score
-                FROM media_embeddings
-                WHERE embedding IS NOT NULL AND (embedding <=> :q_vec::vector) <= :max_dist
-                ORDER BY embedding <=> :q_vec::vector ASC
-                LIMIT :top_k;
-            """)
-            rows = db.execute(sql, {"q_vec": vec_str, "max_dist": max_dist, "top_k": top_k}).fetchall()
+            params = {"q_vec": vec_str, "max_dist": max_dist, "top_k": top_k}
+            
+            if user_id:
+                params["user_id"] = user_id
+                sql = text("""
+                    SELECT me.media_id, (1.0 - (me.embedding <=> :q_vec::vector)) AS score
+                    FROM media_embeddings me
+                    JOIN media m ON m.id = me.media_id
+                    WHERE me.embedding IS NOT NULL 
+                      AND m.is_deleted = false 
+                      AND m.user_id = :user_id 
+                      AND (me.embedding <=> :q_vec::vector) <= :max_dist
+                    ORDER BY me.embedding <=> :q_vec::vector ASC
+                    LIMIT :top_k;
+                """)
+            else:
+                sql = text("""
+                    SELECT me.media_id, (1.0 - (me.embedding <=> :q_vec::vector)) AS score
+                    FROM media_embeddings me
+                    JOIN media m ON m.id = me.media_id
+                    WHERE me.embedding IS NOT NULL 
+                      AND m.is_deleted = false 
+                      AND (me.embedding <=> :q_vec::vector) <= :max_dist
+                    ORDER BY me.embedding <=> :q_vec::vector ASC
+                    LIMIT :top_k;
+                """)
+            rows = db.execute(sql, params).fetchall()
             if rows is not None and len(rows) > 0:
                 top_results = [(r[0], float(r[1])) for r in rows]
         except Exception as e:
@@ -213,7 +233,13 @@ def semantic_search(
 
     if top_results is None:
         # Fallback to in-memory numpy matrix multiplication (SQLite / unindexed vector column)
-        rows = db.query(MediaEmbedding.media_id, MediaEmbedding.vector).filter(MediaEmbedding.vector.isnot(None)).all()
+        q_emb = db.query(MediaEmbedding.media_id, MediaEmbedding.vector).join(Media, Media.id == MediaEmbedding.media_id).filter(
+            MediaEmbedding.vector.isnot(None),
+            Media.is_deleted == False
+        )
+        if user_id:
+            q_emb = q_emb.filter(Media.user_id == user_id)
+        rows = q_emb.all()
         if not rows:
             return []
 
@@ -239,10 +265,13 @@ def semantic_search(
     id_to_score = {mid: score for mid, score in top_results}
     target_ids = list(id_to_score.keys())
 
-    media_items = db.query(Media).filter(
+    query_m = db.query(Media).filter(
         Media.id.in_(target_ids),
         Media.is_deleted == False
-    ).all()
+    )
+    if user_id:
+        query_m = query_m.filter(Media.user_id == user_id)
+    media_items = query_m.all()
 
     # Sort media items according to ranking score
     media_dict = {m.id: m for m in media_items}

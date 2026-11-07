@@ -118,7 +118,7 @@ def list_media(
         query = query.filter(Media.latitude != None, Media.longitude != None)
         
     total = query.count()
-    items = query.order_by(desc(Media.captured_at)).offset(offset).limit(limit).all()
+    items = query.options(defer(Media.extracted_text)).order_by(desc(Media.captured_at)).offset(offset).limit(limit).all()
     
     return {
         "total": total,
@@ -1615,7 +1615,7 @@ def upload_photo(
     }
 
 @router.post("/upload-batch")
-async def upload_batch(
+def upload_batch(
     files: List[UploadFile] = File(...),
     album_id: Optional[int] = Form(None),
     relative_paths: Optional[str] = Form(None),
@@ -2193,7 +2193,7 @@ def bulk_download(
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    items = db.query(Media).filter(
+    items = db.query(Media).options(defer(Media.extracted_text)).filter(
         Media.id.in_(req.media_ids),
         Media.user_id == current_user.id,
         Media.is_deleted == False
@@ -2379,16 +2379,36 @@ def propagate_cluster_locations(
         Media.is_deleted == False
     ).all()
     
+    import bisect
+
+    # Sort anchors strictly by captured_at to enable O(log K) binary search instead of O(N*K) nested scan
+    anchors.sort(key=lambda a: a.captured_at)
+    anchor_times = [a.captured_at.timestamp() for a in anchors]
+    num_anchors = len(anchor_times)
+    max_gap_seconds = req.max_gap_hours * 3600.0
+
     updated_count = 0
     for item in non_geo:
+        item_time = item.captured_at.timestamp()
+        idx = bisect.bisect_left(anchor_times, item_time)
+
         best_anchor = None
-        min_gap_seconds = req.max_gap_hours * 3600.0
-        for anc in anchors:
-            gap = abs((item.captured_at - anc.captured_at).total_seconds())
-            if gap <= min_gap_seconds:
-                min_gap_seconds = gap
-                best_anchor = anc
-                
+        min_gap = max_gap_seconds
+
+        # Check left neighbor
+        if idx > 0:
+            gap = item_time - anchor_times[idx - 1]
+            if gap <= min_gap:
+                min_gap = gap
+                best_anchor = anchors[idx - 1]
+
+        # Check right neighbor
+        if idx < num_anchors:
+            gap = anchor_times[idx] - item_time
+            if gap <= min_gap:
+                min_gap = gap
+                best_anchor = anchors[idx]
+
         if best_anchor:
             item.latitude = best_anchor.latitude
             item.longitude = best_anchor.longitude

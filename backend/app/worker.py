@@ -12,6 +12,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from app.config import settings
 from app.database import SessionLocal, engine, Base
+from sqlalchemy.orm import defer
 from app.models import media, person, sync, album, user
 from app.services.task_queue import (
     TaskQueue,
@@ -143,8 +144,8 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     from app.services.face_engine import process_faces_for_media, auto_cluster_faces
 
     with SessionLocal() as db:
-        # Check all unscanned non-deleted image photos
-        photos = db.query(Media).filter(
+        # Check all unscanned non-deleted image photos (defer extracted_text to eliminate memory bloat)
+        photos = db.query(Media).options(defer(Media.extracted_text)).filter(
             Media.is_deleted == False,
             (Media.mime_type == None) | (~Media.mime_type.startswith("video/")),
             (Media.faces_scanned == False) | (Media.faces_scanned == None)
@@ -366,7 +367,7 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
 
     with SessionLocal() as db:
         user_id = payload.get("user_id")
-        query = db.query(Media).filter(
+        query = db.query(Media).options(defer(Media.extracted_text)).filter(
             Media.is_deleted == False,
             Media.thumbnail_1080_path == None
         )
@@ -412,7 +413,6 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                         img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
                         img_1080.save(thumb_1080_path, "WEBP", quality=90, method=4)
                     item.thumbnail_1080_path = thumb_1080_path
-                    db.commit()
                     processed += 1
 
                 # 2. Google Drive photos: fast CDN fetch (120 KB pre-rendered by Google instead of 25MB master stream)
@@ -423,7 +423,6 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                         with open(thumb_1080_path, "wb") as f:
                             f.write(thumb_bytes)
                         item.thumbnail_1080_path = thumb_1080_path
-                        db.commit()
                         processed += 1
 
                 # 3. Fallback: scale from existing 256 thumbnail if no master file exists
@@ -433,8 +432,11 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                         img_rgb = img.convert("RGB")
                         img_rgb.save(thumb_1080_path, "WEBP", quality=85)
                     item.thumbnail_1080_path = thumb_1080_path
-                    db.commit()
                     processed += 1
+
+                # Batch commit every 25 items to eliminate per-photo disk fsync thrashing
+                if processed > 0 and processed % 25 == 0:
+                    db.commit()
 
             except Exception as e:
                 logger.warning(f"Failed to generate 1080p rendition for #{item.id}: {e}")
@@ -449,6 +451,9 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                     total_steps=total,
                     message=f"Generated 1080p WebP {i + 1}/{total} ({pct}%)"
                 )
+
+        # Final commit for remaining batch
+        db.commit()
 
         TaskQueue.update_task(
             task_id,
