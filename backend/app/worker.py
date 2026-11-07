@@ -81,10 +81,25 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
             # Determine best available image path or thumbnail
             target_path = None
+            is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
+                item.original_path and os.path.splitext(item.original_path)[1].lower() in ('.mp4', '.mov', '.avi', '.mkv', '.webm')
+            )
+
             if item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
                 target_path = item.thumbnail_256_path
-            elif item.original_path and os.path.isfile(item.original_path):
+            elif not is_video and item.original_path and os.path.isfile(item.original_path):
                 target_path = item.original_path
+            elif is_video:
+                # For videos without a cover thumbnail, attempt fast cover extraction
+                try:
+                    from app.services.video_engine import extract_video_cover_thumbnail
+                    cover = extract_video_cover_thumbnail(item.id, item.original_path, item.duration_seconds or 0.0)
+                    if cover and os.path.isfile(cover):
+                        item.thumbnail_256_path = cover
+                        db.commit()
+                        target_path = cover
+                except Exception:
+                    pass
 
             if target_path:
                 try:

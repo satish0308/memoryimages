@@ -2,11 +2,17 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
+from PIL import ImageFile
 from sqlalchemy.orm import Session
+
+# Enable decoding of truncated or partially damaged JPEG images
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from app.models.media import Media, MediaEmbedding
 
 logger = logging.getLogger(__name__)
+
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv'}
 
 _image_model = None
 _text_model = None
@@ -28,6 +34,10 @@ def get_text_model():
 def embed_image(image_path: str) -> Optional[np.ndarray]:
     """Generates a 512-dim CLIP embedding vector for an image file."""
     if not os.path.isfile(image_path):
+        return None
+    # Reject raw video container files (videos must be embedded via keyframe image)
+    ext = os.path.splitext(image_path)[1].lower()
+    if ext in VIDEO_EXTENSIONS:
         return None
     try:
         model = get_image_model()

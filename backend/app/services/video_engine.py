@@ -87,6 +87,35 @@ def probe_video_metadata(video_path: str) -> Dict[str, Any]:
         logger.error(f"Error probing video {video_path}: {e}")
         return default_meta
 
+def extract_video_cover_thumbnail(media_id: int, video_path: str, duration: float = 0.0) -> Optional[str]:
+    """
+    High-speed video cover frame extractor for library scanning (takes ~0.15s).
+    Extracts 1 WebP cover thumbnail frame so the video is immediately ready for display
+    in the UI timeline grid without blocking the scanner with 30 keyframes and CLIP runs.
+    """
+    if not video_path or not os.path.isfile(video_path):
+        return None
+    os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+    thumb_path = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{media_id}_256.webp")
+    ts = 0.5 if duration <= 0 else min(1.0, duration * 0.25)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(ts),
+        "-i", video_path,
+        "-vframes", "1",
+        "-vf", "scale='min(512,iw)':-1",
+        "-q:v", "80",
+        thumb_path
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+        if res.returncode == 0 and os.path.isfile(thumb_path):
+            return thumb_path
+    except Exception as e:
+        logger.warning(f"Fast video cover extraction failed for {video_path}: {e}")
+    return None
+
 def extract_video_keyframes(
     db: Session,
     media: Media,

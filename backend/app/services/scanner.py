@@ -411,7 +411,7 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     captured_at = datetime.fromtimestamp(stat.st_mtime)
 
     # Check if video file
-    from app.services.video_engine import is_video_file, probe_video_metadata, extract_video_keyframes
+    from app.services.video_engine import is_video_file, probe_video_metadata, extract_video_cover_thumbnail
     from app.models.media import MediaCategory
     if is_video_file(file_path):
         meta = probe_video_metadata(file_path)
@@ -435,12 +435,19 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
             source_id=source_id
         )
         db.add(media)
+        db.flush()
+
+        # Fast 1-frame cover thumbnail extraction (~0.15s) so the video is immediately ready for UI display
+        try:
+            cover = extract_video_cover_thumbnail(media.id, file_path, media.duration_seconds or 0.0)
+            if cover:
+                media.thumbnail_256_path = cover
+                media.thumbnail_1080_path = cover
+        except Exception as e:
+            print(f"Error extracting fast cover thumbnail for {file_path}: {e}")
+
         db.commit()
         db.refresh(media)
-        try:
-            extract_video_keyframes(db, media)
-        except Exception as e:
-            print(f"Error extracting keyframes for {file_path}: {e}")
         return media
     
     # Open image to inspect & extract EXIF
@@ -610,14 +617,17 @@ def scan_directory(db: Session, dir_path: str, user_id: Optional[int] = None, pr
             media = scan_file(thread_db, file_path, SourceType.LOCAL, user_id=user_id)
             with lock:
                 scanned += 1
+                is_new = False
                 if media:
                     if media.original_path == file_path:
                         added += 1
+                        is_new = True
                     else:
                         existing += 1
 
-                if progress_callback and (scanned % 10 == 0 or scanned == total):
-                    pct = int((scanned / total) * 100)
+                # High-frequency progress updates: every 3 files or on every new ingestion
+                if progress_callback and (scanned % 3 == 0 or is_new or scanned == total):
+                    pct = round((scanned / total) * 100, 1)
                     progress_callback(scanned, total, pct, os.path.basename(file_path), added)
         except Exception as e:
             with lock:
