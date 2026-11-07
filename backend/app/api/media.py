@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy import func, desc, extract
 
 from app.database import get_db
@@ -148,7 +148,7 @@ def get_timeline(
         Media.user_id == current_user.id,
         Media.is_archived == False,
         Media.is_deleted == False
-    )
+    ).options(defer(Media.extracted_text))
     if category:
         query = query.filter(Media.category == category)
         
@@ -261,13 +261,16 @@ def get_flashbacks(
         return []
 
     now = datetime.utcnow()
-    target_md = now.strftime("%m-%d")
-    current_year = str(now.year)
+    current_month = now.month
+    current_day = now.day
+    current_year = now.year
     
+    # ANSI SQL extract works identically across PostgreSQL and SQLite
     items = db.query(Media).filter(
         Media.user_id == current_user.id,
-        func.strftime("%m-%d", Media.captured_at) == target_md,
-        func.strftime("%Y", Media.captured_at) < current_year,
+        extract("month", Media.captured_at) == current_month,
+        extract("day", Media.captured_at) == current_day,
+        extract("year", Media.captured_at) < current_year,
         Media.is_deleted == False,
         Media.is_archived == False
     ).order_by(desc(Media.captured_at)).all()
@@ -442,7 +445,15 @@ def get_locations(
     if not current_user:
         return []
 
-    items = db.query(Media).filter(
+    # Use fast scalar column projection to avoid instantiating heavy ORM objects with EXIF & OCR
+    items = db.query(
+        Media.id,
+        Media.filename,
+        Media.latitude,
+        Media.longitude,
+        Media.location_name,
+        Media.captured_at
+    ).filter(
         Media.user_id == current_user.id,
         Media.latitude != None,
         Media.longitude != None,
@@ -450,13 +461,13 @@ def get_locations(
     ).all()
 
     return [{
-        "id": m.id,
-        "filename": m.filename,
-        "latitude": m.latitude,
-        "longitude": m.longitude,
-        "location_name": m.location_name,
-        "captured_at": m.captured_at,
-        "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
+        "id": m[0],
+        "filename": m[1],
+        "latitude": m[2],
+        "longitude": m[3],
+        "location_name": m[4],
+        "captured_at": m[5],
+        "thumbnail_url": f"/api/v1/media/{m[0]}/thumbnail?size=256"
     } for m in items]
 
 @router.get("/{media_id}")

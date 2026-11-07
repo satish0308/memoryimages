@@ -42,11 +42,12 @@ export const DaySection: React.FC<DaySectionProps> = ({
   onOpenBurst,
   onBackupToDrive,
 }) => {
-  const groupItemIds = group.items.map((i) => i.id);
+  const selectedSet = React.useMemo(() => new Set(selectedIds), [selectedIds]);
+  const groupItemIds = React.useMemo(() => group.items.map((i) => i.id), [group.items]);
   const isAllGroupSelected =
-    groupItemIds.length > 0 && groupItemIds.every((id) => selectedIds.includes(id));
+    groupItemIds.length > 0 && groupItemIds.every((id) => selectedSet.has(id));
   const someGroupSelected =
-    !isAllGroupSelected && groupItemIds.some((id) => selectedIds.includes(id));
+    !isAllGroupSelected && groupItemIds.some((id) => selectedSet.has(id));
 
   const handleGroupSelectToggle = () => {
     if (onToggleSelectGroup) {
@@ -128,7 +129,7 @@ export const DaySection: React.FC<DaySectionProps> = ({
             key={item.id}
             item={item}
             apiUrl={apiUrl}
-            isSelected={selectedIds.includes(item.id)}
+            isSelected={selectedSet.has(item.id)}
             onSelect={onSelect}
             onToggleSelect={onToggleSelect}
             onToggleFavorite={onToggleFavorite}

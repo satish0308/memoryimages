@@ -205,17 +205,28 @@ def find_similar_photos(
     # In addition, check perceptual hash (pHash) matches for visual composition
     vis_matched_ids = {vm["id"] for vm in visual_matches}
     if target.perceptual_hash and len(visual_matches) < limit:
-        phash_candidates = db.query(Media).filter(
+        # Fast scalar projection (id, perceptual_hash) across up to 5,000 photos without instantiating heavy ORM objects
+        phash_candidates = db.query(Media.id, Media.perceptual_hash).filter(
             Media.user_id == user_id,
             Media.id != target.id,
             Media.is_deleted == False,
             Media.perceptual_hash.isnot(None)
-        ).limit(1000).all()
-        for m in phash_candidates:
-            if m.id in vis_matched_ids:
+        ).order_by(desc(Media.captured_at)).limit(5000).all()
+
+        matching_phash_map: Dict[int, int] = {}
+        for mid, phash_str in phash_candidates:
+            if mid in vis_matched_ids:
                 continue
-            dist = phash_distance(target.perceptual_hash, m.perceptual_hash)
+            dist = phash_distance(target.perceptual_hash, phash_str)
             if dist <= 14:
+                matching_phash_map[mid] = dist
+                if len(matching_phash_map) >= (limit - len(visual_matches)):
+                    break
+
+        if matching_phash_map:
+            matched_media = db.query(Media).filter(Media.id.in_(list(matching_phash_map.keys()))).all()
+            for m in matched_media:
+                dist = matching_phash_map[m.id]
                 vis_matched_ids.add(m.id)
                 sim = max(0.60, 1.0 - (dist / 35.0))
                 pct = int(round(sim * 100))
@@ -223,8 +234,6 @@ def find_similar_photos(
                 item = format_media_item(m, badge=badge, score=sim)
                 visual_matches.append(item)
                 add_candidate(m.id, m, "visual", sim, badge)
-                if len(visual_matches) >= limit:
-                    break
 
     # ---------------------------------------------------------
     # 2. FACET: People & Faces (ArcFace + Person Clusters)
@@ -243,15 +252,25 @@ def find_similar_photos(
             .order_by(desc(Media.captured_at))\
             .limit(limit).all()
 
-        for m in matching_face_media:
-            m_faces = db.query(FaceDetection).filter(FaceDetection.media_id == m.id).all()
-            m_pids = {f.person_id for f in m_faces if f.person_id in target_person_ids}
-            matched_names = [person_name_map[pid] for pid in m_pids if pid in person_name_map]
-            badge = f"Featuring {', '.join(matched_names[:2])}" if matched_names else "Same Person"
-            score = 0.85 + (0.05 * len(m_pids))
-            item = format_media_item(m, badge=badge, score=score)
-            people_matches.append(item)
-            add_candidate(m.id, m, "people", score, badge)
+        if matching_face_media:
+            # Batch query faces across all matched media in 1 query, eliminating N+1 roundtrips
+            match_mids = [m.id for m in matching_face_media]
+            all_m_faces = db.query(FaceDetection.media_id, FaceDetection.person_id).filter(
+                FaceDetection.media_id.in_(match_mids)
+            ).all()
+            faces_by_mid: Dict[int, Set[int]] = {}
+            for mid, pid in all_m_faces:
+                if pid in target_person_ids:
+                    faces_by_mid.setdefault(mid, set()).add(pid)
+
+            for m in matching_face_media:
+                m_pids = faces_by_mid.get(m.id, set())
+                matched_names = [person_name_map[pid] for pid in m_pids if pid in person_name_map]
+                badge = f"Featuring {', '.join(matched_names[:2])}" if matched_names else "Same Person"
+                score = 0.85 + (0.05 * len(m_pids))
+                item = format_media_item(m, badge=badge, score=score)
+                people_matches.append(item)
+                add_candidate(m.id, m, "people", score, badge)
 
     # Check for biometric face embeddings if target has unassigned faces
     target_face_embs = []

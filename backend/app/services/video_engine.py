@@ -231,10 +231,13 @@ def search_video_keyframes(
     if not rows:
         return []
 
+    # Fast vectorized matrix dot product across all video keyframes in 1 BLAS call
+    vec_matrix = np.vstack([np.frombuffer(r[4], dtype=np.float32) for r in rows])
+    scores = vec_matrix @ query_vector
+
     results = []
-    for kf_id, media_id, ts, thumb_path, vec_bytes in rows:
-        vec = np.frombuffer(vec_bytes, dtype=np.float32)
-        score = float(np.dot(vec, query_vector))
+    for idx, (kf_id, media_id, ts, thumb_path, _) in enumerate(rows):
+        score = float(scores[idx])
         if score >= min_similarity:
             results.append({
                 "keyframe_id": kf_id,
@@ -258,10 +261,14 @@ def search_video_keyframes(
 
     final_results = list(best_per_media.values())[:top_k]
 
-    # Enrich with Media details
+    # Enrich with Media details via single batch query (eliminates N+1 DB roundtrips)
+    target_mids = [item["media_id"] for item in final_results]
+    media_records = db.query(Media).filter(Media.id.in_(target_mids), Media.is_deleted == False).all()
+    media_map = {m.id: m for m in media_records}
+
     enriched = []
     for item in final_results:
-        media = db.query(Media).filter(Media.id == item["media_id"], Media.is_deleted == False).first()
+        media = media_map.get(item["media_id"])
         if media:
             enriched.append({
                 "id": media.id,

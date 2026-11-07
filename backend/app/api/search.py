@@ -181,10 +181,16 @@ def search_photos(
     if total == 0 and q and len(q.strip()) >= 3:
         fallback_semantic = semantic_search(db, q.strip(), top_k=limit)
         filtered_fallback = []
-        for it in fallback_semantic:
-            m = db.query(Media).filter(Media.id == it["id"], Media.user_id == current_user.id, Media.is_deleted == False).first()
-            if m:
-                filtered_fallback.append(it)
+        if fallback_semantic:
+            cand_ids = [it["id"] for it in fallback_semantic]
+            allowed_ids = set(
+                r[0] for r in db.query(Media.id).filter(
+                    Media.id.in_(cand_ids),
+                    Media.user_id == current_user.id,
+                    Media.is_deleted == False
+                ).all()
+            )
+            filtered_fallback = [it for it in fallback_semantic if it["id"] in allowed_ids]
         if filtered_fallback:
             return {
                 "total": len(filtered_fallback),

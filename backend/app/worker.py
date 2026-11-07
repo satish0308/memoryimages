@@ -545,17 +545,19 @@ def main():
     Base.metadata.create_all(bind=engine)
 
     redis_retry_delay = 2
+    r = None
     while not _should_exit:
-        r = get_redis_client()
-        if not r:
-            logger.warning(f"Waiting for Redis at {settings.REDIS_URL}... retrying in {redis_retry_delay}s")
-            time.sleep(redis_retry_delay)
-            redis_retry_delay = min(10, redis_retry_delay * 1.5)
-            continue
+        if r is None:
+            r = get_redis_client()
+            if not r:
+                logger.warning(f"Waiting for Redis at {settings.REDIS_URL}... retrying in {redis_retry_delay}s")
+                time.sleep(redis_retry_delay)
+                redis_retry_delay = min(10, redis_retry_delay * 1.5)
+                continue
+            redis_retry_delay = 2
 
-        redis_retry_delay = 2
         try:
-            # Blocking pop from task queue (2s timeout to check _should_exit)
+            # Persistent blocking pop from task queue (2s timeout to check _should_exit)
             item = r.blpop(TASK_QUEUE_KEY, timeout=2)
             if item:
                 _, task_id = item
@@ -564,12 +566,17 @@ def main():
             if not _should_exit:
                 logger.error(f"Worker loop error: {e}")
                 time.sleep(1)
-        finally:
             try:
                 r.close()
             except Exception:
                 pass
+            r = None
 
+    if r:
+        try:
+            r.close()
+        except Exception:
+            pass
     logger.info("Worker process exited gracefully.")
 
 

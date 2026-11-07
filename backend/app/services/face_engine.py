@@ -561,7 +561,7 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
                 continue
             if not f.embedding_str:
                 if img is None:
-                    img = load_media_image(media, db)
+                    img = load_media_image(media, db, prefer_preview=True)
                 if img:
                     crop = None
                     if getattr(f, "landmarks_str", None):
@@ -589,7 +589,7 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
             db.delete(f)
         db.commit()
 
-    img = load_media_image(media, db)
+    img = load_media_image(media, db, prefer_preview=True)
     if img is None:
         media.faces_scanned = True
         db.commit()
@@ -760,31 +760,45 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
         return {"status": "no_faces", "created_people": 0, "assigned_faces": 0}
 
     # Ensure all human faces have ArcFace embeddings (skip pets)
-    for f in faces:
-        if f.person and f.person.is_pet:
-            continue
-        if not f.embedding_str:
-            media = db.query(Media).filter(Media.id == f.media_id).first()
-            if media:
-                img = load_media_image(media, db)
-                if img:
-                    crop = None
-                    if getattr(f, "landmarks_str", None):
-                        try:
-                            lms = np.array([[float(c) for c in pt.split(":")] for pt in f.landmarks_str.split(",")])
-                            crop = align_face_crop(img, lms)
-                        except Exception:
-                            crop = None
-                    if crop is None:
-                        W, H = img.size
-                        cx = int((f.box_x + f.box_w / 2.0) * W)
-                        cy = int((f.box_y + f.box_h / 2.0) * H)
-                        half = int(max(f.box_w * W, f.box_h * H) * 0.65)
-                        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
-                    emb = extract_arcface_embedding(crop)
-                    if emb is not None:
-                        f.embedding_str = ",".join(f"{x:.5f}" for x in emb)
-    db.commit()
+    # Group missing faces by media_id to decode each image at most once and prefer 1080p preview
+    unembedded_faces = [f for f in faces if not f.embedding_str and not (f.person and f.person.is_pet)]
+    if unembedded_faces:
+        faces_by_media: Dict[int, List[FaceDetection]] = {}
+        for f in unembedded_faces:
+            faces_by_media.setdefault(f.media_id, []).append(f)
+
+        media_records = db.query(Media).filter(Media.id.in_(list(faces_by_media.keys()))).all()
+        media_map = {m.id: m for m in media_records}
+
+        processed_count = 0
+        for mid, m_faces in faces_by_media.items():
+            media = media_map.get(mid)
+            if not media:
+                continue
+            img = load_media_image(media, db, prefer_preview=True)
+            if not img:
+                continue
+            W, H = img.size
+            for f in m_faces:
+                crop = None
+                if getattr(f, "landmarks_str", None):
+                    try:
+                        lms = np.array([[float(c) for c in pt.split(":")] for pt in f.landmarks_str.split(",")])
+                        crop = align_face_crop(img, lms)
+                    except Exception:
+                        crop = None
+                if crop is None:
+                    cx = int((f.box_x + f.box_w / 2.0) * W)
+                    cy = int((f.box_y + f.box_h / 2.0) * H)
+                    half = int(max(f.box_w * W, f.box_h * H) * 0.65)
+                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                emb = extract_arcface_embedding(crop)
+                if emb is not None:
+                    f.embedding_str = ",".join(f"{x:.5f}" for x in emb)
+                    processed_count += 1
+                    if processed_count % 50 == 0:
+                        db.commit()
+        db.commit()
 
     # Parse embeddings
     valid_faces = []

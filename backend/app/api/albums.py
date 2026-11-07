@@ -7,7 +7,7 @@ from sqlalchemy import desc, func, or_
 
 from app.database import get_db
 from app.models.user import User
-from app.models.album import Album
+from app.models.album import Album, album_media
 from app.models.media import Media, MediaCategory
 from app.models.person import Person, FaceDetection
 from app.api.auth import get_current_user, get_optional_current_user
@@ -349,15 +349,37 @@ def list_albums(
     albums = db.query(Album).filter(Album.user_id == current_user.id).order_by(desc(Album.created_at)).all()
     results = []
     
+    # Pre-calculate counts and first media_id for standard albums in 1 fast query (eliminates lazy-loading N+1 and ORM memory bloat)
+    standard_album_ids = [a.id for a in albums if not getattr(a, "is_dynamic", False)]
+    album_stats: Dict[int, tuple] = {}
+    if standard_album_ids:
+        rows = (
+            db.query(
+                album_media.c.album_id,
+                func.count(Media.id),
+                func.min(Media.id)
+            )
+            .join(Media, Media.id == album_media.c.media_id)
+            .filter(
+                album_media.c.album_id.in_(standard_album_ids),
+                Media.user_id == current_user.id,
+                Media.is_deleted == False
+            )
+            .group_by(album_media.c.album_id)
+            .all()
+        )
+        for aid, cnt, min_mid in rows:
+            album_stats[aid] = (cnt, min_mid)
+
     for a in albums:
         if getattr(a, "is_dynamic", False):
             dyn_photos = resolve_dynamic_album_photos(a, db, user_id=current_user.id)
             photo_count = len(dyn_photos)
             cover_id = a.cover_media_id or (dyn_photos[0].id if dyn_photos else None)
         else:
-            user_media = [m for m in a.media if m.user_id == current_user.id and not m.is_deleted]
-            photo_count = len(user_media)
-            cover_id = a.cover_media_id or (user_media[0].id if user_media else None)
+            cnt, first_mid = album_stats.get(a.id, (0, None))
+            photo_count = cnt
+            cover_id = a.cover_media_id or first_mid
 
         parsed_rules = None
         if a.rules:

@@ -113,47 +113,51 @@ async def websocket_tasks_endpoint(websocket: WebSocket):
             logger.warning(f"Failed to subscribe to Redis: {e}")
             pubsub = None
 
-    try:
-        last_sync = time.time()
+    async def client_receiver():
         while True:
-            # Check for client messages (ping) without blocking
+            msg = await websocket.receive_text()
             try:
-                msg = await asyncio.wait_for(websocket.receive_text(), timeout=0.25)
-                try:
-                    parsed = json.loads(msg)
-                    if parsed.get("action") == "ping":
-                        await websocket.send_text(json.dumps({"event": "pong"}))
-                except Exception:
-                    pass
-            except asyncio.TimeoutError:
+                parsed = json.loads(msg)
+                if parsed.get("action") == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+            except Exception:
                 pass
 
-            # Check for Redis PubSub task events
-            if pubsub:
-                try:
-                    msg_data = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
-                    if msg_data and msg_data.get("type") == "message":
-                        data = msg_data.get("data")
-                        if data:
-                            await websocket.send_text(data)
-                except Exception:
-                    pass
-            else:
-                # In-memory fallback: sync every 2.5 seconds
-                if time.time() - last_sync > 2.5:
-                    last_sync = time.time()
-                    snapshot = json.dumps({
-                        "event": "sync",
-                        "active": TaskQueue.list_active(),
-                        "recent": TaskQueue.list_recent(limit=15),
-                    }, default=str)
-                    await websocket.send_text(snapshot)
+    async def pubsub_sender():
+        if pubsub:
+            async for message in pubsub.listen():
+                if message and message.get("type") == "message":
+                    data = message.get("data")
+                    if data:
+                        await websocket.send_text(data)
+        else:
+            # In-memory fallback: sync every 2.0 seconds
+            while True:
+                await asyncio.sleep(2.0)
+                snapshot = json.dumps({
+                    "event": "sync",
+                    "active": TaskQueue.list_active(),
+                    "recent": TaskQueue.list_recent(limit=15),
+                }, default=str)
+                await websocket.send_text(snapshot)
 
+    recv_task = asyncio.create_task(client_receiver())
+    send_task = asyncio.create_task(pubsub_sender())
+
+    try:
+        done, pending = await asyncio.wait(
+            [recv_task, send_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
     except (WebSocketDisconnect, asyncio.CancelledError):
         logger.info("Task WebSocket client disconnected.")
     except Exception as e:
         logger.warning(f"Task WebSocket connection closed: {e}")
     finally:
+        recv_task.cancel()
+        send_task.cancel()
         if pubsub and r:
             try:
                 await pubsub.unsubscribe(TASK_EVENTS_CHANNEL)

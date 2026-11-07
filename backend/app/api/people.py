@@ -216,8 +216,8 @@ def get_unnamed_faces(
     if not current_user:
         return []
 
-    unnamed = (
-        db.query(FaceDetection)
+    rows = (
+        db.query(FaceDetection, Media.filename, Media.captured_at, Person.name)
         .join(Media, FaceDetection.media_id == Media.id)
         .outerjoin(Person, FaceDetection.person_id == Person.id)
         .filter(
@@ -229,16 +229,14 @@ def get_unnamed_faces(
         .all()
     )
     results = []
-    for f in unnamed:
-        m = db.query(Media).filter(Media.id == f.media_id).first()
-        p = db.query(Person).filter(Person.id == f.person_id).first() if f.person_id else None
+    for f, m_filename, m_captured_at, p_name in rows:
         results.append({
             "id": f.id,
             "media_id": f.media_id,
-            "filename": m.filename if m else "Unknown",
-            "captured_at": m.captured_at if m else None,
+            "filename": m_filename or "Unknown",
+            "captured_at": m_captured_at,
             "person_id": f.person_id,
-            "person_name": p.name if p else "Unnamed",
+            "person_name": p_name or "Unnamed",
             "crop_url": f"/api/v1/people/faces/{f.id}/crop",
             "confidence": f.confidence
         })
@@ -344,27 +342,38 @@ def get_merge_suggestions(
         Person.is_hidden == False
     ).all()
 
+    people_ids = [p.id for p in people]
+    if not people_ids:
+        return []
+
+    # Single batch query for all faces across all identified people
+    all_faces = (
+        db.query(FaceDetection.person_id, FaceDetection.media_id, FaceDetection.embedding_str)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(
+            FaceDetection.person_id.in_(people_ids),
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            FaceDetection.embedding_str != None
+        ).all()
+    )
+
+    faces_by_pid = {}
+    for pid, mid, emb_str in all_faces:
+        faces_by_pid.setdefault(pid, []).append((mid, emb_str))
+
     centroids = {}
     person_info = {}
 
     for p in people:
-        faces = (
-            db.query(FaceDetection)
-            .join(Media, FaceDetection.media_id == Media.id)
-            .filter(
-                FaceDetection.person_id == p.id,
-                Media.user_id == current_user.id,
-                Media.is_deleted == False,
-                FaceDetection.embedding_str != None
-            ).all()
-        )
-        if not faces:
+        p_faces = faces_by_pid.get(p.id, [])
+        if not p_faces:
             continue
 
         embs = []
-        for f in faces:
+        for mid, emb_str in p_faces:
             try:
-                embs.append(np.array([float(x) for x in f.embedding_str.split(",")]))
+                embs.append(np.array([float(x) for x in emb_str.split(",")]))
             except Exception:
                 pass
         if not embs:
@@ -374,13 +383,13 @@ def get_merge_suggestions(
         norm = np.linalg.norm(centroid)
         if norm > 0:
             centroids[p.id] = centroid / norm
-            first_face = faces[0]
-            cover_id = p.cover_media_id or (first_face.media_id if first_face else None)
+            first_mid = p_faces[0][0]
+            cover_id = p.cover_media_id or first_mid
             person_info[p.id] = {
                 "id": p.id,
                 "name": p.name,
                 "relationship_type": getattr(p, "relationship_type", None),
-                "faces_count": len(faces),
+                "faces_count": len(p_faces),
                 "avatar_url": f"/api/v1/people/{p.id}/avatar",
                 "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None
             }
@@ -494,20 +503,28 @@ def get_person_photos(
     faces = db.query(FaceDetection).filter(FaceDetection.person_id == person_id).all()
     media_ids = list(set(f.media_id for f in faces))
     
-    photos = db.query(Media).filter(
+    # Fast scalar column projection avoids loading heavy ORM objects with EXIF & text
+    photos = db.query(
+        Media.id,
+        Media.filename,
+        Media.category,
+        Media.captured_at,
+        Media.location_name,
+        Media.is_favorite
+    ).filter(
         Media.id.in_(media_ids),
         Media.user_id == current_user.id,
         Media.is_deleted == False
     ).order_by(Media.captured_at.desc()).all()
 
     return [{
-        "id": m.id,
-        "filename": m.filename,
-        "category": m.category.value if hasattr(m.category, 'value') else str(m.category),
-        "captured_at": m.captured_at,
-        "location_name": m.location_name,
-        "is_favorite": m.is_favorite,
-        "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
+        "id": m[0],
+        "filename": m[1],
+        "category": m[2].value if hasattr(m[2], 'value') else str(m[2]),
+        "captured_at": m[3],
+        "location_name": m[4],
+        "is_favorite": m[5],
+        "thumbnail_url": f"/api/v1/media/{m[0]}/thumbnail?size=256"
     } for m in photos]
 
 @router.post("/search-by-face")

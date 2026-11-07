@@ -77,7 +77,16 @@ interface PhotoCardProps {
   onBackupToDrive?: (item: MediaItem, e: React.MouseEvent) => void;
 }
 
-export const PhotoCard: React.FC<PhotoCardProps> = ({
+// In-memory cache for auth token to eliminate thousands of blocking localStorage calls
+let _cachedToken: string | null = null;
+function getAuthToken(): string {
+  if (_cachedToken === null && typeof window !== 'undefined') {
+    _cachedToken = localStorage.getItem('memorypics_token') || '';
+  }
+  return _cachedToken || '';
+}
+
+const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   item,
   apiUrl,
   isSelected = false,
@@ -108,7 +117,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     }
   }
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+  const token = getAuthToken();
   const tokenParam = token ? `${item.thumbnail_url.includes('?') ? '&' : '?'}token=${token}` : '';
   const thumbSrc = `${apiUrl}${item.thumbnail_url}${tokenParam}`;
 
@@ -395,3 +404,5 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
   </div>
   );
 };
+
+export const PhotoCard = React.memo(PhotoCardComponent);
