@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
 
@@ -13,11 +14,14 @@ logger = logging.getLogger(__name__)
 
 # Debounce tracker so rapid batch file arrivals only trigger AI indexing once
 _last_ai_enqueue_time = 0.0
+_watcher_pool: ThreadPoolExecutor = None
 
 class PhotoWatcherHandler(FileSystemEventHandler):
     """
     Watches /data/originals and automatically processes incoming photos
     in real time without requiring manual user scan triggers.
+    All disk I/O and thumbnail tasks run in a background thread pool to prevent
+    blocking the inotify observer event thread.
     """
     def __init__(self):
         super().__init__()
@@ -66,19 +70,28 @@ class PhotoWatcherHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         if not event.is_directory:
-            self._process_file(event.src_path)
+            if _watcher_pool:
+                _watcher_pool.submit(self._process_file, event.src_path)
+            else:
+                self._process_file(event.src_path)
 
     def on_moved(self, event):
         if not event.is_directory:
-            self._process_file(event.dest_path)
+            if _watcher_pool:
+                _watcher_pool.submit(self._process_file, event.dest_path)
+            else:
+                self._process_file(event.dest_path)
 
 _observer = None
 
 def start_watcher(watch_dir: str = settings.MEDIA_DIR):
-    """Starts the background directory watcher."""
-    global _observer
+    """Starts the background directory watcher with non-blocking thread pool execution."""
+    global _observer, _watcher_pool
     if not os.path.exists(watch_dir):
         os.makedirs(watch_dir, exist_ok=True)
+
+    if _watcher_pool is None:
+        _watcher_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="watcher_ingest")
 
     event_handler = PhotoWatcherHandler()
     _observer = Observer()
@@ -88,9 +101,12 @@ def start_watcher(watch_dir: str = settings.MEDIA_DIR):
     logger.info(f"Started continuous directory watcher on: {watch_dir}")
 
 def stop_watcher():
-    """Stops the background directory watcher."""
-    global _observer
+    """Stops the background directory watcher and shuts down worker pool."""
+    global _observer, _watcher_pool
     if _observer:
         _observer.stop()
         _observer.join()
         _observer = None
+    if _watcher_pool:
+        _watcher_pool.shutdown(wait=False)
+        _watcher_pool = None

@@ -1350,7 +1350,10 @@ def view_original(
         return FileResponse(
             media.original_path,
             media_type=media.mime_type or "image/jpeg",
-            headers={"Content-Disposition": "inline"}
+            headers={
+                "Content-Disposition": "inline",
+                "Cache-Control": "private, max-age=604800"
+            }
         )
 
     raise HTTPException(status_code=404, detail="Original image not found")

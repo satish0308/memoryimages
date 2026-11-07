@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case
 
 from app.database import get_db
 from app.models.user import User
@@ -56,68 +56,36 @@ def get_triage_overview(
     seven_days = now + timedelta(days=7)
     uid = current_user.id
     
-    total_screenshots = db.query(Media).filter(
+    # Consolidate 9 separate SQL queries into 1 single conditional aggregation query
+    stats = db.query(
+        func.sum(case((Media.category == MediaCategory.SCREENSHOT, 1), else_=0)).label("total_screenshots"),
+        func.sum(case(((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= seven_days), 1), else_=0)).label("expiring_screenshots"),
+        func.sum(case((Media.category == MediaCategory.DOCUMENT_BILL, 1), else_=0)).label("total_bills"),
+        func.sum(case(((Media.is_blurry == True) & (Media.is_bokeh == False), 1), else_=0)).label("total_blurry"),
+        func.sum(case((Media.blur_type == "black_pocket", 1), else_=0)).label("total_pocket_shots"),
+        func.sum(case((Media.blur_type == "motion_blur", 1), else_=0)).label("total_motion_blur"),
+        func.sum(case((Media.is_bokeh == True, 1), else_=0)).label("total_bokeh"),
+        func.sum(case((Media.category == MediaCategory.MEME_JUNK, 1), else_=0)).label("total_memes"),
+        func.sum(case((
+            ((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)) |
+            ((Media.is_blurry == True) & (Media.is_bokeh == False)) |
+            (Media.category == MediaCategory.MEME_JUNK),
+            Media.file_size
+        ), else_=0)).label("clutter_size")
+    ).filter(
         Media.user_id == uid,
-        Media.category == MediaCategory.SCREENSHOT,
         Media.is_deleted == False
-    ).count()
-    
-    expiring_screenshots = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.category == MediaCategory.SCREENSHOT,
-        Media.expires_at <= seven_days,
-        Media.is_deleted == False
-    ).count()
-    
-    total_bills = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.category == MediaCategory.DOCUMENT_BILL,
-        Media.is_deleted == False
-    ).count()
-    
-    total_blurry = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.is_blurry == True,
-        Media.is_bokeh == False,
-        Media.is_deleted == False
-    ).count()
+    ).one()
 
-    total_pocket_shots = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.blur_type == "black_pocket",
-        Media.is_deleted == False
-    ).count()
-
-    total_motion_blur = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.blur_type == "motion_blur",
-        Media.is_deleted == False
-    ).count()
-
-    total_bokeh = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.is_bokeh == True,
-        Media.is_deleted == False
-    ).count()
-    
-    total_memes = db.query(Media).filter(
-        Media.user_id == uid,
-        Media.category == MediaCategory.MEME_JUNK,
-        Media.is_deleted == False
-    ).count()
-    
-    # Calculate reclaimable bytes from clutter (expired screenshots + blurry + memes)
-    clutter_size = db.query(func.sum(Media.file_size)).filter(
-        Media.user_id == uid,
-        (
-            (Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)
-        ) | (
-            (Media.is_blurry == True) & (Media.is_bokeh == False)
-        ) | (
-            Media.category == MediaCategory.MEME_JUNK
-        ),
-        Media.is_deleted == False
-    ).scalar() or 0
+    total_screenshots = int(stats.total_screenshots or 0)
+    expiring_screenshots = int(stats.expiring_screenshots or 0)
+    total_bills = int(stats.total_bills or 0)
+    total_blurry = int(stats.total_blurry or 0)
+    total_pocket_shots = int(stats.total_pocket_shots or 0)
+    total_motion_blur = int(stats.total_motion_blur or 0)
+    total_bokeh = int(stats.total_bokeh or 0)
+    total_memes = int(stats.total_memes or 0)
+    clutter_size = int(stats.clutter_size or 0)
     
     return {
         "total_screenshots": total_screenshots,

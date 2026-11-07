@@ -165,35 +165,35 @@ export default function MapPage() {
     loadLocations();
   }, [loadLocations]);
 
-  // Dynamic Geographic Clustering Algorithm (Haversine distance within 10km)
+  // Dynamic Geographic Clustering Algorithm (O(N) Spatial Grid Bucket Hashing ~8.5km)
   const clusters: GeoCluster[] = useMemo(() => {
     if (!geoPhotos.length) return [];
 
-    const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-      const R = 6371;
-      const dLat = ((lat2 - lat1) * Math.PI) / 180;
-      const dLon = ((lon2 - lon1) * Math.PI) / 180;
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos((lat1 * Math.PI) / 180) *
-          Math.cos((lat2 * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
-    const clusterList: GeoCluster[] = [];
+    const gridMap = new Map<string, GeoCluster>();
 
     for (const photo of geoPhotos) {
-      let matchedCluster: GeoCluster | null = null;
-      let minDistance = Infinity;
+      // 0.08 degrees lat/lon is ~8.8 km spatial grid cell
+      const gridX = Math.round(photo.latitude / 0.08);
+      const gridY = Math.round(photo.longitude / 0.08);
+      const gridKey = `${gridX}_${gridY}`;
 
-      for (const cluster of clusterList) {
-        const dist = getDistanceKm(photo.latitude, photo.longitude, cluster.latitude, cluster.longitude);
-        if (dist <= 10 && dist < minDistance) {
-          minDistance = dist;
-          matchedCluster = cluster;
+      let matchedCluster = gridMap.get(gridKey);
+
+      // Fast check adjacent 8 neighboring bins to bridge cell boundaries
+      if (!matchedCluster) {
+        for (let dx = -1; dx <= 1 && !matchedCluster; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) continue;
+            const neighbor = gridMap.get(`${gridX + dx}_${gridY + dy}`);
+            if (neighbor) {
+              const dLat = Math.abs(photo.latitude - neighbor.latitude);
+              const dLon = Math.abs(photo.longitude - neighbor.longitude);
+              if (dLat < 0.08 && dLon < 0.08) {
+                matchedCluster = neighbor;
+                break;
+              }
+            }
+          }
         }
       }
 
@@ -207,7 +207,7 @@ export default function MapPage() {
           matchedCluster.location_name = photo.location_name;
         }
       } else {
-        clusterList.push({
+        const newCluster: GeoCluster = {
           id: `cluster-${photo.id}-${photo.latitude.toFixed(4)}-${photo.longitude.toFixed(4)}`,
           latitude: photo.latitude,
           longitude: photo.longitude,
@@ -217,9 +217,12 @@ export default function MapPage() {
           coverPhoto: photo,
           earliestDate: photo.captured_at,
           latestDate: photo.captured_at,
-        });
+        };
+        gridMap.set(gridKey, newCluster);
       }
     }
+
+    const clusterList = Array.from(gridMap.values());
 
     // Sort photos within clusters and determine date boundaries
     for (const c of clusterList) {

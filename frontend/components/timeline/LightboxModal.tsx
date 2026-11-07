@@ -430,9 +430,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
       // Fetch detected faces for this photo
       fetchFaces(photo.id);
-      fetchKnownPeople();
     }
   }, [photo?.id, apiUrl]);
+
+  // Load known people list once when modal opens (not on every photo transition)
+  useEffect(() => {
+    fetchKnownPeople();
+  }, [apiUrl]);
 
   const handleSaveLocation = async (customName?: string, customLat?: number, customLon?: number) => {
     if (!photo?.id) return;

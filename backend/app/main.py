@@ -75,8 +75,8 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at DATETIME"))
                 if "faces_scanned" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN faces_scanned BOOLEAN DEFAULT FALSE"))
-                # Associate existing unassigned photos with primary owner (admin user_id=1)
-                conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
+                if "user_id" not in columns:
+                    conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 
         if "albums" in inspector.get_table_names():
@@ -84,6 +84,7 @@ def check_and_upgrade_schema(db_engine):
             with db_engine.connect() as conn:
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE albums ADD COLUMN user_id INTEGER"))
+                    conn.execute(text("UPDATE albums SET user_id = 1 WHERE user_id IS NULL"))
                 if "is_dynamic" not in columns:
                     conn.execute(text("ALTER TABLE albums ADD COLUMN is_dynamic BOOLEAN DEFAULT FALSE"))
                 if "rules" not in columns:
@@ -94,7 +95,6 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE albums ADD COLUMN is_public BOOLEAN DEFAULT FALSE"))
                 if "allow_guest_uploads" not in columns:
                     conn.execute(text("ALTER TABLE albums ADD COLUMN allow_guest_uploads BOOLEAN DEFAULT FALSE"))
-                conn.execute(text("UPDATE albums SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 
         if "people" in inspector.get_table_names():
@@ -102,11 +102,11 @@ def check_and_upgrade_schema(db_engine):
             with db_engine.connect() as conn:
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE people ADD COLUMN user_id INTEGER"))
+                    conn.execute(text("UPDATE people SET user_id = 1 WHERE user_id IS NULL"))
                 if "relationship_type" not in columns:
                     conn.execute(text("ALTER TABLE people ADD COLUMN relationship_type VARCHAR(32)"))
                 if "cover_media_id" not in columns:
                     conn.execute(text("ALTER TABLE people ADD COLUMN cover_media_id INTEGER"))
-                conn.execute(text("UPDATE people SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 
         if "sync_sources" in inspector.get_table_names():
@@ -114,7 +114,7 @@ def check_and_upgrade_schema(db_engine):
             with db_engine.connect() as conn:
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE sync_sources ADD COLUMN user_id INTEGER"))
-                conn.execute(text("UPDATE sync_sources SET user_id = 1 WHERE user_id IS NULL"))
+                    conn.execute(text("UPDATE sync_sources SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
 
         if "face_detections" in inspector.get_table_names():
@@ -136,13 +136,18 @@ def on_startup():
     except Exception as e:
         print(f"Directory watcher startup warning: {e}")
 
-    try:
-        from app.database import SessionLocal
-        from app.services.backup_service import check_and_run_scheduled_backup
-        with SessionLocal() as db:
-            check_and_run_scheduled_backup(db)
-    except Exception as e:
-        print(f"Backup scheduler warning: {e}")
+    # Run scheduled backup checks in non-blocking background daemon thread to ensure instant container startup
+    import threading
+    def _bg_backup_check():
+        try:
+            from app.database import SessionLocal
+            from app.services.backup_service import check_and_run_scheduled_backup
+            with SessionLocal() as db:
+                check_and_run_scheduled_backup(db)
+        except Exception as e:
+            print(f"Backup scheduler warning: {e}")
+
+    threading.Thread(target=_bg_backup_check, daemon=True, name="startup_backup_check").start()
 
 @app.on_event("shutdown")
 def on_shutdown():

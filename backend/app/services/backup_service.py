@@ -4,12 +4,13 @@ import json
 import sqlite3
 import hashlib
 import logging
+import subprocess
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import engine
+from app.database import engine, is_postgres
 from app.models.media import Media
 from app.models.person import Person, FaceDetection
 from app.models.album import Album
@@ -70,10 +71,6 @@ def create_wal_backup(db: Session, label: Optional[str] = None) -> Dict[str, Any
     Guarantees consistency across active WAL journals, compresses with gzip, and generates SHA-256.
     """
     _ensure_backup_dir()
-    db_path = _get_db_path()
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(f"Database file not found at {db_path}")
-
     timestamp_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     clean_label = f"_{label}" if label else ""
     base_name = f"backup_{timestamp_str}{clean_label}"
@@ -82,24 +79,38 @@ def create_wal_backup(db: Session, label: Optional[str] = None) -> Dict[str, Any
     metadata_json_path = os.path.join(BACKUP_DIR, f"{base_name}.json")
 
     try:
-        # Step 1: Online non-blocking SQLite backup
-        src_conn = sqlite3.connect(db_path)
-        dest_conn = sqlite3.connect(temp_db_path)
-        with dest_conn:
-            src_conn.backup(dest_conn, pages=100)
-        dest_conn.close()
-        src_conn.close()
-
-        uncompressed_size = os.path.getsize(temp_db_path)
-
-        # Step 2: Gzip compression & SHA256 calculation
         sha256_hasher = hashlib.sha256()
-        with open(temp_db_path, "rb") as f_in, gzip.open(final_gz_path, "wb", compresslevel=9) as f_out:
-            while chunk := f_in.read(64 * 1024):
-                f_out.write(chunk)
-                sha256_hasher.update(chunk)
 
-        compressed_size = os.path.getsize(final_gz_path)
+        if is_postgres:
+            # PostgreSQL Online Compressed Dump
+            cmd = ["pg_dump", settings.DATABASE_URL, "-Fc"]
+            with open(final_gz_path, "wb") as f_out:
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                f_out.write(proc.stdout)
+                sha256_hasher.update(proc.stdout)
+            uncompressed_size = os.path.getsize(final_gz_path)
+            compressed_size = uncompressed_size
+        else:
+            # Step 1: Online non-blocking SQLite backup
+            db_path = _get_db_path()
+            if not os.path.exists(db_path):
+                raise FileNotFoundError(f"Database file not found at {db_path}")
+
+            src_conn = sqlite3.connect(db_path)
+            dest_conn = sqlite3.connect(temp_db_path)
+            with dest_conn:
+                src_conn.backup(dest_conn, pages=100)
+            dest_conn.close()
+            src_conn.close()
+
+            uncompressed_size = os.path.getsize(temp_db_path)
+
+            # Step 2: Gzip compression & SHA256 calculation
+            with open(temp_db_path, "rb") as f_in, gzip.open(final_gz_path, "wb", compresslevel=9) as f_out:
+                while chunk := f_in.read(64 * 1024):
+                    f_out.write(chunk)
+                    sha256_hasher.update(chunk)
+            compressed_size = os.path.getsize(final_gz_path)
         checksum = sha256_hasher.hexdigest()
 
         # Step 3: Inspect database stats

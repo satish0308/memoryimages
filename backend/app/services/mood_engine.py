@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.media import Media, MediaEmbedding
 from app.models.person import FaceDetection
 from app.services.clip_engine import embed_text, get_image_model, embed_image
@@ -93,32 +94,16 @@ def extract_dominant_color(image: Image.Image) -> Tuple[str, str]:
 def detect_face_smile(db: Session, face: FaceDetection, thumb_img: Optional[Image.Image] = None) -> bool:
     """Evaluates whether a detected face has a smile or happy expression."""
     try:
-        from io import BytesIO
-        crop_img = None
-        if thumb_img is not None:
-            W, H = thumb_img.size
-            cx = int((face.box_x + face.box_w / 2.0) * W)
-            cy = int((face.box_y + face.box_h / 2.0) * H)
-            half = max(10, int(max(face.box_w * W, face.box_h * H) * 0.6))
-            crop_img = thumb_img.convert('RGB').crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half))).resize((160, 160))
-        else:
+        face_cache_path = os.path.join(settings.THUMBNAIL_DIR, f"face_{face.id}_180.webp")
+        if not os.path.isfile(face_cache_path):
             crop_bytes = get_face_crop_image(db, face)
             if not crop_bytes:
                 return False
-            crop_img = Image.open(BytesIO(crop_bytes)).convert("RGB")
 
-        # Save temp crop for FastEmbed
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as tmp:
-            crop_img.save(tmp.name, "WEBP")
-            tmp_path = tmp.name
+        if not os.path.isfile(face_cache_path):
+            return False
 
-        try:
-            face_vec = embed_image(tmp_path)
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
+        face_vec = embed_image(face_cache_path)
         if face_vec is None:
             return False
 

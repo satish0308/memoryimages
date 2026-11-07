@@ -32,8 +32,8 @@ SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | RAW_EXTENSIONS
 
 _GEOCODE_CACHE: Dict[Tuple[float, float], str] = {}
 
-def reverse_geocode(lat: float, lon: float) -> Optional[str]:
-    """Reverse geocodes GPS coordinates into a city/region name with offline GeoNames KD-Tree + online fallback."""
+def reverse_geocode(lat: float, lon: float, allow_online: bool = False) -> Optional[str]:
+    """Reverse geocodes GPS coordinates into a city/region name with offline GeoNames KD-Tree + cached fallback."""
     cache_key = (round(lat, 3), round(lon, 3))
     if cache_key in _GEOCODE_CACHE:
         return _GEOCODE_CACHE[cache_key]
@@ -61,23 +61,27 @@ def reverse_geocode(lat: float, lon: float) -> Optional[str]:
     except Exception:
         pass
 
-    # 2. Online Nominatim fallback if offline geocoder misses
-    try:
-        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=12"
-        req = urllib.request.Request(url, headers={"User-Agent": "MyMemoryPics/1.0 (contact@memorypics.local)"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read().decode())
-            addr = data.get("address", {})
-            city = addr.get("city") or addr.get("town") or addr.get("suburb") or addr.get("village") or addr.get("county")
-            state = addr.get("state")
-            country = addr.get("country")
-            parts = [p for p in [city, state, country] if p]
-            name = ", ".join(parts) if parts else data.get("display_name", "")
-            if name:
-                _GEOCODE_CACHE[cache_key] = name
-                return name
-    except Exception:
-        pass
+    # 2. Online Nominatim fallback (only when explicitly requested, never during automated bulk scans)
+    if allow_online:
+        try:
+            url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=12"
+            req = urllib.request.Request(url, headers={"User-Agent": "MyMemoryPics/1.0 (contact@memorypics.local)"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode())
+                addr = data.get("address", {})
+                city = addr.get("city") or addr.get("town") or addr.get("suburb") or addr.get("village") or addr.get("county")
+                state = addr.get("state")
+                country = addr.get("country")
+                parts = [p for p in [city, state, country] if p]
+                name = ", ".join(parts) if parts else data.get("display_name", "")
+                if name:
+                    _GEOCODE_CACHE[cache_key] = name
+                    return name
+        except Exception:
+            pass
+
+    # Cache negative result to eliminate repeated 3-second timeouts on the same coordinate
+    _GEOCODE_CACHE[cache_key] = None
     return None
 
 def compute_file_hash(filepath: str) -> str:
@@ -691,14 +695,15 @@ def scan_file_in_memory(
             width, height = img.size
             captured_at = exif["captured_at"] or datetime.utcnow()
 
-            # In-memory blurriness and perceptual hash
+            # In-memory blurriness and perceptual hash (using downsampled preview for 48x speedup)
             try:
                 import imagehash
                 from app.services.thumbnail import calculate_blurriness
                 img_rgb = img.convert("RGB")
-                blur_score = calculate_blurriness(img_rgb)
+                small_preview = img_rgb.resize((512, 512), Image.Resampling.BICUBIC) if (width > 512 or height > 512) else img_rgb
+                blur_score = calculate_blurriness(small_preview)
                 is_blurry = blur_score < 80.0
-                phash_val = str(imagehash.phash(img_rgb))
+                phash_val = str(imagehash.phash(small_preview.resize((32, 32)).convert("L")))
             except Exception:
                 blur_score = 100.0
                 is_blurry = False

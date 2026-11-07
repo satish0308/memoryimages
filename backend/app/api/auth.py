@@ -1,4 +1,5 @@
-from typing import Optional, List
+import time
+from typing import Optional, List, Dict, Tuple
 from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Cookie
 from sqlalchemy.orm import Session
@@ -63,6 +64,26 @@ def _extract_token(
         return cookie_token.strip()
     return None
 
+_USER_CACHE: Dict[int, Tuple[float, User]] = {}
+USER_CACHE_TTL = 30.0  # 30-second TTL avoids redundant DB queries on high-frequency asset loads
+
+def get_cached_user(db: Session, user_id: int) -> Optional[User]:
+    now = time.time()
+    if user_id in _USER_CACHE:
+        cached_time, cached_user = _USER_CACHE[user_id]
+        if now - cached_time < USER_CACHE_TTL:
+            return cached_user
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if user:
+        _USER_CACHE[user_id] = (now, user)
+    return user
+
+def invalidate_user_cache(user_id: Optional[int] = None):
+    if user_id:
+        _USER_CACHE.pop(user_id, None)
+    else:
+        _USER_CACHE.clear()
+
 def get_current_user(
     authorization: Optional[str] = Header(None),
     token: Optional[str] = Query(None),
@@ -97,7 +118,7 @@ def get_current_user(
             detail="Invalid token subject format.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    user = get_cached_user(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -121,7 +142,7 @@ def get_optional_current_user(
         if not payload or "sub" not in payload:
             return None
         user_id = int(payload["sub"])
-        return db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        return get_cached_user(db, user_id)
     except Exception:
         return None
 
