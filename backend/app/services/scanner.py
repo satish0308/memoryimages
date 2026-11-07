@@ -1,4 +1,5 @@
 import os
+import re
 import hashlib
 from datetime import datetime
 import io
@@ -271,6 +272,110 @@ def extract_exif(image: Image.Image, file_path: Optional[str] = None) -> Dict[st
         
     return metadata
 
+_all_extracts_cache: Optional[Dict[str, datetime]] = None
+
+def get_all_extracts_cache() -> Dict[str, datetime]:
+    """Pre-caches filenames in /data/originals/all_extracts to provide O(1) date resolution."""
+    global _all_extracts_cache
+    if _all_extracts_cache is not None:
+        return _all_extracts_cache
+
+    cache: Dict[str, datetime] = {}
+    base_dir = "/data/originals/all_extracts"
+    if os.path.exists(base_dir):
+        try:
+            for root, dirs, files in os.walk(base_dir):
+                ym = re.search(r'/(20\d{2})(?:-\d+)?(?:/|$)', root)
+                folder_year = int(ym.group(1)) if ym else None
+                for f in files:
+                    if f not in cache:
+                        try:
+                            cand = os.path.join(root, f)
+                            st = os.stat(cand)
+                            dt = datetime.fromtimestamp(st.st_mtime)
+                            if folder_year and dt.year != folder_year:
+                                dt = datetime(folder_year, dt.month if dt.year < 2025 else 1, dt.day if dt.year < 2025 else 1, 12, 0, 0)
+                            cache[f] = dt
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    _all_extracts_cache = cache
+    return _all_extracts_cache
+
+def infer_captured_date(file_path: str, filename: Optional[str] = None) -> Optional[datetime]:
+    """
+    Intelligently extracts the true historical capture date when EXIF is missing:
+    1. Google Takeout JSON sidecars (e.g., photo.jpg.json, photo.json)
+    2. Filename date patterns (WhatsApp, Pixel, Samsung, Windows Camera, Screenshots, ISO dates)
+    3. Matching original file in /data/originals/all_extracts (O(1) cached lookup)
+    4. Parent directory patterns (e.g. /2019/, /2020-05/, /captures-20230405/)
+    """
+    import json
+    fname = filename or os.path.basename(file_path)
+
+    # 1. Google Takeout sidecar check
+    for sidecar in [f"{file_path}.json", f"{os.path.splitext(file_path)[0]}.json", f"{file_path}.JSON"]:
+        if os.path.isfile(sidecar):
+            try:
+                with open(sidecar, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    ts = data.get("photoTakenTime", {}).get("timestamp") or data.get("creationTime", {}).get("timestamp")
+                    if ts:
+                        return datetime.fromtimestamp(int(ts))
+            except Exception:
+                pass
+
+    # Clean stripped name by removing upload server prefix (e.g. 20261105_161855_04_d392_)
+    stripped = re.sub(r'^\d{8}_\d{6}_[0-9a-fA-F_]+_', '', fname)
+
+    # 2. Filename date patterns
+    # WhatsApp (IMG-YYYYMMDD-WA*), Pixel/Android (IMG_YYYYMMDD_*, VID_YYYYMMDD_*), Windows (WIN_YYYYMMDD_*), Screenshots
+    m = re.search(r'(?:IMG|VID|PXL|WP|PHOTO|WIN|Screenshot)[-_]?(20\d{2})(\d{2})(\d{2})[-_]?(\d{2})?(\d{2})?(\d{2})?', stripped, re.I)
+    if m:
+        g = m.groups()
+        try:
+            y, mon, d = int(g[0]), int(g[1]), int(g[2])
+            hh = int(g[3]) if g[3] else 12
+            mm = int(g[4]) if g[4] else 0
+            ss = int(g[5]) if g[5] else 0
+            if 1995 <= y <= 2025 and 1 <= mon <= 12 and 1 <= d <= 31:
+                return datetime(y, mon, d, min(23, max(0, hh)), min(59, max(0, mm)), min(59, max(0, ss)))
+        except Exception:
+            pass
+
+    # Delimited YYYY-MM-DD or YYYY_MM_DD
+    m = re.search(r'\b(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])\b', stripped)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, 0, 0)
+        except Exception:
+            pass
+
+    # 3. Check matching original in /data/originals/all_extracts (O(1) cached lookup)
+    if "/uploads/" in file_path:
+        cache = get_all_extracts_cache()
+        if stripped in cache:
+            cand_dt = cache[stripped]
+            if cand_dt.year < 2025:
+                return cand_dt
+
+    # 4. Parent directory patterns
+    ym = re.search(r'/(20\d{2})(?:-\d+)?(?:/|$)', file_path)
+    if ym:
+        y = int(ym.group(1))
+        if 1995 <= y <= 2025:
+            return datetime(y, 1, 1, 12, 0, 0)
+
+    m = re.search(r'captures-(20\d{2})(\d{2})(\d{2})', file_path)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, 0, 0)
+        except Exception:
+            pass
+
+    return None
+
 def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.LOCAL, source_id: Optional[str] = None, user_id: Optional[int] = None) -> Optional[Media]:
     """Scans and ingests a single file into the database."""
     ext = os.path.splitext(file_path)[1].lower()
@@ -309,6 +414,11 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     from app.models.media import MediaCategory
     if is_video_file(file_path):
         meta = probe_video_metadata(file_path)
+        # Attempt date inference from video filename, sidecars, or directory patterns
+        inferred_dt = infer_captured_date(file_path, os.path.basename(file_path))
+        if inferred_dt:
+            captured_at = inferred_dt
+
         media = Media(
             filename=os.path.basename(file_path),
             original_path=file_path,
@@ -337,8 +447,13 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         img = open_image_for_thumbnail(file_path)
         try:
             exif = extract_exif(img, file_path=file_path)
-            if exif["captured_at"]:
+            if exif["captured_at"] and exif["captured_at"].year <= 2025:
                 captured_at = exif["captured_at"]
+            else:
+                # Fall back to multi-tier date inference if EXIF date is missing
+                inferred_dt = infer_captured_date(file_path, os.path.basename(file_path))
+                if inferred_dt:
+                    captured_at = inferred_dt
                 
             width, height = img.size
         finally:

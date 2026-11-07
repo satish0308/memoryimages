@@ -33,6 +33,17 @@ TASK_NAMES = {
     "pregenerate_1080p_renditions": "Background 1080p WebP Pre-Generation",
 }
 
+# Global batch jobs that process the entire library and must not be queued redundantly
+SINGLETON_TASK_TYPES = {
+    "clip_index_all",
+    "face_detect_all",
+    "face_cluster_all",
+    "mood_analysis_all",
+    "video_index_all",
+    "db_backup_create",
+    "pregenerate_1080p_renditions",
+}
+
 def get_redis_client():
     """Returns a synchronous Redis client with connection error handling."""
     try:
@@ -69,6 +80,36 @@ class TaskQueue:
 
     @staticmethod
     def enqueue(task_type: str, payload: Optional[Dict[str, Any]] = None, name: Optional[str] = None) -> Dict[str, Any]:
+        # Deduplicate singleton batch tasks to prevent runaway job queues
+        r = get_redis_client()
+        if r:
+            try:
+                if task_type in SINGLETON_TASK_TYPES:
+                    queue_ids = r.lrange(TASK_QUEUE_KEY, 0, -1)
+                    if queue_ids:
+                        keys = [f"{TASK_DATA_PREFIX}{tid}" for tid in queue_ids]
+                        raw_tasks = r.mget(keys)
+                        for raw in raw_tasks:
+                            if raw:
+                                try:
+                                    t = json.loads(raw)
+                                    if t.get("type") == task_type and t.get("status") in ("pending", "running"):
+                                        r.close()
+                                        logger.info(f"Singleton task {task_type} already {t.get('status')} ({t.get('id')}). Skipping duplicate.")
+                                        return t
+                                except Exception:
+                                    pass
+            except Exception as e:
+                logger.debug(f"Error checking singleton deduplication in Redis: {e}")
+
+        # In-memory deduplication check
+        if task_type in SINGLETON_TASK_TYPES:
+            for tid in _memory_queue:
+                t = _memory_tasks.get(tid)
+                if t and t.get("type") == task_type and t.get("status") in ("pending", "running"):
+                    logger.info(f"Singleton task {task_type} already pending in-memory ({tid}). Skipping duplicate.")
+                    return t
+
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         human_name = name or TASK_NAMES.get(task_type, task_type.replace("_", " ").title())
         now = datetime.now(timezone.utc).isoformat()
@@ -90,7 +131,6 @@ class TaskQueue:
             "completed_at": None,
         }
 
-        r = get_redis_client()
         if r:
             try:
                 pipe = r.pipeline()
@@ -207,15 +247,81 @@ class TaskQueue:
         return task is not None
 
     @staticmethod
+    def deduplicate_queue() -> int:
+        """Removes all redundant duplicate pending singleton tasks from Redis queue."""
+        r = get_redis_client()
+        if not r:
+            return 0
+        try:
+            all_ids = r.lrange(TASK_QUEUE_KEY, 0, -1)
+            seen_types = set()
+            keep_ids = []
+            removed_count = 0
+            for tid in all_ids:
+                data = r.get(f"{TASK_DATA_PREFIX}{tid}")
+                if not data:
+                    removed_count += 1
+                    continue
+                try:
+                    t = json.loads(data)
+                    ttype = t.get("type")
+                    status = t.get("status")
+                    if status == "running":
+                        keep_ids.append(tid)
+                        seen_types.add(ttype)
+                    elif status == "pending":
+                        if ttype in SINGLETON_TASK_TYPES:
+                            if ttype not in seen_types:
+                                keep_ids.append(tid)
+                                seen_types.add(ttype)
+                            else:
+                                removed_count += 1
+                                r.delete(f"{TASK_DATA_PREFIX}{tid}")
+                        else:
+                            keep_ids.append(tid)
+                    else:
+                        removed_count += 1
+                        r.delete(f"{TASK_DATA_PREFIX}{tid}")
+                except Exception:
+                    removed_count += 1
+
+            r.delete(TASK_QUEUE_KEY)
+            if keep_ids:
+                r.rpush(TASK_QUEUE_KEY, *keep_ids)
+            sync_payload = {
+                "event": "sync",
+                "active": TaskQueue.list_active(),
+                "recent": TaskQueue.list_recent(limit=15)
+            }
+            r.publish(TASK_EVENTS_CHANNEL, json.dumps(sync_payload, default=str))
+            r.close()
+            return removed_count
+        except Exception as e:
+            logger.error(f"Error deduplicating task queue: {e}")
+            try:
+                r.close()
+            except Exception:
+                pass
+            return 0
+
+    @staticmethod
     def list_active() -> List[Dict[str, Any]]:
         """Returns all running and pending tasks."""
         tasks = []
+        seen_ids = set()
         r = get_redis_client()
         if r:
             try:
-                recent_ids = r.lrange(TASK_HISTORY_KEY, 0, 50)
-                if recent_ids:
-                    keys = [f"{TASK_DATA_PREFIX}{tid}" for tid in recent_ids]
+                queue_ids = r.lrange(TASK_QUEUE_KEY, 0, 50)
+                history_ids = r.lrange(TASK_HISTORY_KEY, 0, 50)
+                all_ids = []
+                for tid in queue_ids + history_ids:
+                    if tid not in seen_ids:
+                        seen_ids.add(tid)
+                        all_ids.append(tid)
+
+                if all_ids:
+                    keys = [f"{TASK_DATA_PREFIX}{tid}" for tid in all_ids]
                     raw_tasks = r.mget(keys)
                     for raw in raw_tasks:
                         if raw:

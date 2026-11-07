@@ -66,10 +66,18 @@ def cancel_task(task_id: str):
     success = TaskQueue.cancel_task(task_id)
     return {"success": success, "task_id": task_id}
 
+@router.post("/deduplicate")
+def deduplicate_tasks():
+    """Removes all redundant pending singleton tasks from queue and syncs active list."""
+    removed = TaskQueue.deduplicate_queue()
+    return {"status": "deduplicated", "removed_count": removed}
+
 @router.delete("/history")
 def clear_task_history():
     """Clears completed/failed tasks from history."""
     cleared = TaskQueue.clear_history()
+    # Also clean up any lingering duplicates
+    TaskQueue.deduplicate_queue()
     return {"cleared_count": cleared}
 
 @router.websocket("/ws")

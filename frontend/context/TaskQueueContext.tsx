@@ -120,7 +120,11 @@ export const TaskQueueProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               });
             }
           } else if (data.event === 'sync') {
-            if (data.active) setActiveTasks(data.active);
+            if (data.active) {
+              setActiveTasks(data.active);
+            } else {
+              refreshTasks();
+            }
             if (data.recent) setRecentTasks(data.recent);
           }
         } catch (e) {
