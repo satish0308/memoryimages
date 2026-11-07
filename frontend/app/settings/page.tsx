@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { 
   Sliders, 
   Cpu, 
@@ -129,6 +130,18 @@ interface DatabaseStatus {
 }
 
 export default function AppSettingsPage() {
+  const { token: authContextToken } = useAuth();
+  const [migrationModalError, setMigrationModalError] = useState<string | null>(null);
+
+  const getAuthHeaders = useCallback((extra: Record<string, string> = {}) => {
+    const token = authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') || localStorage.getItem('token') : null);
+    const headers: Record<string, string> = { ...extra };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }, [authContextToken]);
+
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -179,7 +192,9 @@ export default function AppSettingsPage() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/settings`);
+      const res = await fetch(`${API_URL}/api/v1/settings`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const data: AppSettings = await res.json();
         setSettings(data);
@@ -198,8 +213,8 @@ export default function AppSettingsPage() {
     setLoadingBackups(true);
     try {
       const [bRes, sRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/system/backups`),
-        fetch(`${API_URL}/api/v1/system/backups/schedule`)
+        fetch(`${API_URL}/api/v1/system/backups`, { headers: getAuthHeaders() }),
+        fetch(`${API_URL}/api/v1/system/backups/schedule`, { headers: getAuthHeaders() })
       ]);
       if (bRes.ok) {
         setBackups(await bRes.json());
@@ -218,8 +233,8 @@ export default function AppSettingsPage() {
     setLoadingS3(true);
     try {
       const [statusRes, objectsRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/storage/s3/status`),
-        fetch(`${API_URL}/api/v1/storage/s3/objects`)
+        fetch(`${API_URL}/api/v1/storage/s3/status`, { headers: getAuthHeaders() }),
+        fetch(`${API_URL}/api/v1/storage/s3/objects`, { headers: getAuthHeaders() })
       ]);
       if (statusRes.ok) {
         setS3Status(await statusRes.json());
@@ -237,7 +252,9 @@ export default function AppSettingsPage() {
   const fetchDbStatus = async () => {
     setLoadingDbStatus(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/system/database/status`);
+      const res = await fetch(`${API_URL}/api/v1/system/database/status`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         setDbStatus(await res.json());
       }
@@ -253,7 +270,7 @@ export default function AppSettingsPage() {
     fetchBackupsAndSchedule();
     fetchS3StatusAndObjects();
     fetchDbStatus();
-  }, [API_URL]);
+  }, [API_URL, authContextToken]);
 
   const handleSaveSettings = async () => {
     setSaving(true);
@@ -261,7 +278,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/settings`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           storage_mode: storageMode,
           use_google_cdn_thumbnails: useGoogleCdn,
@@ -289,7 +306,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/settings/approve-local-storage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           approved: true,
           confirmation: approvalText,
@@ -319,7 +336,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/settings/approve-local-storage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           approved: false,
           confirmation: 'revoke',
@@ -341,7 +358,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/settings/clear-cache`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           clear_memory: true,
           clear_local_disk_thumbnails: clearDiskThumbnails,
@@ -368,7 +385,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/system/backups`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ label: 'manual' })
       });
       if (res.ok) {
@@ -392,7 +409,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/system/backups/schedule`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(newConfig)
       });
       if (res.ok) {
@@ -410,7 +427,8 @@ export default function AppSettingsPage() {
     setRestoring(true);
     try {
       const res = await fetch(`${API_URL}/api/v1/system/backups/${restoreConfirmModal.filename}/restore`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' })
       });
       if (res.ok) {
         const result = await res.json();
@@ -448,6 +466,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/system/backups/upload`, {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData
       });
       if (res.ok) {
@@ -474,7 +493,8 @@ export default function AppSettingsPage() {
     if (!confirm(`Permanently delete backup snapshot "${filename}"?`)) return;
     try {
       const res = await fetch(`${API_URL}/api/v1/system/backups/${filename}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: getAuthHeaders()
       });
       if (res.ok) {
         fetchBackupsAndSchedule();
@@ -498,6 +518,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/storage/s3/upload`, {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: formData,
       });
       if (res.ok) {
@@ -526,6 +547,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/storage/s3/backup-database`, {
         method: 'POST',
+        headers: getAuthHeaders()
       });
       if (res.ok) {
         const data = await res.json();
@@ -548,7 +570,9 @@ export default function AppSettingsPage() {
 
   const handleOpenPresignedUrl = async (key: string) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/storage/s3/presigned/${encodeURIComponent(key)}?expires_in=3600`);
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/presigned/${encodeURIComponent(key)}?expires_in=3600`, {
+        headers: getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.presigned_url) {
@@ -566,10 +590,11 @@ export default function AppSettingsPage() {
   const handleMigrateDatabase = async () => {
     setMigratingDb(true);
     setMigrationResult(null);
+    setMigrationModalError(null);
     try {
       const res = await fetch(`${API_URL}/api/v1/system/database/migrate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({})
       });
       const data = await res.json();
@@ -583,10 +608,14 @@ export default function AppSettingsPage() {
         setTimeout(() => setMessage(null), 6000);
         fetchDbStatus();
       } else {
-        setMessage({ type: 'error', text: data.detail || 'Migration failed.' });
+        const errorDetail = data.detail || 'Migration failed.';
+        setMigrationModalError(errorDetail);
+        setMessage({ type: 'error', text: errorDetail });
       }
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Error connecting to database migration service.' });
+    } catch (e: any) {
+      const err = e?.message || 'Error connecting to database migration service.';
+      setMigrationModalError(err);
+      setMessage({ type: 'error', text: err });
     } finally {
       setMigratingDb(false);
     }
@@ -596,7 +625,8 @@ export default function AppSettingsPage() {
     setCreatingHnsw(true);
     try {
       const res = await fetch(`${API_URL}/api/v1/system/database/create-hnsw-index`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeaders()
       });
       const data = await res.json();
       if (res.ok) {
@@ -617,7 +647,7 @@ export default function AppSettingsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/system/database/test-connection`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({})
       });
       const data = await res.json();
@@ -626,11 +656,11 @@ export default function AppSettingsPage() {
           type: 'success',
           text: `PostgreSQL connection verified! Version: ${data.version}, pgvector: v${data.pgvector_version}`
         });
+        setTimeout(() => setMessage(null), 5000);
+        fetchDbStatus();
       } else {
-        setMessage({ type: 'error', text: `PostgreSQL connection failed: ${data.error}` });
+        setMessage({ type: 'error', text: `PostgreSQL connection failed: ${data.error || 'Server unreachable'}` });
       }
-      setTimeout(() => setMessage(null), 5000);
-      fetchDbStatus();
     } catch (e) {
       setMessage({ type: 'error', text: 'Error testing PostgreSQL connection.' });
     }
@@ -931,7 +961,10 @@ export default function AppSettingsPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => setShowMigrateModal(true)}
+              onClick={() => {
+                setMigrationModalError(null);
+                setShowMigrateModal(true);
+              }}
               disabled={migratingDb}
               className="flex items-center gap-1.5 px-3.5 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
               title="Migrate SQLite database into PostgreSQL pgvector container"
@@ -1752,10 +1785,20 @@ export default function AppSettingsPage() {
               </p>
             </div>
 
+            {migrationModalError && (
+              <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs text-rose-700 animate-fadeIn">
+                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                <div className="leading-snug">{migrationModalError}</div>
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowMigrateModal(false)}
+                onClick={() => {
+                  setShowMigrateModal(false);
+                  setMigrationModalError(null);
+                }}
                 disabled={migratingDb}
                 className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
               >

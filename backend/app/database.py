@@ -1,11 +1,18 @@
 import os
 import logging
+from typing import Optional
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+def normalize_db_url(url: Optional[str]) -> str:
+    """Ensures PostgreSQL connections use the installed psycopg2 driver dialect."""
+    if url and url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url or ""
 
 is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 is_postgres = settings.DATABASE_URL.startswith("postgresql")
@@ -26,7 +33,7 @@ elif is_postgres:
     engine_kwargs.update({"pool_size": 20, "max_overflow": 40})
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    normalize_db_url(settings.DATABASE_URL),
     connect_args=connect_args,
     **engine_kwargs
 )
@@ -87,11 +94,16 @@ def check_pgvector_active(db_session=None) -> bool:
 
 def check_postgres_availability(url: str = None) -> dict:
     """Tests connection to PostgreSQL and checks pgvector support."""
-    target_url = url or settings.POSTGRES_URL
+    target_url = normalize_db_url(url or settings.POSTGRES_URL)
     try:
         test_engine = create_engine(target_url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
         with test_engine.connect() as conn:
             ver = conn.execute(text("SELECT version();")).scalar()
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.commit()
+            except Exception:
+                pass
             vec_res = conn.execute(text("SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';")).fetchone()
             has_pgvector = vec_res is not None
             vec_version = vec_res[1] if vec_res else None
