@@ -107,16 +107,17 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Runs UltraFace ONNX model across photos to detect and register facial bounding boxes."""
+    """Runs InsightFace SCRFD 500M & ArcFace models across photos to detect, embed, and register facial biometrics."""
     from app.models.media import Media
     from app.models.person import FaceDetection
-    from app.services.face_engine import detect_faces_in_image
+    from app.services.face_engine import process_faces_for_media, auto_cluster_faces
 
     with SessionLocal() as db:
-        # Check all non-deleted images
+        # Check all unscanned non-deleted image photos
         photos = db.query(Media).filter(
             Media.is_deleted == False,
-            Media.category == "Memory"
+            (Media.mime_type == None) | (~Media.mime_type.startswith("video/")),
+            (Media.faces_scanned == False) | (Media.faces_scanned == None)
         ).all()
 
         total = len(photos)
@@ -128,7 +129,7 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             total_steps=total,
             current_step=0,
             progress=0,
-            message=f"Starting UltraFace scan across {total} memories..."
+            message=f"Starting SCRFD & ArcFace biometric scan across {total} photos..."
         )
 
         detected_faces = 0
@@ -141,30 +142,14 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             filename = item.filename or f"Photo #{item.id}"
             pct = int(((i + 1) / total) * 100)
 
-            # Skip if photo already has detections registered
-            existing_count = db.query(FaceDetection).filter(FaceDetection.media_id == item.id).count()
-            if existing_count == 0:
-                target_path = item.original_path if (item.original_path and os.path.exists(item.original_path)) else item.thumbnail_1080_path
-                if target_path and os.path.exists(target_path):
-                    try:
-                        faces = detect_faces_in_image(target_path)
-                        for f in faces:
-                            det = FaceDetection(
-                                media_id=item.id,
-                                box_x=f["box_x"],
-                                box_y=f["box_y"],
-                                box_w=f["box_w"],
-                                box_h=f["box_h"],
-                                confidence=f["confidence"]
-                            )
-                            db.add(det)
-                        if faces:
-                            detected_faces += len(faces)
-                            photos_with_faces += 1
-                        db.commit()
-                    except Exception as e:
-                        logger.warning(f"Error detecting faces in #{item.id}: {e}")
-                        db.rollback()
+            try:
+                faces = process_faces_for_media(db, item, overwrite=False)
+                if faces:
+                    detected_faces += len(faces)
+                    photos_with_faces += 1
+            except Exception as e:
+                logger.warning(f"Error detecting faces in #{item.id}: {e}")
+                db.rollback()
 
             TaskQueue.update_task(
                 task_id,
@@ -173,6 +158,12 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 total_steps=total,
                 message=f"Scanned {i + 1}/{total} ({pct}%): {detected_faces} faces found ({filename})"
             )
+
+        # Automatically cluster newly detected faces into People
+        try:
+            auto_cluster_faces(db)
+        except Exception as e:
+            logger.warning(f"Post-detection face clustering notice: {e}")
 
         return {"photos_scanned": total, "faces_detected": detected_faces, "photos_with_faces": photos_with_faces}
 
@@ -221,23 +212,55 @@ def run_database_backup(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
 
 
 def run_media_scan(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Runs local filesystem scan to ingest new photos and generate WebP thumbnails."""
+    """Runs local filesystem scan to ingest new photos and generate WebP thumbnails with live progress."""
     from app.services.scanner import scan_directory
+    from app.models.user import User
 
     TaskQueue.update_task(
         task_id,
-        progress=10,
-        message="Scanning storage directories for new media files..."
+        progress=0,
+        message="Discovering files across storage directories..."
     )
 
+    def on_progress(current, total, pct, filename, added):
+        if _should_exit or TaskQueue.is_cancelled(task_id):
+            return
+        TaskQueue.update_task(
+            task_id,
+            progress=pct,
+            current_step=current,
+            total_steps=total,
+            message=f"Scanning {current}/{total} ({pct}%): +{added} new ({filename})"
+        )
+
     with SessionLocal() as db:
-        res = scan_directory(db, settings.MEDIA_DIR)
+        primary_user = db.query(User).order_by(User.id.asc()).first()
+        uid = primary_user.id if primary_user else 1
+        target_dir = payload.get("directory_path") or settings.MEDIA_DIR
+
+        res = scan_directory(db, target_dir, user_id=uid, progress_callback=on_progress)
+        
+        added_count = res.get("added", 0)
+        scanned_count = res.get("scanned", 0)
+        existing_count = res.get("existing", 0)
+
+        msg = f"Scan complete: {added_count} new files cataloged, {existing_count} already indexed (Total: {scanned_count})."
         TaskQueue.update_task(
             task_id,
             progress=100,
-            message=f"Scan complete: {res.get('new_files', 0)} new files, {res.get('processed_count', 0)} processed.",
+            message=msg,
             result=res
         )
+
+        # If new files were ingested, auto-enqueue background AI indexing
+        if added_count > 0:
+            try:
+                TaskQueue.enqueue("clip_index_all")
+                TaskQueue.enqueue("face_detect_all")
+                logger.info(f"Enqueued CLIP and Face Detection AI tasks for {added_count} newly cataloged media items.")
+            except Exception as e:
+                logger.warning(f"Could not auto-enqueue AI tasks after scan: {e}")
+
         return res
 
 

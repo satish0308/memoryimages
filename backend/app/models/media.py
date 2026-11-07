@@ -55,6 +55,7 @@ class Media(Base):
     is_favorite = Column(Boolean, default=False, index=True)
     is_archived = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
+    faces_scanned = Column(Boolean, default=False, index=True)
     
     # EXIF Metadata
     camera_make = Column(String(128), nullable=True)

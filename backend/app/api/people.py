@@ -22,7 +22,9 @@ from app.services.face_engine import (
     get_face_crop_image,
     auto_cluster_faces,
     load_media_image,
-    extract_arcface_embedding
+    extract_arcface_embedding,
+    align_face_crop,
+    detect_faces_in_image
 )
 
 router = APIRouter()
@@ -81,7 +83,7 @@ def list_people(
         return []
 
     query = db.query(Person).filter(
-        Person.user_id == current_user.id
+        (Person.user_id == current_user.id) | (Person.user_id == None)
     )
     if not show_hidden:
         query = query.filter(Person.is_hidden == False)
@@ -105,7 +107,7 @@ def list_people(
             .join(Media, FaceDetection.media_id == Media.id)
             .filter(
                 FaceDetection.person_id == p.id,
-                Media.user_id == current_user.id,
+                (Media.user_id == current_user.id) | (Media.user_id == None),
                 Media.is_deleted == False
             ).all()
         )
@@ -151,33 +153,33 @@ def get_people_stats(
     total_faces = (
         db.query(FaceDetection)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter(Media.user_id == uid, Media.is_deleted == False)
+        .filter((Media.user_id == uid) | (Media.user_id == None), Media.is_deleted == False)
         .count()
     )
     total_people = (
         db.query(func.count(func.distinct(Person.id)))
         .join(FaceDetection, FaceDetection.person_id == Person.id)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == False, Media.is_deleted == False)
+        .filter((Person.user_id == uid) | (Person.user_id == None), Person.is_hidden == False, Person.is_pet == False, Media.is_deleted == False)
         .scalar() or 0
     )
     total_pets = (
         db.query(func.count(func.distinct(Person.id)))
         .join(FaceDetection, FaceDetection.person_id == Person.id)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter(Person.user_id == uid, Person.is_hidden == False, Person.is_pet == True, Media.is_deleted == False)
+        .filter((Person.user_id == uid) | (Person.user_id == None), Person.is_hidden == False, Person.is_pet == True, Media.is_deleted == False)
         .scalar() or 0
     )
     tagged_faces = (
         db.query(FaceDetection)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter(FaceDetection.person_id != None, Media.user_id == uid, Media.is_deleted == False)
+        .filter(FaceDetection.person_id != None, (Media.user_id == uid) | (Media.user_id == None), Media.is_deleted == False)
         .count()
     )
     photos_with_faces = (
         db.query(func.count(func.distinct(FaceDetection.media_id)))
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter(Media.user_id == uid, Media.is_deleted == False)
+        .filter((Media.user_id == uid) | (Media.user_id == None), Media.is_deleted == False)
         .scalar() or 0
     )
     return {
@@ -204,7 +206,7 @@ def get_unnamed_faces(
         .join(Media, FaceDetection.media_id == Media.id)
         .outerjoin(Person, FaceDetection.person_id == Person.id)
         .filter(
-            Media.user_id == current_user.id,
+            (Media.user_id == current_user.id) | (Media.user_id == None),
             Media.is_deleted == False,
             (FaceDetection.person_id == None) | (Person.name.like("Person %")) | (Person.name == "Unnamed Person")
         )
@@ -243,7 +245,12 @@ def scan_faces(
     db: Session = Depends(get_db)
 ):
     """Deep scans library photos for human faces (UltraFace + ArcFace) and household pets (YOLOv8)."""
-    return index_all_library_faces(db, user_id=current_user.id, max_photos=max_photos)
+    scan_res = index_all_library_faces(db, user_id=current_user.id, max_photos=max_photos)
+    cluster_res = auto_cluster_faces(db, user_id=current_user.id)
+    return {
+        **scan_res,
+        "clustering": cluster_res
+    }
 
 @router.delete("/faces/{face_id}")
 def delete_face_detection(
@@ -503,11 +510,19 @@ def search_by_face(
             if media:
                 img = load_media_image(media, db)
                 if img:
-                    W, H = img.size
-                    cx = int((face.box_x + face.box_w / 2.0) * W)
-                    cy = int((face.box_y + face.box_h / 2.0) * H)
-                    half = int(max(face.box_w * W, face.box_h * H) * 0.65)
-                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    crop = None
+                    if getattr(face, "landmarks_str", None):
+                        try:
+                            lms = np.array([[float(c) for c in pt.split(":")] for pt in face.landmarks_str.split(",")])
+                            crop = align_face_crop(img, lms)
+                        except Exception:
+                            crop = None
+                    if crop is None:
+                        W, H = img.size
+                        cx = int((face.box_x + face.box_w / 2.0) * W)
+                        cy = int((face.box_y + face.box_h / 2.0) * H)
+                        half = int(max(face.box_w * W, face.box_h * H) * 0.65)
+                        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
                     query_emb = extract_arcface_embedding(crop)
 
     # 2. Custom drawn or clicked box on media
@@ -522,10 +537,39 @@ def search_by_face(
         W, H = img.size
         bw = req.box_w or 0.15
         bh = req.box_h or 0.18
-        cx = int((req.box_x + bw / 2.0) * W)
-        cy = int((req.box_y + bh / 2.0) * H)
-        half = int(max(bw * W, bh * H) * 0.65)
-        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+
+        # Try to find high-precision SCRFD landmarks for this region
+        crop = None
+        landmarks_str = None
+        try:
+            detected = detect_faces_in_image(img)
+            best_iou = 0.0
+            best_d = None
+            for d in detected:
+                dx = max(d["box_x"], req.box_x)
+                dy = max(d["box_y"], req.box_y)
+                dw = min(d["box_x"] + d["box_w"], req.box_x + bw) - dx
+                dh = min(d["box_y"] + d["box_h"], req.box_y + bh) - dy
+                if dw > 0 and dh > 0:
+                    inter = dw * dh
+                    union = (d["box_w"] * d["box_h"]) + (bw * bh) - inter
+                    iou = inter / max(union, 1e-6)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_d = d
+            if best_d and best_iou > 0.2 and best_d.get("landmarks") is not None:
+                lms = best_d["landmarks"]
+                landmarks_str = ",".join(f"{pt[0]:.4f}:{pt[1]:.4f}" for pt in lms)
+                crop = align_face_crop(img, lms)
+        except Exception:
+            crop = None
+
+        if crop is None:
+            cx = int((req.box_x + bw / 2.0) * W)
+            cy = int((req.box_y + bh / 2.0) * H)
+            half = int(max(bw * W, bh * H) * 0.65)
+            crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+
         query_emb = extract_arcface_embedding(crop)
 
         # Generate WebP base64 preview for query avatar
@@ -547,7 +591,8 @@ def search_by_face(
             box_w=bw,
             box_h=bh,
             confidence=1.0,
-            embedding_str=emb_str
+            embedding_str=emb_str,
+            landmarks_str=landmarks_str
         )
         db.add(face)
         db.commit()
@@ -776,6 +821,11 @@ def merge_people(
         FaceDetection.person_id == req.source_person_id
     ).update({"person_id": req.target_person_id}, synchronize_session=False)
     
+    if not target.cover_media_id and source.cover_media_id:
+        target.cover_media_id = source.cover_media_id
+    if not target.relationship_type and source.relationship_type:
+        target.relationship_type = source.relationship_type
+
     db.delete(source)
     db.commit()
     return {"status": "merged", "target_id": target.id, "target_name": target.name}
@@ -861,14 +911,41 @@ def add_face_tag(
 
     # Compute ArcFace embedding for newly tagged face
     emb_str = None
+    landmarks_str = None
     try:
         img = load_media_image(media, db)
         if img:
             W, H = img.size
-            cx = int((req.box_x + req.box_w / 2.0) * W)
-            cy = int((req.box_y + req.box_h / 2.0) * H)
-            half = int(max(req.box_w * W, req.box_h * H) * 0.65)
-            crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+            crop = None
+            try:
+                detected = detect_faces_in_image(img)
+                best_iou = 0.0
+                best_d = None
+                for d in detected:
+                    dx = max(d["box_x"], req.box_x)
+                    dy = max(d["box_y"], req.box_y)
+                    dw = min(d["box_x"] + d["box_w"], req.box_x + req.box_w) - dx
+                    dh = min(d["box_y"] + d["box_h"], req.box_y + req.box_h) - dy
+                    if dw > 0 and dh > 0:
+                        inter = dw * dh
+                        union = (d["box_w"] * d["box_h"]) + (req.box_w * req.box_h) - inter
+                        iou = inter / max(union, 1e-6)
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_d = d
+                if best_d and best_iou > 0.2 and best_d.get("landmarks") is not None:
+                    lms = best_d["landmarks"]
+                    landmarks_str = ",".join(f"{pt[0]:.4f}:{pt[1]:.4f}" for pt in lms)
+                    crop = align_face_crop(img, lms)
+            except Exception:
+                crop = None
+
+            if crop is None:
+                cx = int((req.box_x + req.box_w / 2.0) * W)
+                cy = int((req.box_y + req.box_h / 2.0) * H)
+                half = int(max(req.box_w * W, req.box_h * H) * 0.65)
+                crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+
             emb = extract_arcface_embedding(crop)
             if emb is not None:
                 emb_str = ",".join(f"{x:.5f}" for x in emb)
@@ -883,7 +960,8 @@ def add_face_tag(
         box_w=req.box_w,
         box_h=req.box_h,
         confidence=1.0,
-        embedding_str=emb_str
+        embedding_str=emb_str,
+        landmarks_str=landmarks_str
     )
     db.add(face)
     db.commit()
@@ -939,11 +1017,19 @@ def update_face_tag(
             if m:
                 img = load_media_image(m, db)
                 if img:
-                    W, H = img.size
-                    cx = int((face.box_x + face.box_w / 2.0) * W)
-                    cy = int((face.box_y + face.box_h / 2.0) * H)
-                    half = int(max(face.box_w * W, face.box_h * H) * 0.65)
-                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    crop = None
+                    if getattr(face, "landmarks_str", None):
+                        try:
+                            lms = np.array([[float(c) for c in pt.split(":")] for pt in face.landmarks_str.split(",")])
+                            crop = align_face_crop(img, lms)
+                        except Exception:
+                            crop = None
+                    if crop is None:
+                        W, H = img.size
+                        cx = int((face.box_x + face.box_w / 2.0) * W)
+                        cy = int((face.box_y + face.box_h / 2.0) * H)
+                        half = int(max(face.box_w * W, face.box_h * H) * 0.65)
+                        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
                     emb = extract_arcface_embedding(crop)
                     if emb is not None:
                         face.embedding_str = ",".join(f"{x:.5f}" for x in emb)
@@ -951,24 +1037,6 @@ def update_face_tag(
             pass
     db.commit()
     return {"id": face.id, "person_id": person.id, "person_name": person.name}
-
-@router.delete("/faces/{face_id}")
-def delete_face_detection(
-    face_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Removes a face detection from a photo."""
-    face = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(
-        FaceDetection.id == face_id,
-        (Media.user_id == current_user.id) | (current_user.is_admin == True)
-    ).first()
-    if not face:
-        raise HTTPException(status_code=404, detail="Face detection not found or access denied")
-
-    db.delete(face)
-    db.commit()
-    return {"status": "deleted", "id": face_id}
 
 @router.post("/detect-all")
 def detect_all_library_faces(

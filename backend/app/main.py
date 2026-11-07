@@ -73,6 +73,8 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backup_folder_name VARCHAR(255)"))
                 if "gdrive_backed_up_at" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at DATETIME"))
+                if "faces_scanned" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN faces_scanned BOOLEAN DEFAULT FALSE"))
                 # Associate existing unassigned photos with primary owner (admin user_id=1)
                 conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()
@@ -113,6 +115,13 @@ def check_and_upgrade_schema(db_engine):
                 if "user_id" not in columns:
                     conn.execute(text("ALTER TABLE sync_sources ADD COLUMN user_id INTEGER"))
                 conn.execute(text("UPDATE sync_sources SET user_id = 1 WHERE user_id IS NULL"))
+                conn.commit()
+
+        if "face_detections" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("face_detections")]
+            with db_engine.connect() as conn:
+                if "landmarks_str" not in columns:
+                    conn.execute(text("ALTER TABLE face_detections ADD COLUMN landmarks_str VARCHAR(255)"))
                 conn.commit()
     except Exception as e:
         print(f"Schema upgrade notice: {e}")

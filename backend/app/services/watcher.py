@@ -28,9 +28,18 @@ class PhotoWatcherHandler(FileSystemEventHandler):
             
         db = SessionLocal()
         try:
-            media = scan_file(db, file_path, source_type=SourceType.LOCAL)
+            from app.models.user import User
+            primary_user = db.query(User).order_by(User.id.asc()).first()
+            uid = primary_user.id if primary_user else 1
+            media = scan_file(db, file_path, source_type=SourceType.LOCAL, user_id=uid)
             if media:
                 logger.info(f"Auto-ingested new media from watcher: {media.filename} (ID: {media.id})")
+                try:
+                    from app.services.task_queue import TaskQueue
+                    TaskQueue.enqueue("clip_index_all")
+                    TaskQueue.enqueue("face_detect_all")
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error auto-ingesting {file_path}: {e}")
         finally:

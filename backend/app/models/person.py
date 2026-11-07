@@ -37,8 +37,10 @@ class FaceDetection(Base):
     confidence = Column(Float, default=1.0)
     cluster_id = Column(Integer, nullable=True, index=True)
     
-    # Store embedding as comma-separated or JSON string for portability
+    # Store embedding as comma-separated string for portability (512 float32)
     embedding_str = Column(Text, nullable=True)
+    # Store 5-point facial landmarks normalized [0, 1] as comma-separated x1,y1,...x5,y5
+    landmarks_str = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

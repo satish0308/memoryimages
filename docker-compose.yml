@@ -32,6 +32,7 @@ services:
       - ./backend/app:/app/app
       - ./data/db:/data/db
       - ./data/originals:/data/originals
+      - /media/satish/Data2/all_extracts:/data/originals/all_extracts:ro
       - ./data/thumbnails:/data/thumbnails
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
@@ -86,6 +87,7 @@ services:
       - ./backend/app:/app/app
       - ./data/db:/data/db
       - ./data/originals:/data/originals
+      - /media/satish/Data2/all_extracts:/data/originals/all_extracts:ro
       - ./data/thumbnails:/data/thumbnails
     depends_on:
       backend:

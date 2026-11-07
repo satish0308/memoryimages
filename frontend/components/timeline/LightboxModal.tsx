@@ -470,7 +470,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   const fetchFaces = async (photoId: number) => {
     try {
-      const res = await fetch(`${apiUrl}/api/v1/people/media/${photoId}/faces`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${apiUrl}/api/v1/people/media/${photoId}/faces`, { headers });
       if (res.ok) {
         const data = await res.json();
         setFaces(data);
@@ -482,7 +486,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   const fetchKnownPeople = async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/v1/people`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${apiUrl}/api/v1/people`, { headers });
       if (res.ok) {
         const data = await res.json();
         setKnownPeople(data);
@@ -495,9 +503,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const handleUpdateFaceTag = async (faceId: number, name: string) => {
     if (!name.trim()) return;
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${apiUrl}/api/v1/people/faces/${faceId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ person_name: name.trim() }),
       });
       if (res.ok) {
@@ -517,8 +529,13 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   const handleDeleteFace = async (faceId: number) => {
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${apiUrl}/api/v1/people/faces/${faceId}`, {
         method: 'DELETE',
+        headers,
       });
       if (res.ok) {
         setFaces((prev) => prev.filter((f) => f.id !== faceId));

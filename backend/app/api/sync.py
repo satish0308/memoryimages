@@ -26,6 +26,7 @@ router = APIRouter()
 
 class ScanLocalRequest(BaseModel):
     directory_path: Optional[str] = None
+    async_mode: Optional[bool] = True
 
 @router.get("/sources")
 def list_sync_sources(
@@ -42,12 +43,38 @@ def list_sync_sources(
 @router.post("/scan-local")
 def trigger_local_scan(
     req: ScanLocalRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Triggers recursive scan of a local directory, associating ingested media with current user."""
+    """Triggers recursive scan of a local directory, associating ingested media with primary user."""
+    from app.services.task_queue import TaskQueue
+
+    uid = current_user.id if current_user else 1
     target_dir = req.directory_path or settings.MEDIA_DIR
-    result = scan_directory(db, target_dir, user_id=current_user.id)
+
+    # Default to background worker queue for non-blocking UI experience
+    if req.async_mode:
+        task = TaskQueue.enqueue(
+            "media_scan", 
+            payload={"directory_path": target_dir, "user_id": uid},
+            name=f"Storage Library Scanner ({os.path.basename(target_dir.rstrip('/'))})"
+        )
+        return {
+            "status": "queued",
+            "task_id": task.get("id") if task else None,
+            "message": "Storage scan queued in background with live progress tracking.",
+            "directory": target_dir
+        }
+
+    # Synchronous fallback
+    result = scan_directory(db, target_dir, user_id=uid)
+    if result.get("added", 0) > 0:
+        try:
+            TaskQueue.enqueue("clip_index_all")
+            TaskQueue.enqueue("face_detect_all")
+        except Exception:
+            pass
+
     return {
         "status": "scan_completed",
         "directory": target_dir,

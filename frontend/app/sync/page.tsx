@@ -54,9 +54,18 @@ export default function SyncPage() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
 
+  const getAuthHeaders = () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  };
+
   const fetchSources = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/sync/sources`);
+      const res = await fetch(`${API_URL}/api/v1/sync/sources`, {
+        headers: getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setSources(data);
@@ -68,7 +77,9 @@ export default function SyncPage() {
 
   const fetchS3Status = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/storage/s3/status`);
+      const res = await fetch(`${API_URL}/api/v1/storage/s3/status`, {
+        headers: getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setS3Status(data);
@@ -87,8 +98,12 @@ export default function SyncPage() {
       formData.append('files', files[i]);
     }
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/api/v1/storage/s3/upload`, {
         method: 'POST',
+        headers,
         body: formData,
       });
       if (res.ok) {
@@ -115,8 +130,8 @@ export default function SyncPage() {
       setScanResult(null);
       const res = await fetch(`${API_URL}/api/v1/sync/scan-local`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ async_mode: true })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -255,10 +270,12 @@ export default function SyncPage() {
           </div>
 
           {scanResult && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1">
-              <p className="font-semibold text-slate-700">Scan Complete:</p>
-              <p className="text-slate-500">
-                Scanned: {scanResult.details?.scanned || 0} files | Added: {scanResult.details?.added || 0} new media
+            <div className={`border rounded-xl p-3 text-xs space-y-1 ${scanResult.error ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
+              <p className="font-semibold text-slate-700">
+                {scanResult.error ? 'Scan Error:' : scanResult.status === 'queued' ? 'Scan Queued in Background:' : 'Scan Complete:'}
+              </p>
+              <p className={scanResult.error ? 'text-rose-600' : 'text-slate-500'}>
+                {scanResult.error || scanResult.message || `Scanned: ${scanResult.details?.scanned || 0} files | Added: ${scanResult.details?.added || 0} new media`}
               </p>
             </div>
           )}

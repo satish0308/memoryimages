@@ -324,7 +324,11 @@ export default function AlbumsPage() {
   // Open Person collection
   const openPerson = async (person: SmartPerson) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
       if (res.ok) {
         const photos = await res.json();
         setSelectedCollection({

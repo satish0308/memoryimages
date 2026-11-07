@@ -279,6 +279,11 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         
     if not os.path.isfile(file_path):
         return None
+
+    if user_id is None:
+        from app.models.user import User
+        primary_user = db.query(User).order_by(User.id.asc()).first()
+        user_id = primary_user.id if primary_user else 1
         
     # Check if file path already exists
     existing = db.query(Media).filter(Media.original_path == file_path).first()
@@ -415,25 +420,47 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         
     return media
 
-def scan_directory(db: Session, dir_path: str, user_id: Optional[int] = None) -> Dict[str, Any]:
-    """Recursively scans a directory for photos."""
+def scan_directory(db: Session, dir_path: str, user_id: Optional[int] = None, progress_callback: Optional[Any] = None) -> Dict[str, Any]:
+    """Recursively scans a directory for photos with fast-skip for indexed files and progress reporting."""
     if not os.path.isdir(dir_path):
-        return {"scanned": 0, "added": 0, "error": f"Directory not found: {dir_path}"}
+        return {"scanned": 0, "added": 0, "existing": 0, "error": f"Directory not found: {dir_path}"}
         
-    scanned = 0
-    added = 0
-    
+    if user_id is None:
+        from app.models.user import User
+        primary_user = db.query(User).order_by(User.id.asc()).first()
+        user_id = primary_user.id if primary_user else 1
+
+    # First pass: collect all supported files
+    all_files = []
     for root, _, files in os.walk(dir_path):
         for file in files:
             ext = os.path.splitext(file)[1].lower()
             if ext in SUPPORTED_EXTENSIONS:
-                scanned += 1
-                full_path = os.path.join(root, file)
-                media = scan_file(db, full_path, SourceType.LOCAL, user_id=user_id)
-                if media:
+                all_files.append(os.path.join(root, file))
+
+    total = len(all_files)
+    scanned = 0
+    added = 0
+    existing = 0
+
+    for i, full_path in enumerate(all_files):
+        scanned += 1
+        exists = db.query(Media.id).filter(Media.original_path == full_path).first()
+        if exists:
+            existing += 1
+        else:
+            media = scan_file(db, full_path, SourceType.LOCAL, user_id=user_id)
+            if media:
+                if media.original_path == full_path:
                     added += 1
-                    
-    return {"scanned": scanned, "added": added, "status": "success"}
+                else:
+                    existing += 1
+
+        if progress_callback and (i % 25 == 0 or i == total - 1):
+            pct = int(((i + 1) / max(total, 1)) * 100)
+            progress_callback(i + 1, total, pct, os.path.basename(full_path), added)
+
+    return {"scanned": scanned, "added": added, "existing": existing, "total": total, "status": "success"}
 
 def scan_file_in_memory(
     db: Session,

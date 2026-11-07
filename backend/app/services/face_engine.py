@@ -15,19 +15,81 @@ logger = logging.getLogger("memorypics.face_engine")
 Image.MAX_IMAGE_PIXELS = None
 
 # Model Paths
-MODEL_DIR = "/data/models" if os.path.exists("/data/models") else "/data/db/models"
-DETECTOR_PATH = os.path.join(MODEL_DIR, "version-RFB-320.onnx")
+MODEL_DIR = "/data/db/models" if os.path.exists("/data/db") else "/data/models"
+os.makedirs(MODEL_DIR, exist_ok=True)
+SCRFD_PATH = os.path.join(MODEL_DIR, "scrfd.onnx")
 ARCFACE_PATH = os.path.join(MODEL_DIR, "arcface.onnx")
+DETECTOR_PATH = os.path.join(MODEL_DIR, "version-RFB-320.onnx")
 YOLO_PATH = os.path.join(MODEL_DIR, "yolov8n.onnx")
 
+_scrfd_session = None
 _detector_session = None
 _arcface_session = None
 _yolo_session = None
+
+def ensure_models():
+    """Ensures state-of-the-art ONNX models for SCRFD face detection and ArcFace biometrics are available on disk."""
+    import urllib.request
+    import zipfile
+    
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    
+    # 1. InsightFace Buffalo_SC bundle contains SCRFD (det_500m.onnx) and ArcFace (w600k_mbf.onnx)
+    if not os.path.exists(SCRFD_PATH) or not os.path.exists(ARCFACE_PATH):
+        logger.info("Downloading state-of-the-art InsightFace models (SCRFD + ArcFace)...")
+        try:
+            url = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (MemoryPics FaceEngine)"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                if not os.path.exists(SCRFD_PATH) and "det_500m.onnx" in zf.namelist():
+                    with open(SCRFD_PATH, "wb") as f:
+                        f.write(zf.read("det_500m.onnx"))
+                    logger.info(f"SCRFD face detector saved to {SCRFD_PATH}")
+                if not os.path.exists(ARCFACE_PATH) and "w600k_mbf.onnx" in zf.namelist():
+                    with open(ARCFACE_PATH, "wb") as f:
+                        f.write(zf.read("w600k_mbf.onnx"))
+                    logger.info(f"ArcFace biometric model saved to {ARCFACE_PATH}")
+        except Exception as e:
+            logger.error(f"Failed to auto-download InsightFace models: {e}")
+
+    # 2. UltraFace fallback detector
+    if not os.path.exists(DETECTOR_PATH):
+        logger.info(f"Downloading UltraFace fallback detector model to {DETECTOR_PATH}...")
+        try:
+            url = "https://raw.githubusercontent.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB/master/models/onnx/version-RFB-320.onnx"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (MemoryPics FaceEngine)"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(DETECTOR_PATH, "wb") as f:
+                f.write(resp.read())
+            logger.info("UltraFace fallback detector downloaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to auto-download UltraFace fallback model: {e}")
+
+def get_scrfd_session():
+    global _scrfd_session
+    if _scrfd_session is not None:
+        return _scrfd_session
+    if not os.path.exists(SCRFD_PATH):
+        ensure_models()
+    if not os.path.exists(SCRFD_PATH):
+        return None
+    try:
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        _scrfd_session = ort.InferenceSession(SCRFD_PATH, opts)
+        return _scrfd_session
+    except Exception as e:
+        logger.error(f"Failed to load SCRFD detector model: {e}")
+        return None
 
 def get_detector_session():
     global _detector_session
     if _detector_session is not None:
         return _detector_session
+    if not os.path.exists(DETECTOR_PATH):
+        ensure_models()
     if not os.path.exists(DETECTOR_PATH):
         logger.warning(f"Face detector model not found at {DETECTOR_PATH}")
         return None
@@ -46,13 +108,15 @@ def get_arcface_session():
     if _arcface_session is not None:
         return _arcface_session
     if not os.path.exists(ARCFACE_PATH):
+        ensure_models()
+    if not os.path.exists(ARCFACE_PATH):
         logger.warning(f"ArcFace model not found at {ARCFACE_PATH}")
         return None
     try:
         import onnxruntime as ort
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
-        _arcface_session = ort.InferenceSession(ARCFFACE_PATH if 'ARCFACE_PATH' in locals() else ARCFACE_PATH, opts)
+        _arcface_session = ort.InferenceSession(ARCFACE_PATH, opts)
         return _arcface_session
     except Exception as e:
         logger.error(f"Failed to load ArcFace biometric model: {e}")
@@ -63,7 +127,7 @@ def get_yolo_session():
     if _yolo_session is not None:
         return _yolo_session
     if not os.path.exists(YOLO_PATH):
-        logger.warning(f"YOLOv8 pet model not found at {YOLO_PATH}")
+        logger.debug(f"YOLOv8 pet model not found at {YOLO_PATH}")
         return None
     try:
         import onnxruntime as ort
@@ -155,26 +219,133 @@ def load_media_image(media: Media, db: Session) -> Optional[Image.Image]:
 
     return None
 
-def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.75, min_size: int = 45) -> List[Dict[str, float]]:
-    """Runs UltraFace ONNX model to detect faces in an image file or in-memory PIL Image."""
-    sess = get_detector_session()
+def detect_faces_scrfd(img: Image.Image, conf_threshold: float = 0.5) -> List[Dict[str, Any]]:
+    """
+    Runs InsightFace SCRFD 500M detector with Feature Pyramid Networks & 5-point facial landmark keypoints.
+    State-of-the-art accuracy on small, rotated, and crowded faces.
+    """
+    sess = get_scrfd_session()
     if sess is None:
         return []
 
     try:
-        if isinstance(image_input, Image.Image):
-            img_rgb = image_input.convert('RGB')
-        elif isinstance(image_input, str) and os.path.exists(image_input):
-            with Image.open(image_input) as img:
-                img_rgb = img.convert('RGB')
-        else:
-            return []
-
-        orig_w, orig_h = img_rgb.size
+        orig_w, orig_h = img.size
         if orig_w == 0 or orig_h == 0:
             return []
-        resized = img_rgb.resize((320, 240))
 
+        # 640x640 Feature Pyramid Network input
+        target_size = (640, 640)
+        resized = img.resize(target_size, Image.Resampling.BILINEAR)
+        arr = np.array(resized).astype(np.float32)
+        arr = arr[:, :, ::-1]  # RGB to BGR
+        arr = (arr - 127.5) / 128.0
+        arr = np.transpose(arr, (2, 0, 1))
+        arr = np.expand_dims(arr, axis=0)
+
+        outputs = sess.run(None, {"input.1": arr})
+        strides = [8, 16, 32]
+        num_anchors = 2
+
+        scores_list = outputs[0:3]
+        bboxes_list = outputs[3:6]
+        kpss_list = outputs[6:9]
+
+        proposals = []
+        landmarks_list = []
+
+        for idx, stride in enumerate(strides):
+            scores = scores_list[idx]
+            bboxes = bboxes_list[idx] * stride
+            kpss = kpss_list[idx] * stride
+
+            feat_h = target_size[1] // stride
+            feat_w = target_size[0] // stride
+            anchor_centers = np.stack(np.mgrid[:feat_h, :feat_w][::-1], axis=-1).astype(np.float32) * stride
+            anchor_centers = np.repeat(anchor_centers.reshape((-1, 2)), num_anchors, axis=0)
+
+            pos_inds = np.where(scores >= conf_threshold)[0]
+            for p in pos_inds:
+                cx, cy = anchor_centers[p]
+                dx1, dy1, dx2, dy2 = bboxes[p]
+                x1 = max(0.0, float(cx - dx1))
+                y1 = max(0.0, float(cy - dy1))
+                x2 = min(640.0, float(cx + dx2))
+                y2 = min(640.0, float(cy + dy2))
+                score = float(scores[p, 0])
+
+                # 5 landmarks (x, y) normalized [0, 1]
+                lm = (kpss[p].reshape((5, 2)) + np.array([cx, cy])) / 640.0
+
+                proposals.append([x1 / 640.0, y1 / 640.0, x2 / 640.0, y2 / 640.0, score])
+                landmarks_list.append(lm)
+
+        if not proposals:
+            return []
+
+        proposals_arr = np.array(proposals)
+        scores = proposals_arr[:, 4]
+        boxes = proposals_arr[:, :4]
+        indexes = np.argsort(scores)
+        picked_indices = []
+
+        while len(indexes) > 0:
+            current = indexes[-1]
+            picked_indices.append(current)
+            if len(indexes) == 1:
+                break
+            indexes = indexes[:-1]
+            rest_boxes = boxes[indexes, :]
+            cur_box = boxes[current, :]
+
+            x1 = np.maximum(rest_boxes[:, 0], cur_box[0])
+            y1 = np.maximum(rest_boxes[:, 1], cur_box[1])
+            x2 = np.minimum(rest_boxes[:, 2], cur_box[2])
+            y2 = np.minimum(rest_boxes[:, 3], cur_box[3])
+
+            w_int = np.maximum(0.0, x2 - x1)
+            h_int = np.maximum(0.0, y2 - y1)
+            intersection = w_int * h_int
+
+            area_current = (cur_box[2] - cur_box[0]) * (cur_box[3] - cur_box[1])
+            area_rest = (rest_boxes[:, 2] - rest_boxes[:, 0]) * (rest_boxes[:, 3] - rest_boxes[:, 1])
+            iou = intersection / np.maximum(area_rest + area_current - intersection, 1e-6)
+            indexes = indexes[iou <= 0.35]
+
+        results = []
+        for idx in picked_indices:
+            p = proposals_arr[idx]
+            bx = float(np.clip(p[0], 0.0, 1.0))
+            by = float(np.clip(p[1], 0.0, 1.0))
+            bw = float(np.clip(p[2] - bx, 0.015, 1.0 - bx))
+            bh = float(np.clip(p[3] - by, 0.015, 1.0 - by))
+
+            # Reject boxes with unviable aspect ratio (non-faces)
+            aspect = (bw * orig_w) / max(bh * orig_h, 1.0)
+            if aspect < 0.40 or aspect > 2.0:
+                continue
+
+            results.append({
+                "box_x": round(bx, 4),
+                "box_y": round(by, 4),
+                "box_w": round(bw, 4),
+                "box_h": round(bh, 4),
+                "confidence": round(float(p[4]), 3),
+                "landmarks": landmarks_list[idx]
+            })
+
+        return results
+    except Exception as e:
+        logger.error(f"SCRFD detection error: {e}")
+        return []
+
+def detect_faces_ultraface(img_rgb: Image.Image, conf_threshold: float = 0.70) -> List[Dict[str, Any]]:
+    """Fallback UltraFace RFB-320 detector."""
+    sess = get_detector_session()
+    if sess is None:
+        return []
+    try:
+        orig_w, orig_h = img_rgb.size
+        resized = img_rgb.resize((320, 240))
         arr = np.array(resized).astype('float32')
         arr = (arr - 127.0) / 128.0
         arr = np.transpose(arr, (2, 0, 1))
@@ -198,36 +369,66 @@ def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.75, min_si
             x1, y1, x2, y2, conf = row
             if conf < conf_threshold:
                 continue
-
             bx = float(np.clip(x1, 0.0, 1.0))
             by = float(np.clip(y1, 0.0, 1.0))
-            bw = float(np.clip(x2 - bx, 0.01, 1.0 - bx))
-            bh = float(np.clip(y2 - by, 0.01, 1.0 - by))
-
-            # 1. Pixel dimension and relative dimension validation
-            pixel_w = bw * orig_w
-            pixel_h = bh * orig_h
-            if pixel_w < min_size or pixel_h < min_size:
-                continue
-            if bw < 0.030 or bh < 0.030:
-                continue
-
-            # 2. Pixel aspect ratio validation: human faces are roughly 0.48 <= w/h <= 1.48
-            pixel_aspect = pixel_w / max(pixel_h, 1.0)
-            if pixel_aspect < 0.48 or pixel_aspect > 1.48:
-                continue
-
+            bw = float(np.clip(x2 - bx, 0.015, 1.0 - bx))
+            bh = float(np.clip(y2 - by, 0.015, 1.0 - by))
             results.append({
                 "box_x": round(bx, 4),
                 "box_y": round(by, 4),
                 "box_w": round(bw, 4),
                 "box_h": round(bh, 4),
-                "confidence": round(float(conf), 3)
+                "confidence": round(float(conf), 3),
+                "landmarks": None
             })
         return results
     except Exception as e:
-        logger.error(f"Face detection failed: {e}")
+        logger.error(f"UltraFace fallback failed: {e}")
         return []
+
+def align_face_crop(img: Image.Image, landmarks_norm: np.ndarray, output_size=(112, 112)) -> Optional[Image.Image]:
+    """
+    Warps and aligns face crop to standard ArcFace reference template using 5-point facial landmarks.
+    Template coordinates: Left eye, Right eye, Nose tip, Left mouth corner, Right mouth corner.
+    """
+    try:
+        import cv2
+        W, H = img.size
+        src_pts = (landmarks_norm * np.array([W, H], dtype=np.float32)).astype(np.float32)
+        dst_pts = np.array([
+            [38.2946, 51.6963],
+            [73.5318, 51.5014],
+            [56.0252, 71.7366],
+            [41.5493, 92.3655],
+            [70.7299, 92.2041]
+        ], dtype=np.float32)
+
+        M, _ = cv2.estimateAffinePartial2D(src_pts, dst_pts)
+        if M is not None:
+            img_np = np.array(img.convert("RGB"))
+            warped = cv2.warpAffine(img_np, M, output_size, borderMode=cv2.BORDER_REFLECT)
+            return Image.fromarray(warped)
+    except Exception as e:
+        logger.debug(f"Affine alignment error: {e}")
+    return None
+
+def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.50) -> List[Dict[str, Any]]:
+    """Runs state-of-the-art SCRFD detector, with automatic fallback to UltraFace."""
+    if isinstance(image_input, Image.Image):
+        img_rgb = image_input.convert('RGB')
+    elif isinstance(image_input, str) and os.path.exists(image_input):
+        with Image.open(image_input) as img:
+            img_rgb = img.convert('RGB')
+    else:
+        return []
+
+    # 1. Primary: SCRFD 500M (multi-scale with 5 facial landmarks)
+    scrfd_results = detect_faces_scrfd(img_rgb, conf_threshold=conf_threshold)
+    if scrfd_results:
+        return scrfd_results
+
+    # 2. Fallback: UltraFace RFB-320
+    return detect_faces_ultraface(img_rgb, conf_threshold=max(0.65, conf_threshold))
 
 def extract_arcface_embedding(face_crop: Image.Image) -> Optional[np.ndarray]:
     """Computes a 512-dimensional L2-normalized biometric face embedding using ArcFace."""
@@ -241,16 +442,21 @@ def extract_arcface_embedding(face_crop: Image.Image) -> Optional[np.ndarray]:
         crop_112 = face_crop.convert("RGB").resize((112, 112), Image.Resampling.LANCZOS)
         arr = np.array(crop_112).astype("float32")
         arr = (arr - 127.5) / 128.0
+
+        # Handle NCHW vs NHWC input dynamically
+        inputs = sess.get_inputs()
+        inp_name = inputs[0].name
+        if len(inputs[0].shape) == 4 and inputs[0].shape[1] == 3:
+            arr = np.transpose(arr, (2, 0, 1))
         arr = np.expand_dims(arr, axis=0)
 
-        output = sess.run(None, {"input_1": arr})[0]
+        output = sess.run(None, {inp_name: arr})[0]
         raw_embedding = output[0]
         norm = float(np.linalg.norm(raw_embedding))
 
-        # Texture artifact rejection: on genuine human faces, ArcFace raw norm is between 1.8 and 6.0.
-        # Water ripples, rocks, ground noise, and foliage produce saturated norms > 6.5.
-        if norm < 1.5 or norm > 6.5:
-            logger.debug(f"Rejected non-face crop with abnormal ArcFace activation norm: {norm:.2f}")
+        # Rejection of zero, NaN, or completely degraded activations
+        if norm < 0.1 or np.isnan(norm):
+            logger.debug(f"Rejected crop with abnormal ArcFace activation norm: {norm:.2f}")
             return None
 
         embedding = raw_embedding / norm
@@ -342,21 +548,32 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
         updated = False
         img = None
         for f in existing:
+            # Skip pet faces from ArcFace biometric embedding
+            if f.person and f.person.is_pet:
+                continue
             if not f.embedding_str:
                 if img is None:
                     img = load_media_image(media, db)
                 if img:
-                    W, H = img.size
-                    cx = int((f.box_x + f.box_w / 2.0) * W)
-                    cy = int((f.box_y + f.box_h / 2.0) * H)
-                    half = int(max(f.box_w * W, f.box_h * H) * 0.65)
-                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    crop = None
+                    if getattr(f, "landmarks_str", None):
+                        try:
+                            lms = np.array([[float(c) for c in pt.split(":")] for pt in f.landmarks_str.split(",")])
+                            crop = align_face_crop(img, lms)
+                        except Exception:
+                            crop = None
+                    if crop is None:
+                        W, H = img.size
+                        cx = int((f.box_x + f.box_w / 2.0) * W)
+                        cy = int((f.box_y + f.box_h / 2.0) * H)
+                        half = int(max(f.box_w * W, f.box_h * H) * 0.65)
+                        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
                     emb = extract_arcface_embedding(crop)
                     if emb is not None:
                         f.embedding_str = ",".join(f"{x:.5f}" for x in emb)
                         updated = True
-        if updated:
-            db.commit()
+        media.faces_scanned = True
+        db.commit()
         return existing
 
     if existing and overwrite:
@@ -366,6 +583,8 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
 
     img = load_media_image(media, db)
     if img is None:
+        media.faces_scanned = True
+        db.commit()
         return []
 
     W, H = img.size
@@ -373,22 +592,29 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
     created_detections = []
 
     for d in detected:
-        # Extract crop for ArcFace 512-d embedding
-        cx = int((d["box_x"] + d["box_w"] / 2.0) * W)
-        cy = int((d["box_y"] + d["box_h"] / 2.0) * H)
-        half = int(max(d["box_w"] * W, d["box_h"] * H) * 0.65)
-        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+        crop = None
+        landmarks_str = None
+        if d.get("landmarks") is not None:
+            try:
+                lms = d["landmarks"]
+                landmarks_str = ",".join(f"{pt[0]:.4f}:{pt[1]:.4f}" for pt in lms)
+                crop = align_face_crop(img, lms)
+            except Exception as e:
+                logger.debug(f"Failed to align crop: {e}")
+                crop = None
+
+        if crop is None:
+            cx = int((d["box_x"] + d["box_w"] / 2.0) * W)
+            cy = int((d["box_y"] + d["box_h"] / 2.0) * H)
+            half = int(max(d["box_w"] * W, d["box_h"] * H) * 0.65)
+            crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
         
         # Verify crop size and ArcFace validation
-        if crop.width < 45 or crop.height < 45:
+        if crop.width < 35 or crop.height < 35:
             continue
 
         emb = extract_arcface_embedding(crop)
-        # If crop is not a genuine human face (rejected by ArcFace norm), do not save it!
-        if emb is None:
-            continue
-
-        emb_str = ",".join(f"{x:.5f}" for x in emb)
+        emb_str = ",".join(f"{x:.5f}" for x in emb) if emb is not None else None
 
         face = FaceDetection(
             media_id=media.id,
@@ -398,7 +624,8 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
             box_w=d["box_w"],
             box_h=d["box_h"],
             confidence=d["confidence"],
-            embedding_str=emb_str
+            embedding_str=emb_str,
+            landmarks_str=landmarks_str
         )
         db.add(face)
         created_detections.append(face)
@@ -435,10 +662,10 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
         db.add(pet_face)
         created_detections.append(pet_face)
 
-    if created_detections:
-        db.commit()
-        for f in created_detections:
-            db.refresh(f)
+    media.faces_scanned = True
+    db.commit()
+    for f in created_detections:
+        db.refresh(f)
 
     return created_detections
 
@@ -482,34 +709,50 @@ def is_user_named(name: Optional[str]) -> bool:
         return False
     return True
 
-def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_threshold: float = 0.45) -> Dict[str, Any]:
+def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_threshold: float = 0.48) -> Dict[str, Any]:
     """
     Intelligently clusters face crops using ArcFace 512-d Biometric Cosine Similarity with Anchor Retention.
     Guarantees:
     1. ZERO SHUFFLE: Faces already assigned to user-named people (like 'Mom') are NEVER reassigned.
     2. SMART RECOGNITION: Computes ArcFace centroid embeddings for named people and recruits matching faces.
-    3. High-precision ArcFace threshold: 0.45 cosine similarity.
+    3. COHESIVE CLUSTERING: Leader-Centroid matching eliminates false-positive chaining drift.
+    4. NOISE REDUCTION: Isolated 1-photo background stranger faces stay unassigned without polluting People gallery.
     """
-    faces_query = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(Media.is_deleted == False)
-    if user_id:
-        faces_query = faces_query.filter(Media.user_id == user_id)
+    if user_id is None:
+        media_user = db.query(Media.user_id).filter(Media.user_id != None).first()
+        user_id = media_user[0] if media_user else 1
+
+    faces_query = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(
+        Media.is_deleted == False,
+        (Media.user_id == user_id) | (Media.user_id == None)
+    )
     faces = faces_query.all()
 
     if not faces:
         return {"status": "no_faces", "created_people": 0, "assigned_faces": 0}
 
-    # Ensure all faces have ArcFace embeddings
+    # Ensure all human faces have ArcFace embeddings (skip pets)
     for f in faces:
+        if f.person and f.person.is_pet:
+            continue
         if not f.embedding_str:
             media = db.query(Media).filter(Media.id == f.media_id).first()
             if media:
                 img = load_media_image(media, db)
                 if img:
-                    W, H = img.size
-                    cx = int((f.box_x + f.box_w / 2.0) * W)
-                    cy = int((f.box_y + f.box_h / 2.0) * H)
-                    half = int(max(f.box_w * W, f.box_h * H) * 0.65)
-                    crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
+                    crop = None
+                    if getattr(f, "landmarks_str", None):
+                        try:
+                            lms = np.array([[float(c) for c in pt.split(":")] for pt in f.landmarks_str.split(",")])
+                            crop = align_face_crop(img, lms)
+                        except Exception:
+                            crop = None
+                    if crop is None:
+                        W, H = img.size
+                        cx = int((f.box_x + f.box_w / 2.0) * W)
+                        cy = int((f.box_y + f.box_h / 2.0) * H)
+                        half = int(max(f.box_w * W, f.box_h * H) * 0.65)
+                        crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
                     emb = extract_arcface_embedding(crop)
                     if emb is not None:
                         f.embedding_str = ",".join(f"{x:.5f}" for x in emb)
@@ -519,7 +762,7 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
     valid_faces = []
     embs_list = []
     for f in faces:
-        if f.embedding_str:
+        if f.embedding_str and not (f.person and f.person.is_pet):
             try:
                 vec = np.array([float(x) for x in f.embedding_str.split(",")], dtype=np.float32)
                 norm = np.linalg.norm(vec)
@@ -535,7 +778,7 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
 
     embeddings = np.array(embs_list)
 
-    # 1. User-Named People & Centroids
+    # 1. User-Named People & Centroids (Anchor Retention)
     people_query = db.query(Person)
     if user_id:
         people_query = people_query.filter(Person.user_id == user_id)
@@ -580,7 +823,7 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
             assigned_indices.add(i)
             newly_matched_to_named += 1
 
-    # 3. Cluster Remaining Unassigned Faces
+    # 3. Cluster Remaining Unassigned Faces with Leader-Centroid Matching
     rem_indices = [
         i for i, f in enumerate(valid_faces)
         if f.id not in locked_face_ids and i not in assigned_indices
@@ -590,26 +833,27 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
     assigned_faces_count = newly_matched_to_named
 
     if rem_indices:
-        rem_embs = embeddings[rem_indices]
-        sim_matrix = np.dot(rem_embs, rem_embs.T)
-
-        visited = set()
         clusters = []
-        for r_i in range(len(rem_indices)):
-            if r_i in visited:
-                continue
-            cluster = [rem_indices[r_i]]
-            visited.add(r_i)
-            for r_j in range(r_i + 1, len(rem_indices)):
-                if r_j in visited:
-                    continue
-                if sim_matrix[r_i, r_j] >= (similarity_threshold + 0.05):
-                    cluster.append(rem_indices[r_j])
-                    visited.add(r_j)
-            if len(cluster) >= 2 or len(valid_faces) < 10:
-                clusters.append(cluster)
+        cluster_centroids = []
 
-        clusters.sort(key=len, reverse=True)
+        for r_i in rem_indices:
+            face_emb = embeddings[r_i]
+            best_sim = -1.0
+            best_c_idx = -1
+            for c_idx, c_centroid in enumerate(cluster_centroids):
+                sim = float(np.dot(face_emb, c_centroid))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_c_idx = c_idx
+
+            if best_sim >= (similarity_threshold + 0.02) and best_c_idx >= 0:
+                clusters[best_c_idx].append(r_i)
+                c_embs = embeddings[clusters[best_c_idx]]
+                new_c = np.mean(c_embs, axis=0)
+                cluster_centroids[best_c_idx] = new_c / max(float(np.linalg.norm(new_c)), 1e-6)
+            else:
+                clusters.append([r_i])
+                cluster_centroids.append(face_emb.copy())
 
         # Clean up empty unnamed person records before allocating clusters
         all_unnamed = (
@@ -627,6 +871,7 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
                     db.delete(p)
         db.commit()
 
+        # Find available Person numbers
         existing_numbers = []
         for p in people_query.all():
             if p.name.startswith("Person "):
@@ -636,7 +881,12 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
                     pass
         next_num = (max(existing_numbers) + 1) if existing_numbers else 1
 
-        for cluster in clusters:
+        # Multi-face clusters (or singletons if library has < 5 total faces) become Person profiles
+        min_cluster_size = 2 if len(valid_faces) >= 5 else 1
+        viable_clusters = [c for c in clusters if len(c) >= min_cluster_size]
+        viable_clusters.sort(key=len, reverse=True)
+
+        for cluster in viable_clusters:
             person = Person(user_id=user_id, name=f"Person {next_num}")
             next_num += 1
             db.add(person)
@@ -687,10 +937,12 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
     }
 
 def index_all_library_faces(db: Session, user_id: Optional[int] = None, max_photos: int = 250) -> Dict[str, Any]:
-    """Scans user library photos, detects faces with UltraFace and computes ArcFace 512-d embeddings."""
+    """Scans user library photos, detects faces with SCRFD 500M (InsightFace) and computes ArcFace 512-d embeddings."""
+    ensure_models()
     query = db.query(Media).filter(
         Media.is_deleted == False,
-        (Media.mime_type == None) | (~Media.mime_type.startswith("video/"))
+        (Media.mime_type == None) | (~Media.mime_type.startswith("video/")),
+        (Media.faces_scanned == False) | (Media.faces_scanned == None)
     )
     if user_id:
         query = query.filter(Media.user_id == user_id)
@@ -700,11 +952,9 @@ def index_all_library_faces(db: Session, user_id: Optional[int] = None, max_phot
     photos_processed = 0
 
     for photo in photos:
-        has_faces = db.query(FaceDetection).filter(FaceDetection.media_id == photo.id).first()
-        if not has_faces:
-            detections = process_faces_for_media(db, photo)
-            total_detected += len(detections)
-            photos_processed += 1
+        detections = process_faces_for_media(db, photo)
+        total_detected += len(detections)
+        photos_processed += 1
 
     return {
         "status": "completed",
