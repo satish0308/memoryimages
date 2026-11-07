@@ -880,24 +880,26 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
 
         for r_i in rem_indices:
             face_emb = embeddings[r_i]
-            best_sim = -1.0
-            best_c_idx = -1
-            for c_idx, c_centroid in enumerate(cluster_centroids):
-                sim = float(np.dot(face_emb, c_centroid))
-                if sim > best_sim:
-                    best_sim = sim
-                    best_c_idx = c_idx
+            if not cluster_centroids:
+                clusters.append([r_i])
+                cluster_centroids.append(face_emb.copy())
+                continue
 
-            if best_sim >= (similarity_threshold + 0.02) and best_c_idx >= 0:
+            c_matrix = np.array(cluster_centroids)
+            sims = np.dot(c_matrix, face_emb)
+            best_c_idx = int(np.argmax(sims))
+            best_sim = float(sims[best_c_idx])
+
+            if best_sim >= (similarity_threshold + 0.02):
                 clusters[best_c_idx].append(r_i)
-                c_embs = embeddings[clusters[best_c_idx]]
-                new_c = np.mean(c_embs, axis=0)
+                k = len(clusters[best_c_idx])
+                new_c = cluster_centroids[best_c_idx] * ((k - 1) / k) + face_emb * (1 / k)
                 cluster_centroids[best_c_idx] = new_c / max(float(np.linalg.norm(new_c)), 1e-6)
             else:
                 clusters.append([r_i])
                 cluster_centroids.append(face_emb.copy())
 
-        # Clean up empty unnamed person records before allocating clusters
+        # Clean up empty unnamed person records before allocating clusters (1 bulk query)
         all_unnamed = (
             db.query(Person)
             .filter(
@@ -906,12 +908,15 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
             )
             .all()
         )
-        for p in all_unnamed:
-            if not is_user_named(p.name):
-                fc = db.query(FaceDetection).filter(FaceDetection.person_id == p.id).count()
-                if fc == 0:
-                    db.delete(p)
-        db.commit()
+        active_pids = set(
+            pid for (pid,) in db.query(FaceDetection.person_id).filter(FaceDetection.person_id != None).distinct()
+        )
+        unnamed_pids_to_del = [
+            p.id for p in all_unnamed if not is_user_named(p.name) and p.id not in active_pids
+        ]
+        if unnamed_pids_to_del:
+            db.query(Person).filter(Person.id.in_(unnamed_pids_to_del)).delete(synchronize_session=False)
+            db.commit()
 
         # Find available Person numbers
         existing_numbers = []
@@ -932,8 +937,7 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
             person = Person(user_id=user_id, name=f"Person {next_num}")
             next_num += 1
             db.add(person)
-            db.commit()
-            db.refresh(person)
+            db.flush()  # Flushes person.id in memory without disk commit stalls
             created_people_count += 1
 
             for idx in cluster:
@@ -942,8 +946,13 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
                 f.cluster_id = person.id
                 assigned_faces_count += 1
 
-        # Final purge of empty unnamed person records
-        all_unnamed = (
+        db.commit()
+
+        # Final purge of empty unnamed person records (1 bulk query)
+        active_pids = set(
+            pid for (pid,) in db.query(FaceDetection.person_id).filter(FaceDetection.person_id != None).distinct()
+        )
+        all_unnamed_fresh = (
             db.query(Person)
             .filter(
                 Person.user_id == user_id if user_id else True,
@@ -951,21 +960,26 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
             )
             .all()
         )
-        for p in all_unnamed:
-            if not is_user_named(p.name):
-                fc = db.query(FaceDetection).filter(FaceDetection.person_id == p.id).count()
-                if fc == 0:
-                    db.delete(p)
-        db.commit()
+        unnamed_pids_to_del2 = [
+            p.id for p in all_unnamed_fresh if not is_user_named(p.name) and p.id not in active_pids
+        ]
+        if unnamed_pids_to_del2:
+            db.query(Person).filter(Person.id.in_(unnamed_pids_to_del2)).delete(synchronize_session=False)
+            db.commit()
 
         # Sequentially renumber remaining unnamed people
         remaining_unnamed = [
             p for p in db.query(Person).filter(Person.user_id == user_id if user_id else True, Person.is_pet == False).order_by(Person.id.asc()).all()
             if not is_user_named(p.name)
         ]
+        renumbered = False
         for idx, p in enumerate(remaining_unnamed, start=1):
-            p.name = f"Person {idx}"
-        db.commit()
+            expected = f"Person {idx}"
+            if p.name != expected:
+                p.name = expected
+                renumbered = True
+        if renumbered:
+            db.commit()
 
     db.commit()
 

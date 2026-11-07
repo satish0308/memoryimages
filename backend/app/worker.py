@@ -204,11 +204,17 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 message=f"Scanned {i + 1}/{total} ({pct}%): {detected_faces} faces found ({filename})"
             )
 
-        # Automatically cluster newly detected faces into People
-        try:
-            auto_cluster_faces(db, user_id=user_id)
-        except Exception as e:
-            logger.warning(f"Post-detection face clustering notice: {e}")
+        # Enqueue face clustering as a separate task so detection finishes immediately
+        if detected_faces > 0:
+            try:
+                TaskQueue.enqueue(
+                    task_type="face_cluster_all",
+                    payload={"user_id": user_id},
+                    name="Vision Person Face Clustering"
+                )
+                logger.info(f"Enqueued face clustering task after detecting {detected_faces} faces.")
+            except Exception as e:
+                logger.warning(f"Notice auto-enqueuing face clustering: {e}")
 
         return {"photos_scanned": total, "faces_detected": detected_faces, "photos_with_faces": photos_with_faces}
 
@@ -219,12 +225,17 @@ def run_face_clustering(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
 
     TaskQueue.update_task(
         task_id,
-        progress=20,
-        message="Computing vision embeddings for detected face crops..."
+        progress=25,
+        message="Computing facial embeddings & centroids for detected faces..."
     )
 
     user_id = payload.get("user_id") if payload else None
     with SessionLocal() as db:
+        TaskQueue.update_task(
+            task_id,
+            progress=50,
+            message="Clustering biometrics into people profiles..."
+        )
         res = auto_cluster_faces(db, user_id=user_id)
         
         TaskQueue.update_task(
@@ -563,6 +574,22 @@ def main():
 
     # Initialize database tables
     Base.metadata.create_all(bind=engine)
+
+    # Reconcile any orphaned 'running' tasks from prior crashed/restarted worker runs
+    try:
+        r_init = get_redis_client()
+        if r_init:
+            from app.services.task_queue import TASK_QUEUE_KEY, TASK_DATA_PREFIX
+            queue_ids = r_init.lrange(TASK_QUEUE_KEY, 0, -1)
+            for q_id in queue_ids:
+                raw = r_init.get(f"{TASK_DATA_PREFIX}{q_id}")
+                if raw:
+                    t = json.loads(raw)
+                    if t.get("status") == "running":
+                        TaskQueue.update_task(q_id, status="failed", message="Interrupted by worker container restart.")
+            r_init.close()
+    except Exception as e:
+        logger.debug(f"Startup task reconciliation notice: {e}")
 
     redis_retry_delay = 2
     r = None
