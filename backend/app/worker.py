@@ -228,12 +228,14 @@ def run_media_scan(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     def on_progress(current, total, pct, filename, added):
         if _should_exit or TaskQueue.is_cancelled(task_id):
             return
+        msg = f"Scanning {current}/{total} ({pct}%): +{added} new ({filename})"
+        logger.info(f"[Scan Progress] {msg}")
         TaskQueue.update_task(
             task_id,
             progress=pct,
             current_step=current,
             total_steps=total,
-            message=f"Scanning {current}/{total} ({pct}%): +{added} new ({filename})"
+            message=msg
         )
 
     with SessionLocal() as db:
