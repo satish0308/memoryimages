@@ -2,9 +2,11 @@ import os
 import logging
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 
 from app.config import settings
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.services.database_service import (
     get_database_status,
     ensure_pgvector_hnsw_index,
@@ -26,20 +28,27 @@ class SwitchDialectRequest(BaseModel):
     target: str  # "postgresql" or "sqlite"
 
 @router.get("/status")
-def get_db_status():
+def get_db_status(current_user: User = Depends(get_current_user)):
     """Returns telemetry on current database engine, pgvector status, and table counts."""
     return get_database_status()
 
 @router.post("/test-connection")
-def test_postgres_connection(req: TestConnectionRequest = TestConnectionRequest()):
+def test_postgres_connection(
+    req: TestConnectionRequest = TestConnectionRequest(),
+    current_user: User = Depends(get_current_user)
+):
     """Tests connection to PostgreSQL and verifies pgvector extension."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     target_url = req.url or settings.POSTGRES_URL
     res = check_postgres_availability(target_url)
     return res
 
 @router.post("/create-hnsw-index")
-def create_hnsw_index():
+def create_hnsw_index(current_user: User = Depends(get_current_user)):
     """Creates/rebuilds HNSW cosine index on PostgreSQL for sub-10ms CLIP vector queries."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     from app.database import is_postgres
     if not is_postgres:
         raise HTTPException(
@@ -52,22 +61,32 @@ def create_hnsw_index():
     return {"message": "HNSW vector index created successfully", "details": res}
 
 @router.post("/migrate")
-def trigger_database_migration(req: MigrateRequest = MigrateRequest()):
+def trigger_database_migration(
+    req: MigrateRequest = MigrateRequest(),
+    current_user: User = Depends(get_current_user)
+):
     """
     Executes a zero-downtime data migration between SQLite and PostgreSQL.
     Converts binary embedding buffers into native pgvector vector(512) arrays.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     res = migrate_database(source_url=req.source_url, target_url=req.target_url)
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("error", "Migration failed"))
     return res
 
 @router.post("/switch-engine")
-def switch_engine_config(req: SwitchDialectRequest):
+def switch_engine_config(
+    req: SwitchDialectRequest,
+    current_user: User = Depends(get_current_user)
+):
     """
     Updates the DATABASE_URL in the runtime environment / .env file.
     Returns status and instructions for container reload.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     target = req.target.lower().strip()
     if target not in ["postgresql", "sqlite"]:
         raise HTTPException(status_code=400, detail="Target must be 'postgresql' or 'sqlite'")

@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.services.settings_service import (
     get_all_settings,
     set_setting,
@@ -36,8 +38,14 @@ def get_settings(db: Session = Depends(get_db)):
     return get_all_settings(db)
 
 @router.put("")
-def update_settings(req: UpdateSettingsRequest, db: Session = Depends(get_db)):
+def update_settings(
+    req: UpdateSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Updates storage policy, CDN toggles, and memory limits."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     # Safety constraint: switching to local_disk requires local_storage_approved to be true
     if req.storage_mode == "local_disk":
         currently_approved = req.local_storage_approved if req.local_storage_approved is not None else is_local_storage_approved(db)
@@ -73,11 +81,17 @@ def update_settings(req: UpdateSettingsRequest, db: Session = Depends(get_db)):
     }
 
 @router.post("/approve-local-storage")
-def set_local_storage_approval(req: ApprovalRequest, db: Session = Depends(get_db)):
+def set_local_storage_approval(
+    req: ApprovalRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Explicit authorization endpoint to approve or revoke local storage and directory creation.
     Requires text confirmation for approval.
     """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin authorization required")
     if req.approved:
         if req.confirmation.strip().lower() != "i approve local disk storage":
             raise HTTPException(
@@ -96,7 +110,11 @@ def set_local_storage_approval(req: ApprovalRequest, db: Session = Depends(get_d
     }
 
 @router.post("/clear-cache")
-def clear_application_cache(req: ClearCacheRequest, db: Session = Depends(get_db)):
+def clear_application_cache(
+    req: ClearCacheRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Purges in-memory stream buffer cache and/or generated local WebP thumbnails.
     Original photos are strictly preserved (zero auto-deletion policy).

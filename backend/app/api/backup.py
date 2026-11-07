@@ -5,6 +5,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.services.backup_service import (
     create_wal_backup,
     list_backups,
@@ -27,13 +29,14 @@ class ScheduleUpdateRequest(BaseModel):
     retention_count: int = 7
 
 @router.get("")
-def get_backups():
+def get_backups(current_user: User = Depends(get_current_user)):
     """Lists all available database backup snapshots with verification metadata."""
     return list_backups()
 
 @router.post("")
 def trigger_backup(
     req: Optional[BackupCreateRequest] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -48,12 +51,15 @@ def trigger_backup(
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
 @router.get("/schedule")
-def get_backup_schedule():
+def get_backup_schedule(current_user: User = Depends(get_current_user)):
     """Returns automated backup schedule configuration."""
     return get_schedule_settings()
 
 @router.post("/schedule")
-def set_backup_schedule(req: ScheduleUpdateRequest):
+def set_backup_schedule(
+    req: ScheduleUpdateRequest,
+    current_user: User = Depends(get_current_user)
+):
     """Updates automated backup schedule policy and retention limits."""
     return update_schedule_settings(
         auto_backup_enabled=req.auto_backup_enabled,
@@ -62,7 +68,7 @@ def set_backup_schedule(req: ScheduleUpdateRequest):
     )
 
 @router.get("/{filename}/download")
-def download_backup(filename: str):
+def download_backup(filename: str, current_user: User = Depends(get_current_user)):
     """Downloads a backup snapshot archive to the client device."""
     try:
         path = get_backup_path(filename)
@@ -77,7 +83,11 @@ def download_backup(filename: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/{filename}/restore")
-def restore_snapshot(filename: str, db: Session = Depends(get_db)):
+def restore_snapshot(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Performs point-in-time database restoration from a verified snapshot.
     Automatically creates a pre-restore safety snapshot before applying.
@@ -95,6 +105,7 @@ def restore_snapshot(filename: str, db: Session = Depends(get_db)):
 @router.post("/upload")
 async def upload_and_restore(
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -114,7 +125,7 @@ async def upload_and_restore(
         raise HTTPException(status_code=500, detail=f"Upload restore failed: {str(e)}")
 
 @router.delete("/{filename}")
-def delete_snapshot(filename: str):
+def delete_snapshot(filename: str, current_user: User = Depends(get_current_user)):
     """Permanently removes a backup snapshot archive."""
     try:
         deleted = delete_backup(filename)

@@ -169,69 +169,84 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
 
     try:
         # 1. Users
-        for u in src_db.query(User).all():
-            if not tgt_db.query(User).filter(User.id == u.id).first():
-                tgt_db.add(clone_record(u))
-                stats["users"] += 1
-        tgt_db.commit()
+        existing_user_ids = set(r[0] for r in tgt_db.query(User.id).all())
+        new_users = [clone_record(u) for u in src_db.query(User).all() if u.id not in existing_user_ids]
+        if new_users:
+            tgt_db.add_all(new_users)
+            stats["users"] = len(new_users)
+            tgt_db.commit()
 
         # 2. Sync Sources
-        for s in src_db.query(SyncSource).all():
-            if not tgt_db.query(SyncSource).filter(SyncSource.id == s.id).first():
-                tgt_db.add(clone_record(s))
-                stats["sync_sources"] += 1
-        tgt_db.commit()
+        existing_sync_ids = set(r[0] for r in tgt_db.query(SyncSource.id).all())
+        new_sync = [clone_record(s) for s in src_db.query(SyncSource).all() if s.id not in existing_sync_ids]
+        if new_sync:
+            tgt_db.add_all(new_sync)
+            stats["sync_sources"] = len(new_sync)
+            tgt_db.commit()
 
         # 3. People
-        for p in src_db.query(Person).all():
-            if not tgt_db.query(Person).filter(Person.id == p.id).first():
-                tgt_db.add(clone_record(p))
-                stats["people"] += 1
-        tgt_db.commit()
+        existing_people_ids = set(r[0] for r in tgt_db.query(Person.id).all())
+        new_people = [clone_record(p) for p in src_db.query(Person).all() if p.id not in existing_people_ids]
+        if new_people:
+            tgt_db.add_all(new_people)
+            stats["people"] = len(new_people)
+            tgt_db.commit()
 
-        # 4. Media (must precede Albums and FaceDetections due to foreign keys)
+        # 4. Media (bulk chunks of 1000, eliminating 25,000+ individual roundtrips)
+        existing_media_ids = set(r[0] for r in tgt_db.query(Media.id).all())
+        media_batch = []
         for m in src_db.query(Media).all():
-            if not tgt_db.query(Media).filter(Media.id == m.id).first():
-                tgt_db.add(clone_record(m))
+            if m.id not in existing_media_ids:
+                media_batch.append(clone_record(m))
                 stats["media"] += 1
-        tgt_db.commit()
+                if len(media_batch) >= 1000:
+                    tgt_db.bulk_save_objects(media_batch)
+                    tgt_db.commit()
+                    media_batch = []
+        if media_batch:
+            tgt_db.bulk_save_objects(media_batch)
+            tgt_db.commit()
 
         # 5. Albums
-        for a in src_db.query(Album).all():
-            if not tgt_db.query(Album).filter(Album.id == a.id).first():
-                tgt_db.add(clone_record(a))
-                stats["albums"] += 1
-        tgt_db.commit()
-
-        # 6. Face Detections
-        for f in src_db.query(FaceDetection).all():
-            if not tgt_db.query(FaceDetection).filter(FaceDetection.id == f.id).first():
-                tgt_db.add(clone_record(f))
-                stats["faces"] += 1
-        tgt_db.commit()
-
-        # 7. Media-Album Associations
-        try:
-            assoc_rows = src_db.execute(album_media.select()).fetchall()
-            for r in assoc_rows:
-                # check if exists
-                existing = tgt_db.execute(
-                    album_media.select().where(
-                        (album_media.c.media_id == r.media_id) & 
-                        (album_media.c.album_id == r.album_id)
-                    )
-                ).fetchone()
-                if not existing:
-                    tgt_db.execute(album_media.insert().values(media_id=r.media_id, album_id=r.album_id))
-                    stats["album_associations"] += 1
+        existing_album_ids = set(r[0] for r in tgt_db.query(Album.id).all())
+        new_albums = [clone_record(a) for a in src_db.query(Album).all() if a.id not in existing_album_ids]
+        if new_albums:
+            tgt_db.add_all(new_albums)
+            stats["albums"] = len(new_albums)
             tgt_db.commit()
+
+        # 6. Face Detections (bulk chunks of 1000)
+        existing_face_ids = set(r[0] for r in tgt_db.query(FaceDetection.id).all())
+        face_batch = []
+        for f in src_db.query(FaceDetection).all():
+            if f.id not in existing_face_ids:
+                face_batch.append(clone_record(f))
+                stats["faces"] += 1
+                if len(face_batch) >= 1000:
+                    tgt_db.bulk_save_objects(face_batch)
+                    tgt_db.commit()
+                    face_batch = []
+        if face_batch:
+            tgt_db.bulk_save_objects(face_batch)
+            tgt_db.commit()
+
+        # 7. Media-Album Associations (bulk set lookup)
+        try:
+            src_assocs = src_db.execute(album_media.select()).fetchall()
+            tgt_assocs = set((r[0], r[1]) for r in tgt_db.execute(album_media.select()).fetchall())
+            to_insert = [{"album_id": r.album_id, "media_id": r.media_id} for r in src_assocs if (r.album_id, r.media_id) not in tgt_assocs]
+            if to_insert:
+                tgt_db.execute(album_media.insert(), to_insert)
+                stats["album_associations"] = len(to_insert)
+                tgt_db.commit()
         except Exception as e:
             logger.warning(f"Error copying album associations: {e}")
 
-        # 8. Media Embeddings (with pgvector array & binary dual populating)
-        embeddings = src_db.query(MediaEmbedding).all()
-        for emb in embeddings:
-            if not tgt_db.query(MediaEmbedding).filter(MediaEmbedding.media_id == emb.media_id).first():
+        # 8. Media Embeddings (with pgvector array & binary dual populating, bulk chunks of 1000)
+        existing_emb_mids = set(r[0] for r in tgt_db.query(MediaEmbedding.media_id).all())
+        emb_batch = []
+        for emb in src_db.query(MediaEmbedding).all():
+            if emb.media_id not in existing_emb_mids:
                 vec_bytes = emb.vector
                 vec_list = None
                 if vec_bytes:
@@ -248,9 +263,15 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
                     embedding=vec_list if tgt_is_postgres else None,
                     created_at=emb.created_at
                 )
-                tgt_db.add(new_emb)
+                emb_batch.append(new_emb)
                 stats["embeddings"] += 1
-        tgt_db.commit()
+                if len(emb_batch) >= 1000:
+                    tgt_db.bulk_save_objects(emb_batch)
+                    tgt_db.commit()
+                    emb_batch = []
+        if emb_batch:
+            tgt_db.bulk_save_objects(emb_batch)
+            tgt_db.commit()
 
         # If target is PostgreSQL, ensure HNSW index is built
         hnsw_res = None

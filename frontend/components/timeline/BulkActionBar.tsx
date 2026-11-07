@@ -77,13 +77,14 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [showHighlightReelModal, setShowHighlightReelModal] = useState(false);
 
   useEffect(() => {
-    if (selectedIds.length > 0) {
+    // Only fetch albums once when selection begins rather than spamming on every photo click
+    if (selectedIds.length > 0 && albums.length === 0) {
       fetch(`${apiUrl}/api/v1/albums`)
         .then((res) => (res.ok ? res.json() : []))
         .then((data) => setAlbums(data))
         .catch((e) => console.error(e));
     }
-  }, [selectedIds.length, apiUrl]);
+  }, [selectedIds.length > 0, albums.length, apiUrl]);
 
   const handleBatchLocation = async (locName: string, lat?: number, lon?: number) => {
     try {

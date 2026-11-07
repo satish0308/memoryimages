@@ -26,7 +26,27 @@ MOOD_DESCRIPTIONS = {
 }
 
 _MOOD_VECTORS: Optional[Dict[str, np.ndarray]] = None
+_MOOD_MATRIX: Optional[Tuple[List[str], np.ndarray]] = None
 _SMILE_VECTORS: Optional[Tuple[np.ndarray, np.ndarray]] = None
+
+def get_mood_matrix() -> Tuple[List[str], np.ndarray]:
+    """Caches normalized 512-dim CLIP text vectors as a stacked matrix for fast BLAS dot product."""
+    global _MOOD_MATRIX
+    if _MOOD_MATRIX is not None:
+        return _MOOD_MATRIX
+
+    moods = []
+    vecs = []
+    for mood, desc in MOOD_DESCRIPTIONS.items():
+        vec = embed_text(desc)
+        if vec is not None:
+            moods.append(mood)
+            vecs.append(vec)
+    if vecs:
+        _MOOD_MATRIX = (moods, np.vstack(vecs))
+    else:
+        _MOOD_MATRIX = ([], np.empty((0, 512)))
+    return _MOOD_MATRIX
 
 def get_mood_vectors() -> Dict[str, np.ndarray]:
     """Caches normalized 512-dim CLIP text vectors for all mood concepts."""
@@ -119,7 +139,7 @@ def detect_face_smile(db: Session, face: FaceDetection, thumb_img: Optional[Imag
         logger.debug(f"Face smile detection error: {e}")
         return False
 
-def analyze_media_mood(db: Session, media: Media) -> Dict[str, Any]:
+def analyze_media_mood(db: Session, media: Media, commit: bool = True) -> Dict[str, Any]:
     """
     Computes emotion, mood, smile, and dominant color for a single media item.
     Updates the Media record in database.
@@ -173,20 +193,16 @@ def analyze_media_mood(db: Session, media: Media) -> Dict[str, Any]:
             db.add(new_emb)
             db.commit()
 
-    # 3. Classify mood via CLIP cosine similarity
+    # 3. Classify mood via vectorized CLIP cosine similarity (1 BLAS matrix dot product)
     top_mood = "serene"
     top_score = 0.20
     if media_vec is not None:
-        mood_vecs = get_mood_vectors()
-        best_mood = None
-        best_score = -1.0
-        for mood_name, m_vec in mood_vecs.items():
-            sim = float(np.dot(media_vec, m_vec))
-            if sim > best_score:
-                best_score = sim
-                best_mood = mood_name
-        if best_mood:
-            top_mood = best_mood
+        mood_names, mood_mat = get_mood_matrix()
+        if len(mood_names) > 0:
+            sims = mood_mat @ media_vec
+            best_idx = int(np.argmax(sims))
+            best_score = float(sims[best_idx])
+            top_mood = mood_names[best_idx]
             top_score = round(max(0.0, best_score), 4)
 
     media.mood = top_mood
@@ -207,7 +223,8 @@ def analyze_media_mood(db: Session, media: Media) -> Dict[str, Any]:
     if is_smiling and top_mood != "joyful" and top_score < 0.28:
         media.mood = "joyful"
 
-    db.commit()
+    if commit:
+        db.commit()
 
     return {
         "media_id": media.id,
@@ -230,10 +247,13 @@ def analyze_all_media_moods(db: Session, limit: int = 200) -> Dict[str, Any]:
     processed_count = 0
     for m in unprocessed:
         try:
-            analyze_media_mood(db, m)
+            analyze_media_mood(db, m, commit=False)
             processed_count += 1
+            if processed_count % 50 == 0:
+                db.commit()
         except Exception as e:
             logger.warning(f"Failed mood analysis for media #{m.id}: {e}")
+    db.commit()
 
     return {
         "processed_count": processed_count,

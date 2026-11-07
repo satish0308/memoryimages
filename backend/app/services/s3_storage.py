@@ -19,9 +19,14 @@ from app.services.thumbnail import calculate_blurriness
 
 logger = logging.getLogger(__name__)
 
+_s3_client_singleton = None
+
 def get_s3_client():
-    """Initializes and returns a configured S3 client for MinIO / S3."""
-    return boto3.client(
+    """Initializes and returns a cached singleton S3 client for MinIO / S3."""
+    global _s3_client_singleton
+    if _s3_client_singleton is not None:
+        return _s3_client_singleton
+    _s3_client_singleton = boto3.client(
         "s3",
         endpoint_url=settings.S3_ENDPOINT_URL,
         aws_access_key_id=settings.S3_ACCESS_KEY_ID,
@@ -29,6 +34,7 @@ def get_s3_client():
         config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         region_name=settings.S3_REGION_NAME
     )
+    return _s3_client_singleton
 
 def ensure_bucket_exists(bucket_name: Optional[str] = None) -> bool:
     """Ensures the target MinIO bucket exists; creates it if missing."""

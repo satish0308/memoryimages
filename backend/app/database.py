@@ -31,13 +31,16 @@ engine = create_engine(
     **engine_kwargs
 )
 
-# Enable WAL mode for SQLite to support concurrent reads and writes
+# Enable WAL mode and optimized concurrency pragmas for SQLite
 if is_sqlite:
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA cache_size=-64000")
+        cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.close()
 
 # Auto-initialize pgvector extension if PostgreSQL is active

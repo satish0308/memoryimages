@@ -23,13 +23,17 @@ MESSAGING_APP_REGEX = re.compile(
 )
 
 # Common mobile screen aspect ratios (width/height or height/width)
+# NOTE: 4/3 and 3/2 are standard camera sensor dimensions and are excluded to avoid false positives on stripped-EXIF camera photos
 SCREEN_RATIOS = [
     16 / 9,      # 1.777 (standard desktop/phones)
-    19.5 / 9,    # 2.166 (iPhone X to 15)
-    20 / 9,      # 2.222 (Modern Android)
-    19 / 9,      # 2.111
-    16 / 10,     # 1.6 (MacBook / tablet)
-    4 / 3,       # 1.333 (iPad)
+    18 / 9,      # 2.000 (standard Android 2:1)
+    18.5 / 9,    # 2.055 (Samsung Infinity Display)
+    19 / 9,      # 2.111 (Modern Android)
+    19.5 / 9,    # 2.166 (iPhone X to 16)
+    20 / 9,      # 2.222 (Modern Android tall screen)
+    20.5 / 9,    # 2.277
+    21 / 9,      # 2.333 (Ultra-tall Sony/Motorola)
+    16 / 10,     # 1.600 (MacBook / tablet screen)
 ]
 
 def is_screen_aspect_ratio(w: int, h: int) -> bool:

@@ -237,10 +237,10 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
 
         relinked_count = 0
         if effective_user_id:
-            # Dynamically ensure all previously ingested drive media is associated with the user
+            # Re-link strictly unassigned drive media to prevent multi-tenant photo theft across user accounts
             relinked = db.query(Media).filter(
                 Media.source_type == SourceType.GOOGLE_DRIVE,
-                (Media.user_id == None) | (Media.user_id != effective_user_id)
+                Media.user_id == None
             ).update({Media.user_id: effective_user_id}, synchronize_session=False)
             if relinked > 0:
                 relinked_count += relinked
@@ -558,19 +558,22 @@ def scan_google_drive_geotags(db: Session, user_id: int, max_photos: int = 2500,
         return None
 
     results = []
-    with ThreadPoolExecutor(max_workers=12) as pool:
+    # Use max_workers=4 to strictly conform to Google Drive 1,000 req/100s quota and prevent 429 errors
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(fetch_gps_header, p.id, p.source_id) for p in photos]
         for fut in futures:
             res = fut.result()
             if res:
                 results.append(res)
 
-    for p_id, lat, lon, loc_name in results:
+    for idx, (p_id, lat, lon, loc_name) in enumerate(results):
         db.query(Media).filter(Media.id == p_id).update({
             "latitude": lat,
             "longitude": lon,
             "location_name": loc_name
-        })
+        }, synchronize_session=False)
+        if (idx + 1) % 50 == 0:
+            db.commit()
     db.commit()
 
     propagated = 0
