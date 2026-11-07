@@ -53,6 +53,41 @@ def embed_image(image_path: str) -> Optional[np.ndarray]:
         logger.error(f"Error embedding image {image_path}: {e}")
         return None
 
+def embed_images_batch(image_paths: List[str]) -> List[Optional[np.ndarray]]:
+    """Generates normalized 512-dim CLIP embedding vectors for a batch of images using FastEmbed parallel SIMD inference."""
+    if not image_paths:
+        return []
+    valid_paths = []
+    index_map = []
+    for i, path in enumerate(image_paths):
+        ext = os.path.splitext(path)[1].lower() if path else ""
+        if path and os.path.isfile(path) and ext not in VIDEO_EXTENSIONS:
+            valid_paths.append(path)
+            index_map.append(i)
+
+    results: List[Optional[np.ndarray]] = [None] * len(image_paths)
+    if not valid_paths:
+        return results
+
+    try:
+        model = get_image_model()
+        raw_embs = list(model.embed(valid_paths))
+        for idx, emb in zip(index_map, raw_embs):
+            vec = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            results[idx] = vec
+        return results
+    except Exception as e:
+        logger.warning(f"Batch embedding fallback to single-item mode: {e}")
+        for i, path in enumerate(image_paths):
+            try:
+                results[i] = embed_image(path)
+            except Exception:
+                results[i] = None
+        return results
+
 def embed_text(text: str) -> Optional[np.ndarray]:
     """Generates a normalized 512-dim CLIP embedding vector for a text query."""
     try:

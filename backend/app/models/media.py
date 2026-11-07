@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum, ForeignKey, Text, LargeBinary
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum, ForeignKey, Text, LargeBinary, Index
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -20,6 +20,9 @@ class SourceType(str, enum.Enum):
 
 class Media(Base):
     __tablename__ = "media"
+    __table_args__ = (
+        Index("ix_media_timeline_composite", "user_id", "is_deleted", "is_archived", "captured_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)

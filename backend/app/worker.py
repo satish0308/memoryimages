@@ -40,7 +40,7 @@ signal.signal(signal.SIGTERM, handle_exit_signal)
 def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Generates CLIP ViT-B/32 multimodal vectors for all unindexed photos with step-by-step progress."""
     from app.models.media import Media, MediaEmbedding
-    from app.services.clip_engine import get_image_model, embed_image
+    from app.services.clip_engine import get_image_model, embed_image, embed_images_batch
     import numpy as np
 
     with SessionLocal() as db:
@@ -65,60 +65,72 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             total_steps=total,
             current_step=0,
             progress=0,
-            message=f"Starting CLIP indexing for {total} photos..."
+            message=f"Starting batch CLIP indexing for {total} photos..."
         )
 
         model = get_image_model()
         indexed_count = 0
+        BATCH_SIZE = 32
 
-        for i, item in enumerate(unindexed):
+        for chunk_start in range(0, total, BATCH_SIZE):
             if _should_exit or TaskQueue.is_cancelled(task_id):
                 logger.info(f"Task {task_id} cancelled during CLIP indexing.")
                 return {"indexed_count": indexed_count, "cancelled": True}
 
-            filename = item.filename or f"Photo #{item.id}"
-            pct = int(((i + 1) / total) * 100)
+            chunk_items = unindexed[chunk_start:chunk_start + BATCH_SIZE]
+            batch_paths = []
+            batch_media = []
 
-            # Determine best available image path or thumbnail
-            target_path = None
-            is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
-                item.original_path and os.path.splitext(item.original_path)[1].lower() in ('.mp4', '.mov', '.avi', '.mkv', '.webm')
-            )
+            for item in chunk_items:
+                target_path = None
+                is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
+                    item.original_path and os.path.splitext(item.original_path)[1].lower() in ('.mp4', '.mov', '.avi', '.mkv', '.webm')
+                )
 
-            if item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
-                target_path = item.thumbnail_256_path
-            elif not is_video and item.original_path and os.path.isfile(item.original_path):
-                target_path = item.original_path
-            elif is_video:
-                # For videos without a cover thumbnail, attempt fast cover extraction
+                if item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
+                    target_path = item.thumbnail_256_path
+                elif not is_video and item.original_path and os.path.isfile(item.original_path):
+                    target_path = item.original_path
+                elif is_video:
+                    # For videos without a cover thumbnail, attempt fast cover extraction
+                    try:
+                        from app.services.video_engine import extract_video_cover_thumbnail
+                        cover = extract_video_cover_thumbnail(item.id, item.original_path, item.duration_seconds or 0.0)
+                        if cover and os.path.isfile(cover):
+                            item.thumbnail_256_path = cover
+                            db.commit()
+                            target_path = cover
+                    except Exception:
+                        pass
+
+                if target_path:
+                    batch_paths.append(target_path)
+                    batch_media.append(item)
+
+            if batch_paths:
                 try:
-                    from app.services.video_engine import extract_video_cover_thumbnail
-                    cover = extract_video_cover_thumbnail(item.id, item.original_path, item.duration_seconds or 0.0)
-                    if cover and os.path.isfile(cover):
-                        item.thumbnail_256_path = cover
-                        db.commit()
-                        target_path = cover
-                except Exception:
-                    pass
-
-            if target_path:
-                try:
-                    vec = embed_image(target_path)
-                    if vec is not None:
-                        emb = MediaEmbedding(media_id=item.id, vector=vec.tobytes(), embedding=vec.tolist())
-                        db.add(emb)
-                        db.commit()
-                        indexed_count += 1
+                    vectors = embed_images_batch(batch_paths)
+                    for item, vec in zip(batch_media, vectors):
+                        if vec is not None:
+                            emb = MediaEmbedding(media_id=item.id, vector=vec.tobytes(), embedding=vec.tolist())
+                            db.add(emb)
+                            indexed_count += 1
+                    # Commit once per batch to eliminate disk fsync lock thrashing
+                    db.commit()
                 except Exception as e:
-                    logger.warning(f"Failed to embed photo #{item.id} ({filename}): {e}")
+                    logger.warning(f"Error embedding batch in task {task_id}: {e}")
                     db.rollback()
+
+            processed_so_far = min(total, chunk_start + len(chunk_items))
+            pct = int((processed_so_far / total) * 100)
+            last_item_name = chunk_items[-1].filename if chunk_items[-1].filename else f"Photo #{chunk_items[-1].id}"
 
             TaskQueue.update_task(
                 task_id,
                 progress=pct,
-                current_step=i + 1,
+                current_step=processed_so_far,
                 total_steps=total,
-                message=f"Indexed {i + 1}/{total} ({pct}%): {filename}"
+                message=f"Indexed {processed_so_far}/{total} ({pct}%): {last_item_name}"
             )
 
         return {"indexed_count": indexed_count, "total": total}

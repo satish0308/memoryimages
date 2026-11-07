@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -143,6 +144,19 @@ def detect_burst_clusters(
     if user_id is None:
         return []
 
+    # Check Redis cache for instant 0ms burst cluster retrieval
+    from app.services.task_queue import get_redis_client
+    cat_str = category.value if hasattr(category, 'value') else (str(category) if category else 'all')
+    cache_key = f"memorypics:cache:bursts:{user_id}:{cat_str}"
+    r = get_redis_client()
+    if r:
+        try:
+            cached_data = r.get(cache_key)
+            if cached_data:
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.debug(f"Burst cache read error: {e}")
+
     query = db.query(Media).filter(
         Media.user_id == user_id,
         Media.is_deleted == False,
@@ -279,7 +293,29 @@ def detect_burst_clusters(
         reverse=True
     )
 
+    # Cache calculated burst clusters in Redis for 1 hour to prevent 1M pHash ops per page view
+    if r:
+        try:
+            r.set(cache_key, json.dumps(formatted_clusters, default=str), ex=3600)
+        except Exception as e:
+            logger.debug(f"Burst cache write error: {e}")
+
     return formatted_clusters
+
+def invalidate_burst_cache(user_id: Optional[int] = None):
+    """Invalidates cached burst clusters when media is uploaded, edited, or deleted."""
+    from app.services.task_queue import get_redis_client
+    r = get_redis_client()
+    if not r:
+        return
+    try:
+        pattern = f"memorypics:cache:bursts:{user_id if user_id is not None else '*'}:*"
+        keys = r.keys(pattern)
+        if keys:
+            r.delete(*keys)
+            logger.debug(f"Invalidated {len(keys)} burst cluster cache keys.")
+    except Exception as e:
+        logger.debug(f"Error invalidating burst cache: {e}")
 
 def get_burst_for_media(db: Session, media_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """Returns the burst/duplicate cluster containing the specified media ID, or None."""

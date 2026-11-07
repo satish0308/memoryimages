@@ -563,6 +563,12 @@ def revoke_single_media_share(
 
     media.share_token = None
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "share_revoked"}
 
 @router.get("/public/share/{share_token}")
@@ -932,6 +938,12 @@ def update_edit_recipe(
     media.edit_recipe = json.dumps(req.recipe)
     media.is_enhanced = True
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "success", "id": media.id, "recipe": req.recipe}
 
 @router.post("/{media_id}/revert-edit")
@@ -950,6 +962,12 @@ def revert_photo_edits(
     media.edit_recipe = None
     media.is_enhanced = False
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "reverted", "id": media.id}
 
 @router.post("/save-highlight-reel")
@@ -1066,14 +1084,32 @@ def get_thumbnail(
     # 2. Local Disk Thumbnail Serving
     if size == "original":
         if media.original_path and os.path.isfile(media.original_path):
-            return FileResponse(media.original_path, media_type=media.mime_type or "image/jpeg", headers={"Content-Disposition": "inline"})
+            return FileResponse(
+                media.original_path,
+                media_type=media.mime_type or "image/jpeg",
+                headers={
+                    "Content-Disposition": "inline",
+                    "Cache-Control": "public, max-age=86400"
+                }
+            )
             
     thumb_path = media.thumbnail_256_path if size in ("256", "512") else media.thumbnail_1080_path
     if thumb_path and os.path.isfile(thumb_path):
-        return FileResponse(thumb_path, media_type="image/webp")
+        return FileResponse(
+            thumb_path,
+            media_type="image/webp",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "X-Accel-Buffering": "no"
+            }
+        )
         
     if media.original_path and os.path.isfile(media.original_path):
-        return FileResponse(media.original_path, media_type=media.mime_type or "image/jpeg")
+        return FileResponse(
+            media.original_path,
+            media_type=media.mime_type or "image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
 
     # 3. In-memory stream fallback from Google Drive
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id:
@@ -1344,6 +1380,12 @@ def regenerate_all_thumbnails(
             except Exception:
                 pass
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "completed", "updated_photos": updated}
 
 class EnhanceMediaRequest(BaseModel):
@@ -1451,6 +1493,12 @@ def batch_enhance_media(
         except Exception as e:
             logger.warning(f"Error enhancing media {it.id}: {e}")
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "success", "enhanced_count": enhanced_count, "preset": req.preset}
 
 @router.post("/pregenerate-thumbnails")
@@ -1905,6 +1953,12 @@ def toggle_favorite(
 
     media.is_favorite = not media.is_favorite
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"id": media.id, "is_favorite": media.is_favorite}
 
 @router.patch("/{media_id}/archive")
@@ -1921,6 +1975,12 @@ def toggle_archive(
 
     media.is_archived = not media.is_archived
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"id": media.id, "is_archived": media.is_archived}
 
 class SingleCategoryUpdate(BaseModel):
@@ -1941,6 +2001,12 @@ def update_media_category(
 
     media.category = req.category
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"id": media.id, "category": media.category}
 
 @router.delete("/{media_id}")
@@ -1983,6 +2049,12 @@ def delete_media(
         media.is_deleted = True
         
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {
         "status": "deleted",
         "id": media_id,
@@ -2007,6 +2079,12 @@ def batch_favorite(
         Media.user_id == current_user.id
     ).update({"is_favorite": req.is_favorite}, synchronize_session=False)
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "success", "count": updated, "is_favorite": req.is_favorite}
 
 class BatchCategoryRequest(BaseModel):
@@ -2025,6 +2103,12 @@ def batch_category(
         Media.user_id == current_user.id
     ).update({"category": req.category}, synchronize_session=False)
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "success", "count": updated, "category": req.category}
 
 class BatchDeleteRequest(BaseModel):
@@ -2070,6 +2154,12 @@ def batch_delete_media(
             item.is_deleted = True
 
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {"status": "success", "count": len(items), "permanent": req.permanent}
 
 class BulkDownloadRequest(BaseModel):
@@ -2233,6 +2323,12 @@ def batch_update_location(
         "location_name": loc_name
     }, synchronize_session=False)
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {
         "status": "success",
         "count": updated,
@@ -2286,6 +2382,12 @@ def propagate_cluster_locations(
             updated_count += 1
             
     db.commit()
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+    except Exception:
+        pass
+
     return {
         "status": "success",
         "updated_count": updated_count,

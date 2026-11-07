@@ -2,7 +2,7 @@ import json
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import desc, func, or_
 
 from app.database import get_db
@@ -205,21 +205,29 @@ def get_smart_collections(
         Media.location_name != None
     ).group_by(Media.location_name).order_by(desc("photo_count")).all()
 
-    places = []
-    for loc_name, count in places_raw:
-        cover = db.query(Media).filter(
+    # Batch fetch cover photos for all locations in 1 single query (eliminating N+1)
+    loc_names = [r[0] for r in places_raw if r[0]]
+    cover_map = {}
+    if loc_names:
+        candidates = db.query(Media.id, Media.location_name).filter(
             Media.user_id == uid,
             Media.is_deleted == False,
-            Media.location_name == loc_name
-        ).order_by(Media.is_blurry.asc(), desc(Media.captured_at)).first()
+            Media.location_name.in_(loc_names)
+        ).order_by(Media.is_blurry.asc(), desc(Media.captured_at)).all()
+        for m_id, loc in candidates:
+            if loc not in cover_map:
+                cover_map[loc] = m_id
 
+    places = []
+    for loc_name, count in places_raw:
+        cover_id = cover_map.get(loc_name)
         city = loc_name.split(",")[0].strip()
         places.append({
             "location_name": loc_name,
             "city": city,
             "photo_count": count,
-            "cover_id": cover.id if cover else None,
-            "cover_thumbnail_url": f"/api/v1/media/{cover.id}/thumbnail?size=256" if cover else None
+            "cover_id": cover_id,
+            "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None
         })
 
     # 2. Trips / Outings
@@ -236,8 +244,8 @@ def get_smart_collections(
             "media_ids": t.get("media_ids", [])
         })
 
-    # 3. People
-    people_records = db.query(Person).filter(Person.user_id == uid).all()
+    # 3. People (Eagerly load faces to prevent N+1 lazy queries)
+    people_records = db.query(Person).options(selectinload(Person.faces)).filter(Person.user_id == uid).all()
     people = []
     for p in people_records:
         photo_ids = set(f.media_id for f in p.faces if f.media_id)

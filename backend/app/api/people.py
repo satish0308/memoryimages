@@ -1,16 +1,19 @@
 import logging
 import io
+import os
 import base64
 from typing import List, Optional, Dict, Any
 import numpy as np
 from PIL import Image
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Response, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.person import Person, FaceDetection
@@ -99,24 +102,36 @@ def list_people(
         query = query.filter(Person.relationship_type.ilike(relationship))
 
     people = query.all()
+    if not people:
+        return []
+
+    # Batch retrieve all faces for all matching people in 1 single query (eliminating N+1)
+    person_ids = [p.id for p in people]
+    all_faces = (
+        db.query(FaceDetection.id, FaceDetection.person_id, FaceDetection.media_id)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(
+            FaceDetection.person_id.in_(person_ids),
+            (Media.user_id == current_user.id) | (Media.user_id == None),
+            Media.is_deleted == False
+        ).all()
+    )
+
+    faces_by_person: Dict[int, List[Any]] = {}
+    for f_id, p_id, m_id in all_faces:
+        if p_id not in faces_by_person:
+            faces_by_person[p_id] = []
+        faces_by_person[p_id].append((f_id, m_id))
+
     results = []
-    
     for p in people:
-        faces = (
-            db.query(FaceDetection)
-            .join(Media, FaceDetection.media_id == Media.id)
-            .filter(
-                FaceDetection.person_id == p.id,
-                (Media.user_id == current_user.id) | (Media.user_id == None),
-                Media.is_deleted == False
-            ).all()
-        )
-        unique_media_ids = list(set(f.media_id for f in faces))
-        if len(unique_media_ids) == 0:
+        p_faces = faces_by_person.get(p.id, [])
+        if not p_faces:
             continue
 
-        first_face = faces[0] if faces else None
-        cover_media_id = p.cover_media_id or (first_face.media_id if first_face else None)
+        unique_media_ids = set(m_id for _, m_id in p_faces)
+        first_face = p_faces[0] if p_faces else None
+        cover_media_id = p.cover_media_id or (first_face[1] if first_face else None)
         
         results.append({
             "id": p.id,
@@ -127,7 +142,7 @@ def list_people(
             "is_hidden": bool(p.is_hidden),
             "cover_media_id": cover_media_id,
             "photo_count": len(unique_media_ids),
-            "faces_count": len(faces),
+            "faces_count": len(p_faces),
             "avatar_url": f"/api/v1/people/{p.id}/avatar" if first_face else None,
             "cover_thumbnail_url": f"/api/v1/media/{cover_media_id}/thumbnail?size=256" if cover_media_id else None
         })
@@ -275,9 +290,17 @@ def get_face_crop(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Returns a square WebP face crop avatar for a specific face detection."""
+    """Returns a square WebP face crop avatar for a specific face detection with disk caching and 1-year browser cache."""
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    face_cache_path = os.path.join(settings.THUMBNAIL_DIR, f"face_{face_id}_180.webp")
+    if os.path.isfile(face_cache_path):
+        return FileResponse(
+            face_cache_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
 
     face = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(
         FaceDetection.id == face_id,
@@ -289,11 +312,18 @@ def get_face_crop(
     crop_bytes = get_face_crop_image(db, face)
     if not crop_bytes:
         raise HTTPException(status_code=404, detail="Could not generate face crop")
-        
+
+    if os.path.isfile(face_cache_path):
+        return FileResponse(
+            face_cache_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+
     return Response(
         content=crop_bytes, 
         media_type="image/webp", 
-        headers={"Cache-Control": "public, max-age=86400"}
+        headers={"Cache-Control": "public, max-age=31536000, immutable"}
     )
 
 @router.get("/merge-suggestions")

@@ -57,14 +57,20 @@ def search_photos(
         if q_vec is not None:
             video_results = search_video_keyframes(db, q_vec, top_k=15)
 
-        # Merge results, strictly enforcing current_user.id ownership
-        all_results = []
-        for p in photo_results:
-            p_media = db.query(Media).filter(
-                Media.id == p["id"],
+        # Merge results, strictly enforcing current_user.id ownership via single batch query (eliminating N+1)
+        all_candidate_ids = list(set([p["id"] for p in photo_results] + [v["id"] for v in video_results]))
+        media_map = {}
+        if all_candidate_ids:
+            found_records = db.query(Media).filter(
+                Media.id.in_(all_candidate_ids),
                 Media.user_id == current_user.id,
                 Media.is_deleted == False
-            ).first()
+            ).all()
+            media_map = {m.id: m for m in found_records}
+
+        all_results = []
+        for p in photo_results:
+            p_media = media_map.get(p["id"])
             if not p_media:
                 continue
             all_results.append({
@@ -81,11 +87,7 @@ def search_photos(
             })
 
         for v in video_results:
-            v_media = db.query(Media).filter(
-                Media.id == v["id"],
-                Media.user_id == current_user.id,
-                Media.is_deleted == False
-            ).first()
+            v_media = media_map.get(v["id"])
             if not v_media:
                 continue
             all_results.append({

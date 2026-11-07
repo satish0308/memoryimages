@@ -3,16 +3,18 @@ import io
 import logging
 from typing import List, Dict, Any, Optional
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFile
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.config import settings
 from app.models.media import Media
 from app.models.person import Person, FaceDetection
 
 logger = logging.getLogger("memorypics.face_engine")
 
 Image.MAX_IMAGE_PIXELS = None
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Model Paths
 MODEL_DIR = "/data/db/models" if os.path.exists("/data/db") else "/data/models"
@@ -176,10 +178,16 @@ def hard_nms(box_scores: np.ndarray, iou_threshold: float = 0.3, top_k: int = -1
         
     return box_scores[picked, :]
 
-def load_media_image(media: Media, db: Session) -> Optional[Image.Image]:
+def load_media_image(media: Media, db: Session, prefer_preview: bool = False) -> Optional[Image.Image]:
     """Loads an image into a PIL Image object from local disk or in-memory cloud stream."""
     if media.mime_type and media.mime_type.startswith("video/"):
         return None
+
+    if prefer_preview and media.thumbnail_1080_path and os.path.isfile(media.thumbnail_1080_path):
+        try:
+            return Image.open(media.thumbnail_1080_path)
+        except Exception:
+            pass
 
     if media.original_path and os.path.isfile(media.original_path):
         try:
@@ -187,7 +195,7 @@ def load_media_image(media: Media, db: Session) -> Optional[Image.Image]:
         except Exception:
             pass
 
-    if media.thumbnail_1080_path and os.path.isfile(media.thumbnail_1080_path):
+    if not prefer_preview and media.thumbnail_1080_path and os.path.isfile(media.thumbnail_1080_path):
         try:
             return Image.open(media.thumbnail_1080_path)
         except Exception:
@@ -670,12 +678,22 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
     return created_detections
 
 def get_face_crop_image(db: Session, face: FaceDetection) -> Optional[bytes]:
-    """Generates a square WebP avatar crop for a face detection."""
+    """Generates a square WebP avatar crop for a face detection with automatic disk caching."""
+    # 1. Fast-path: Check persistent disk cache first
+    face_cache_path = os.path.join(settings.THUMBNAIL_DIR, f"face_{face.id}_180.webp")
+    if os.path.isfile(face_cache_path):
+        try:
+            with open(face_cache_path, "rb") as f:
+                return f.read()
+        except Exception:
+            pass
+
     media = db.query(Media).filter(Media.id == face.media_id).first()
     if not media:
         return None
 
-    img = load_media_image(media, db)
+    # Prefer 1080p preview when cropping 180px face avatar to eliminate 48MP RAM bloat
+    img = load_media_image(media, db, prefer_preview=True)
     if img is None:
         return None
 
@@ -693,7 +711,17 @@ def get_face_crop_image(db: Session, face: FaceDetection) -> Optional[bytes]:
         cropped = img_rgb.crop((crop_x1, crop_y1, crop_x2, crop_y2)).resize((180, 180), Image.Resampling.LANCZOS)
         buf = io.BytesIO()
         cropped.save(buf, format="WEBP", quality=90)
-        return buf.getvalue()
+        crop_bytes = buf.getvalue()
+
+        # Persist to disk for instantaneous subsequent loads
+        try:
+            os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+            with open(face_cache_path, "wb") as f:
+                f.write(crop_bytes)
+        except Exception as write_err:
+            logger.debug(f"Could not write face crop to disk: {write_err}")
+
+        return crop_bytes
     except Exception as e:
         logger.error(f"Failed to generate face crop: {e}")
         return None

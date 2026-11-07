@@ -44,12 +44,36 @@ SINGLETON_TASK_TYPES = {
     "pregenerate_1080p_renditions",
 }
 
+_redis_pool = None
+
+def get_redis_pool():
+    global _redis_pool
+    if _redis_pool is None:
+        try:
+            import redis
+            _redis_pool = redis.ConnectionPool.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                max_connections=20,
+                socket_timeout=3
+            )
+        except Exception as e:
+            logger.debug(f"Could not initialize Redis pool: {e}")
+            _redis_pool = None
+    return _redis_pool
+
 def get_redis_client():
-    """Returns a synchronous Redis client with connection error handling."""
+    """Returns a synchronous Redis client using persistent connection pooling."""
+    pool = get_redis_pool()
+    if pool is not None:
+        try:
+            import redis
+            return redis.Redis(connection_pool=pool)
+        except Exception as e:
+            logger.debug(f"Redis pool connection error: {e}")
     try:
         import redis
         client = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=3)
-        client.ping()
         return client
     except Exception as e:
         logger.debug(f"Redis not available: {e}")
