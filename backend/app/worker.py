@@ -7,6 +7,9 @@ import traceback
 from datetime import datetime, timezone
 from typing import Dict, Any
 
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 from app.config import settings
 from app.database import SessionLocal, engine, Base
 from app.models import media, person, sync, album, user
