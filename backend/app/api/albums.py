@@ -139,21 +139,32 @@ def _perform_auto_curate(db: Session, user_id: int) -> List[Album]:
 
     # 2. Curate from prominent spatiotemporal trips / outings (>= 10 photos)
     trips = cluster_events(db, user_id=user_id)
-    for trip in trips:
-        if trip["photo_count"] >= 10:
-            trip_title = trip["title"]
-            album_name = f"Trip: {trip_title}"
-            existing = db.query(Album).filter(
-                Album.user_id == user_id,
-                Album.name == album_name
-            ).first()
-            if existing:
-                continue
+    existing_album_names = set(
+        name for (name,) in db.query(Album.name).filter(Album.user_id == user_id).all()
+    )
 
-            trip_photos = db.query(Media).filter(
+    eligible_trips = [
+        t for t in trips 
+        if t["photo_count"] >= 10 and f"Trip: {t['title']}" not in existing_album_names
+    ]
+
+    if eligible_trips:
+        all_needed_ids = set()
+        for t in eligible_trips:
+            all_needed_ids.update(t.get("media_ids", []))
+
+        media_map = {}
+        if all_needed_ids:
+            media_items = db.query(Media).filter(
                 Media.user_id == user_id,
-                Media.id.in_(trip["media_ids"])
+                Media.id.in_(all_needed_ids)
             ).all()
+            media_map = {m.id: m for m in media_items}
+
+        for trip in eligible_trips:
+            album_name = f"Trip: {trip['title']}"
+            existing_album_names.add(album_name)
+            trip_photos = [media_map[mid] for mid in trip.get("media_ids", []) if mid in media_map]
             if trip_photos:
                 album = Album(
                     user_id=user_id,

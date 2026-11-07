@@ -40,6 +40,7 @@ import { BillInspectorModal } from '@/components/triage/BillInspectorModal';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { MediaItem } from '@/components/timeline/PhotoCard';
+import { useAuth } from '@/context/AuthContext';
 
 interface TriageOverview {
   total_screenshots: number;
@@ -267,51 +268,63 @@ export default function TriagePage() {
   const [inspectingPhoto, setInspectingPhoto] = useState<MediaItem | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const { token: authContextToken } = useAuth();
+
+  const getActiveToken = useCallback(() => {
+    return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
+  }, [authContextToken]);
+
+  const authHeaders = useCallback((extra: Record<string, string> = {}) => {
+    const token = getActiveToken();
+    const headers: Record<string, string> = { ...extra };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  }, [getActiveToken]);
 
   const fetchOverview = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/triage/overview`);
+      const res = await fetch(`${API_URL}/api/v1/triage/overview`, { headers: authHeaders() });
       if (res.ok) setOverview(await res.json());
     } catch (e) {
       console.error(e);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   const fetchScreenshots = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/screenshots`);
+      const res = await fetch(`${API_URL}/api/v1/triage/screenshots`, { headers: authHeaders() });
       if (res.ok) setScreenshots(await res.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   const fetchBills = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/bills`);
+      const res = await fetch(`${API_URL}/api/v1/triage/bills`, { headers: authHeaders() });
       if (res.ok) setBills(await res.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   const fetchDuplicates = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/duplicates`);
+      const res = await fetch(`${API_URL}/api/v1/triage/duplicates`, { headers: authHeaders() });
       if (res.ok) setDuplicates(await res.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   const fetchBlurry = useCallback(async () => {
     try {
@@ -319,7 +332,7 @@ export default function TriagePage() {
       const url = blurFilter !== 'all'
         ? `${API_URL}/api/v1/triage/blurry?blur_type=${blurFilter}`
         : `${API_URL}/api/v1/triage/blurry`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
       if (res.ok) {
         setBlurryPhotos(await res.json());
       }
@@ -328,13 +341,14 @@ export default function TriagePage() {
     } finally {
       setLoading(false);
     }
-  }, [API_URL, blurFilter]);
+  }, [API_URL, blurFilter, authHeaders]);
 
   const handleCleanPocketShots = async () => {
     try {
       setIsCleaningPockets(true);
       const res = await fetch(`${API_URL}/api/v1/triage/pocket-shots/cleanup`, {
         method: 'POST',
+        headers: authHeaders(),
       });
       if (res.ok) {
         const data = await res.json();
@@ -352,26 +366,26 @@ export default function TriagePage() {
   const fetchLargeFiles = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/large-files?min_mb=3.0`);
+      const res = await fetch(`${API_URL}/api/v1/triage/large-files?min_mb=3.0`, { headers: authHeaders() });
       if (res.ok) setLargeFiles(await res.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   const fetchMemes = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/memes`);
+      const res = await fetch(`${API_URL}/api/v1/triage/memes`, { headers: authHeaders() });
       if (res.ok) setMemes(await res.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   useEffect(() => {
     fetchOverview();
@@ -423,7 +437,7 @@ export default function TriagePage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/triage/move-to-memories`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: selectedIds }),
       });
       if (res.ok) {
@@ -445,7 +459,7 @@ export default function TriagePage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/triage/mark-sharp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: selectedIds }),
       });
       if (res.ok) {
@@ -467,7 +481,7 @@ export default function TriagePage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/triage/snooze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: selectedIds, days }),
       });
       if (res.ok) {
@@ -493,7 +507,7 @@ export default function TriagePage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/triage/batch-delete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: selectedIds, permanent }),
       });
       if (res.ok) {
@@ -524,7 +538,10 @@ export default function TriagePage() {
       return;
     try {
       setIsResolvingAll(true);
-      const res = await fetch(`${API_URL}/api/v1/triage/resolve-all-duplicates`, { method: 'POST' });
+      const res = await fetch(`${API_URL}/api/v1/triage/resolve-all-duplicates`, { 
+        method: 'POST',
+        headers: authHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setStatusMessage(

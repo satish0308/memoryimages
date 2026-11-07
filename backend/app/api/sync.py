@@ -53,7 +53,7 @@ def trigger_local_scan(
     target_dir = req.directory_path or settings.MEDIA_DIR
 
     # Default to background worker queue for non-blocking UI experience
-    if req.async_mode:
+    if req.async_mode is not False:
         task = TaskQueue.enqueue(
             "media_scan", 
             payload={"directory_path": target_dir, "user_id": uid},
@@ -100,10 +100,11 @@ def google_oauth_callback(
 ):
     """OAuth callback endpoint where Google redirects with the authorization code."""
     import urllib.parse
+    frontend_base = settings.FRONTEND_URL.rstrip('/')
     res = handle_oauth_callback(db, code, state)
     if res.get("status") == "error":
         err_msg = urllib.parse.quote(str(res.get("error", "Google authentication failed")))
-        return RedirectResponse(url=f"http://localhost:3000/login?error={err_msg}")
+        return RedirectResponse(url=f"{frontend_base}/login?error={err_msg}")
         
     token = res.get("access_token")
     user = res.get("user")
@@ -122,9 +123,9 @@ def google_oauth_callback(
             "is_admin": "true" if user.get("is_admin") else "false",
             "provider": "google"
         })
-        return RedirectResponse(url=f"http://localhost:3000/login?{query}")
+        return RedirectResponse(url=f"{frontend_base}/login?{query}")
 
-    return RedirectResponse(url="http://localhost:3000/sync?status=connected&syncing=1")
+    return RedirectResponse(url=f"{frontend_base}/sync?status=connected&syncing=1")
 
 @router.post("/google/{source_id}/trigger")
 def trigger_google_sync(

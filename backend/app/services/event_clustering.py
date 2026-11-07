@@ -2,7 +2,7 @@ import math
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from collections import Counter
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy import desc
 
 from app.models.media import Media, MediaCategory
@@ -38,7 +38,21 @@ def cluster_events(db: Session, max_gap_hours: int = 4, user_id: Optional[int] =
     if user_id is None:
         return []
 
-    photos = db.query(Media).filter(
+    photos = db.query(Media).options(
+        load_only(
+            Media.id,
+            Media.filename,
+            Media.category,
+            Media.captured_at,
+            Media.latitude,
+            Media.longitude,
+            Media.location_name,
+            Media.is_favorite,
+            Media.is_blurry,
+            Media.width,
+            Media.height
+        )
+    ).filter(
         Media.user_id == user_id,
         Media.category == MediaCategory.MEMORY,
         Media.is_deleted == False,

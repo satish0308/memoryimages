@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     THUMBNAIL_DIR: str = os.getenv("THUMBNAIL_DIR", "/data/thumbnails")
     
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
     
     # Google OAuth
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")

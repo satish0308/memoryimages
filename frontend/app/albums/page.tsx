@@ -35,6 +35,7 @@ import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowMod
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { ShareEventModal } from '@/components/albums/ShareEventModal';
 import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
+import { useAuth } from '@/context/AuthContext';
 
 interface AlbumItem {
   id: number;
@@ -218,13 +219,25 @@ export default function AlbumsPage() {
   const [editDesc, setEditDesc] = useState('');
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const { token: authContextToken } = useAuth();
+
+  const getActiveToken = useCallback(() => {
+    return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
+  }, [authContextToken]);
+
+  const authHeaders = useCallback((extra: Record<string, string> = {}) => {
+    const token = getActiveToken();
+    const headers: Record<string, string> = { ...extra };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return headers;
+  }, [getActiveToken]);
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [albumsRes, smartRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/albums`),
-        fetch(`${API_URL}/api/v1/albums/collections/smart`)
+        fetch(`${API_URL}/api/v1/albums`, { headers: authHeaders() }),
+        fetch(`${API_URL}/api/v1/albums/collections/smart`, { headers: authHeaders() })
       ]);
 
       if (albumsRes.ok) {
@@ -240,7 +253,7 @@ export default function AlbumsPage() {
     } finally {
       setLoading(false);
     }
-  }, [API_URL]);
+  }, [API_URL, authHeaders]);
 
   useEffect(() => {
     loadData();
@@ -252,7 +265,7 @@ export default function AlbumsPage() {
   // Open custom album
   const openAlbum = async (id: number) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/albums/${id}`);
+      const res = await fetch(`${API_URL}/api/v1/albums/${id}`, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         setSelectedCollection({
@@ -276,7 +289,7 @@ export default function AlbumsPage() {
   // Open Place collection
   const openPlace = async (place: SmartPlace) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(place.city)}&limit=200`);
+      const res = await fetch(`${API_URL}/api/v1/search?q=${encodeURIComponent(place.city)}&limit=200`, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         setSelectedCollection({
@@ -303,7 +316,7 @@ export default function AlbumsPage() {
   // Open Trip / Outing story
   const openTrip = async (trip: SmartTrip) => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/search/events`);
+      const res = await fetch(`${API_URL}/api/v1/search/events`, { headers: authHeaders() });
       if (res.ok) {
         const events = await res.json();
         const found = events.find((e: any) => (trip.id && e.id === trip.id) || (trip.cover_id && e.cover_id === trip.cover_id) || e.title === trip.title);
@@ -324,11 +337,7 @@ export default function AlbumsPage() {
   // Open Person collection
   const openPerson = async (person: SmartPerson) => {
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
+      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers: authHeaders() });
       if (res.ok) {
         const photos = await res.json();
         setSelectedCollection({
@@ -353,7 +362,7 @@ export default function AlbumsPage() {
   // Open Favorites
   const openFavorites = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/v1/media?is_favorite=true&limit=200`);
+      const res = await fetch(`${API_URL}/api/v1/media?is_favorite=true&limit=200`, { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
         setSelectedCollection({
@@ -376,7 +385,10 @@ export default function AlbumsPage() {
   const handleAutoCurate = async () => {
     try {
       setIsCurating(true);
-      const res = await fetch(`${API_URL}/api/v1/albums/auto-curate`, { method: 'POST' });
+      const res = await fetch(`${API_URL}/api/v1/albums/auto-curate`, { 
+        method: 'POST',
+        headers: authHeaders()
+      });
       if (res.ok) {
         await loadData();
       }
@@ -407,7 +419,7 @@ export default function AlbumsPage() {
 
       const res = await fetch(`${API_URL}/api/v1/albums`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload)
       });
       if (res.ok) {
@@ -432,7 +444,7 @@ export default function AlbumsPage() {
     try {
       const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ name: editName.trim(), description: editDesc.trim() || null })
       });
       if (res.ok) {
@@ -452,7 +464,10 @@ export default function AlbumsPage() {
     if (!confirm('Are you sure you want to delete this album container? (Your photos remain safely in your library)')) return;
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/albums/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/v1/albums/${id}`, { 
+        method: 'DELETE',
+        headers: authHeaders()
+      });
       if (res.ok) {
         if (selectedCollection && selectedCollection.id === id) {
           setSelectedCollection(null);
@@ -470,7 +485,8 @@ export default function AlbumsPage() {
     if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id) return;
     try {
       const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos/${mediaId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: authHeaders()
       });
       if (res.ok) {
         setSelectedCollection(prev => {
@@ -493,15 +509,11 @@ export default function AlbumsPage() {
 
     try {
       setIsRemovingFromAlbum(true);
-      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
       await Promise.all(
         collectionSelectedIds.map((mid) =>
           fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos/${mid}`, {
             method: 'DELETE',
-            headers,
+            headers: authHeaders(),
           })
         )
       );
@@ -525,14 +537,12 @@ export default function AlbumsPage() {
   const handleExecuteBatchDelete = async (permanent: boolean) => {
     if (collectionSelectedIds.length === 0) return;
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const token = getActiveToken();
       const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
 
       const res = await fetch(`${API_URL}/api/v1/media/batch-delete${tokenParam}`, {
         method: 'POST',
-        headers,
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: collectionSelectedIds, permanent }),
       });
 
@@ -562,7 +572,9 @@ export default function AlbumsPage() {
   const handleOpenPhotoPicker = async () => {
     if (!selectedCollection || selectedCollection.type !== 'album' || !selectedCollection.id) return;
     try {
-      const res = await fetch(`${API_URL}/api/v1/albums/available-photos?album_id=${selectedCollection.id}&limit=300`);
+      const res = await fetch(`${API_URL}/api/v1/albums/available-photos?album_id=${selectedCollection.id}&limit=300`, {
+        headers: authHeaders()
+      });
       if (res.ok) {
         const photos: AvailablePhotoItem[] = await res.json();
         setAvailablePhotos(photos);
@@ -582,7 +594,7 @@ export default function AlbumsPage() {
       setIsAddingPhotos(true);
       const res = await fetch(`${API_URL}/api/v1/albums/${selectedCollection.id}/photos`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ media_ids: pickerSelectedIds })
       });
       if (res.ok) {

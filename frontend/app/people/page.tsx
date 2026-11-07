@@ -145,6 +145,15 @@ export default function PeoplePage() {
     return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
   }, [authContextToken]);
 
+  const buildMediaUrl = useCallback((url: string | null | undefined) => {
+    if (!url) return '';
+    const token = getActiveToken();
+    const prefix = url.startsWith('http') ? '' : API_URL;
+    if (!token) return `${prefix}${url}`;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${prefix}${url}${separator}token=${encodeURIComponent(token)}`;
+  }, [API_URL, getActiveToken]);
+
   const fetchPeople = useCallback(async () => {
     try {
       setLoading(true);
@@ -603,7 +612,7 @@ export default function PeoplePage() {
                 <div className="flex items-center gap-2">
                   <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-purple-500/50 shadow-inner">
                     <img
-                      src={`${API_URL}${s.source_person.avatar_url}`}
+                      src={buildMediaUrl(s.source_person.avatar_url)}
                       alt={s.source_person.name}
                       className="w-full h-full object-cover"
                     />
@@ -626,7 +635,7 @@ export default function PeoplePage() {
                 <div className="flex items-center gap-2">
                   <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-indigo-500/50 shadow-inner">
                     <img
-                      src={`${API_URL}${s.target_person.avatar_url}`}
+                      src={buildMediaUrl(s.target_person.avatar_url)}
                       alt={s.target_person.name}
                       className="w-full h-full object-cover"
                     />
@@ -794,9 +803,9 @@ export default function PeoplePage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {people.map((person) => {
               const avatarSrc = person.avatar_url
-                ? `${API_URL}${person.avatar_url}`
+                ? buildMediaUrl(person.avatar_url)
                 : person.cover_thumbnail_url
-                ? `${API_URL}${person.cover_thumbnail_url}`
+                ? buildMediaUrl(person.cover_thumbnail_url)
                 : null;
 
               return (
@@ -944,7 +953,7 @@ export default function PeoplePage() {
                     title="Click to view full photo in full screen"
                   >
                     <img
-                      src={`${API_URL}${face.crop_url}`}
+                      src={buildMediaUrl(face.crop_url)}
                       alt={face.filename}
                       className="w-full h-full object-cover"
                       loading="lazy"
@@ -988,7 +997,7 @@ export default function PeoplePage() {
                 <div className="w-14 h-14 rounded-full overflow-hidden bg-slate-900 border-2 border-indigo-500 shadow-md">
                   {selectedPerson.avatar_url ? (
                     <img
-                      src={`${API_URL}${selectedPerson.avatar_url}`}
+                      src={buildMediaUrl(selectedPerson.avatar_url)}
                       alt={selectedPerson.name}
                       className="w-full h-full object-cover"
                     />
@@ -1089,7 +1098,7 @@ export default function PeoplePage() {
                       className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200/60 dark:border-slate-800 hover:shadow-xl hover:scale-[1.02] transition-all duration-300"
                     >
                       <img
-                        src={`${API_URL}${photo.thumbnail_url}`}
+                        src={buildMediaUrl(photo.thumbnail_url)}
                         alt={photo.filename}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                         loading="lazy"

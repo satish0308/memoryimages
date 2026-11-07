@@ -321,7 +321,7 @@ def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> 
 
     return None
 
-def evaluate_and_update_media_quality(media: Media, db: Session) -> Dict[str, Any]:
+def evaluate_and_update_media_quality(media: Media, db: Session, auto_commit: bool = True) -> Dict[str, Any]:
     """
     Evaluates blur type, bokeh detection, and sharpness for a media item.
     Updates database record and returns analysis result.
@@ -337,37 +337,48 @@ def evaluate_and_update_media_quality(media: Media, db: Session) -> Dict[str, An
             "description": "Image not available for quality analysis"
         }
 
-    # Fetch associated face detections for ROI focus check
-    faces = list(media.faces) if hasattr(media, "faces") and media.faces else []
-    quality_res = analyze_image_quality(image, faces)
+    try:
+        # Fetch associated face detections for ROI focus check
+        faces = list(media.faces) if hasattr(media, "faces") and media.faces else []
+        quality_res = analyze_image_quality(image, faces)
 
-    media.blur_type = quality_res["blur_type"]
-    media.is_bokeh = quality_res["is_bokeh"]
-    media.is_blurry = quality_res["is_blurry"]
-    media.blurriness_score = quality_res["sharpness_score"]
+        media.blur_type = quality_res["blur_type"]
+        media.is_bokeh = quality_res["is_bokeh"]
+        media.is_blurry = quality_res["is_blurry"]
+        media.blurriness_score = quality_res["sharpness_score"]
 
-    # Calculate optimal enhancement parameters
-    enhance_params = calculate_auto_enhance_params(image)
-    if not media.enhancement_data:
-        media.enhancement_data = json.dumps(enhance_params)
+        # Calculate optimal enhancement parameters
+        enhance_params = calculate_auto_enhance_params(image)
+        if not media.enhancement_data:
+            media.enhancement_data = json.dumps(enhance_params)
 
-    db.commit()
+        if auto_commit:
+            db.commit()
 
-    return {
-        "media_id": media.id,
-        "blur_type": media.blur_type,
-        "is_bokeh": media.is_bokeh,
-        "is_blurry": media.is_blurry,
-        "sharpness_score": media.blurriness_score,
-        "enhancement_params": enhance_params,
-        "description": quality_res["description"]
-    }
+        return {
+            "media_id": media.id,
+            "blur_type": media.blur_type,
+            "is_bokeh": media.is_bokeh,
+            "is_blurry": media.is_blurry,
+            "sharpness_score": media.blurriness_score,
+            "enhancement_params": enhance_params,
+            "description": quality_res["description"]
+        }
+    finally:
+        try:
+            image.close()
+        except Exception:
+            pass
 
-def run_library_quality_scan(db: Session, force: bool = False) -> Dict[str, Any]:
+def run_library_quality_scan(db: Session, force: bool = False, user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Scans media library to classify bokeh, motion blur, and pocket shots.
+    Batches database commits every 25 records to eliminate commit overhead.
     """
     query = db.query(Media).filter(Media.is_deleted == False)
+    if user_id:
+        query = query.filter(Media.user_id == user_id)
+
     if not force:
         # Only evaluate unclassified media
         query = query.filter((Media.blur_type == None) | (Media.blur_type == "sharp") | (Media.is_blurry == True))
@@ -380,7 +391,7 @@ def run_library_quality_scan(db: Session, force: bool = False) -> Dict[str, Any]
 
     for photo in photos:
         try:
-            res = evaluate_and_update_media_quality(photo, db)
+            res = evaluate_and_update_media_quality(photo, db, auto_commit=False)
             total_evaluated += 1
             if res.get("is_bokeh"):
                 classified_bokeh += 1
@@ -388,8 +399,14 @@ def run_library_quality_scan(db: Session, force: bool = False) -> Dict[str, Any]
                 classified_motion += 1
             if res.get("blur_type") == "black_pocket":
                 classified_pocket += 1
+
+            if total_evaluated % 25 == 0:
+                db.commit()
         except Exception as e:
             logger.warning(f"Error evaluating photo {photo.id}: {e}")
+
+    if total_evaluated > 0:
+        db.commit()
 
     return {
         "status": "completed",

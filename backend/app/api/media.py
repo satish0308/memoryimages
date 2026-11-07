@@ -1536,7 +1536,7 @@ def run_library_quality_analysis(
 ):
     """Analyzes user photos to identify bokeh portraits, motion shake, and pocket shots."""
     from app.services.quality_engine import run_library_quality_scan
-    return run_library_quality_scan(db, force=force)
+    return run_library_quality_scan(db, force=force, user_id=current_user.id)
 
 @router.get("/{media_id}/download")
 def download_original(

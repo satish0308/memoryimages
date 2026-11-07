@@ -6,6 +6,8 @@ from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel
 
+from app.models.user import User
+from app.api.auth import get_current_user
 from app.services.task_queue import (
     TaskQueue,
     TASK_NAMES,
@@ -41,7 +43,10 @@ def get_task_status(task_id: str):
     return task
 
 @router.post("/dispatch")
-def dispatch_task(req: TaskDispatchRequest):
+def dispatch_task(
+    req: TaskDispatchRequest,
+    current_user: User = Depends(get_current_user)
+):
     """Enqueues a new background task for the worker to execute."""
     if req.task_type not in TASK_NAMES:
         raise HTTPException(
@@ -49,15 +54,23 @@ def dispatch_task(req: TaskDispatchRequest):
             detail=f"Invalid task_type '{req.task_type}'. Must be one of: {list(TASK_NAMES.keys())}"
         )
 
+    # Ensure user_id is injected into payload if not already present
+    payload = dict(req.params or {})
+    if "user_id" not in payload and current_user.id:
+        payload["user_id"] = current_user.id
+
     task = TaskQueue.enqueue(
         task_type=req.task_type,
-        payload=req.params,
+        payload=payload,
         name=req.name
     )
     return task
 
 @router.post("/{task_id}/cancel")
-def cancel_task(task_id: str):
+def cancel_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user)
+):
     """Signals cancellation for a running or pending task."""
     task = TaskQueue.get_task(task_id)
     if not task:
@@ -67,13 +80,13 @@ def cancel_task(task_id: str):
     return {"success": success, "task_id": task_id}
 
 @router.post("/deduplicate")
-def deduplicate_tasks():
+def deduplicate_tasks(current_user: User = Depends(get_current_user)):
     """Removes all redundant pending singleton tasks from queue and syncs active list."""
     removed = TaskQueue.deduplicate_queue()
     return {"status": "deduplicated", "removed_count": removed}
 
 @router.delete("/history")
-def clear_task_history():
+def clear_task_history(current_user: User = Depends(get_current_user)):
     """Clears completed/failed tasks from history."""
     cleared = TaskQueue.clear_history()
     # Also clean up any lingering duplicates

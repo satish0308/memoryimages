@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
+import { useAuth } from '@/context/AuthContext';
 
 interface GeoPhoto {
   id: number;
@@ -87,6 +88,7 @@ const MAP_LAYERS: Record<MapLayerType, { name: string; url: string; attribution:
 };
 
 export default function MapPage() {
+  const { token: authContextToken } = useAuth();
   const [geoPhotos, setGeoPhotos] = useState<GeoPhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [isPropagating, setIsPropagating] = useState(false);
@@ -122,6 +124,19 @@ export default function MapPage() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+  const getActiveToken = useCallback(() => {
+    return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
+  }, [authContextToken]);
+
+  const buildMediaUrl = useCallback((url: string) => {
+    if (!url) return '';
+    const token = getActiveToken();
+    const prefix = url.startsWith('http') ? '' : API_URL;
+    if (!token) return `${prefix}${url}`;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${prefix}${url}${separator}token=${encodeURIComponent(token)}`;
+  }, [API_URL, getActiveToken]);
+
   // Load Leaflet JS & CSS assets locally
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -149,17 +164,22 @@ export default function MapPage() {
     document.body.appendChild(script);
   }, []);
 
-  // Fetch geotagged locations from backend
+  // Fetch geotagged locations from backend with authentication
   const loadLocations = useCallback(() => {
     setLoading(true);
-    fetch(`${API_URL}/api/v1/media/locations`)
+    const token = getActiveToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
+    fetch(`${API_URL}/api/v1/media/locations${tokenParam}`, { headers })
       .then((res) => (res.ok ? res.json() : []))
       .then((data: GeoPhoto[]) => {
         setGeoPhotos(data);
       })
       .catch((e) => console.error('Error fetching locations:', e))
       .finally(() => setLoading(false));
-  }, [API_URL]);
+  }, [API_URL, getActiveToken]);
 
   useEffect(() => {
     loadLocations();
@@ -409,7 +429,7 @@ export default function MapPage() {
               transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             ">
               <img 
-                src="${API_URL}${cluster.coverPhoto.thumbnail_url}" 
+                src="${buildMediaUrl(cluster.coverPhoto.thumbnail_url)}" 
                 style="width: 100%; height: 100%; object-fit: cover; display: block;" 
                 alt="${cluster.location_name}" 
               />
@@ -613,9 +633,13 @@ export default function MapPage() {
     try {
       setIsPropagating(true);
       setStatusMessage('Auto-linking photos taken on the same outing...');
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${API_URL}/api/v1/media/propagate-locations`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ max_gap_hours: 4.0 }),
       });
       if (res.ok) {
@@ -637,7 +661,14 @@ export default function MapPage() {
     try {
       setIsRescanning(true);
       setStatusMessage('Deep scanning EXIF GPS & multi-frame coordinates...');
-      const res = await fetch(`${API_URL}/api/v1/media/rescan-geotags`, { method: 'POST' });
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/rescan-geotags`, { 
+        method: 'POST',
+        headers
+      });
       if (res.ok) {
         const data = await res.json();
         setStatusMessage(`GPS deep scan complete! Found ${data.total_geotagged || 0} geotags.`);
@@ -954,7 +985,7 @@ export default function MapPage() {
                 >
                   <div className="w-4 h-4 rounded-full overflow-hidden flex-shrink-0 bg-slate-200">
                     <img
-                      src={`${API_URL}${cluster.coverPhoto.thumbnail_url}`}
+                      src={buildMediaUrl(cluster.coverPhoto.thumbnail_url)}
                       alt={placeName}
                       className="w-full h-full object-cover"
                     />
@@ -1126,7 +1157,7 @@ export default function MapPage() {
                       className="group relative aspect-square rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 cursor-pointer shadow-sm hover:shadow-xl transition-all duration-300 hover:scale-[1.03] border border-slate-200/60 dark:border-slate-700/60"
                     >
                       <img
-                        src={`${API_URL}${photo.thumbnail_url}`}
+                        src={buildMediaUrl(photo.thumbnail_url)}
                         alt={photo.filename}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                         loading="lazy"

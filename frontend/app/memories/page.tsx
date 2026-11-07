@@ -86,6 +86,18 @@ export default function MemoriesPage() {
     };
   }, [activeStory, storyIndex, isPlaying, reels]);
 
+  // Preload next slide's 1080p rendition to eliminate slide transition lag
+  useEffect(() => {
+    if (!activeStory || typeof window === 'undefined') return;
+    const nextItem = activeStory.items[storyIndex + 1];
+    if (nextItem && !nextItem.has_motion_photo) {
+      const activeToken = authContextToken || localStorage.getItem('memorypics_token');
+      const tokenParam = activeToken ? `&token=${encodeURIComponent(activeToken)}` : '';
+      const preloadImg = new Image();
+      preloadImg.src = `${API_URL}/api/v1/media/${nextItem.id}/thumbnail?size=1080${tokenParam}`;
+    }
+  }, [activeStory, storyIndex, authContextToken, API_URL]);
+
   const handleOpenStory = (reel: MemoryReel) => {
     setActiveStory(reel);
     setStoryIndex(0);
@@ -332,7 +344,7 @@ export default function MemoriesPage() {
                 />
               ) : (
                 <img
-                  src={`${API_URL}/api/v1/media/${currentItem.id}/view${tokenQuery}`}
+                  src={`${API_URL}/api/v1/media/${currentItem.id}/thumbnail?size=1080${tokenQuery ? `&${tokenQuery.slice(1)}` : ''}`}
                   alt={currentItem.filename}
                   className="w-full h-full object-contain animate-fadeIn"
                 />

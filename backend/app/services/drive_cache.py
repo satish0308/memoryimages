@@ -17,9 +17,33 @@ logger = logging.getLogger(__name__)
 # In-memory TTL cache for Google Drive CDN thumbnail links (TTL: 45 minutes, modeled after 9drive)
 _DRIVE_THUMBNAIL_CACHE: Dict[str, Dict[str, Any]] = {}
 
-def get_drive_service(db: Session):
-    """Initializes Google Drive API service using stored OAuth credentials."""
-    source = db.query(SyncSource).filter(SyncSource.sync_type == SyncType.GOOGLE_DRIVE).first()
+import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Persistent HTTP Session with connection pooling for high-performance Google CDN requests
+_HTTP_SESSION: Optional[requests.Session] = None
+
+def get_http_session() -> requests.Session:
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None:
+        s = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        s.mount("http://", adapter)
+        s.mount("https://", adapter)
+        _HTTP_SESSION = s
+    return _HTTP_SESSION
+
+def get_drive_service(db: Session, user_id: Optional[int] = None):
+    """Initializes Google Drive API service using stored OAuth credentials for the specified user."""
+    query = db.query(SyncSource).filter(SyncSource.sync_type == SyncType.GOOGLE_DRIVE)
+    if user_id:
+        source = query.filter(SyncSource.user_id == user_id).first()
+        if not source:
+            source = query.first()
+    else:
+        source = query.first()
+
     if not source or not source.oauth_tokens_json:
         return None
 
@@ -33,12 +57,12 @@ def get_drive_service(db: Session):
             client_secret=creds_info.get("client_secret"),
             scopes=creds_info.get("scopes")
         )
-        return build("drive", "v3", credentials=credentials)
+        return build("drive", "v3", credentials=credentials, cache_discovery=False)
     except Exception as e:
         logger.error(f"Failed to build Google Drive client: {e}")
         return None
 
-def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256) -> Optional[str]:
+def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256, user_id: Optional[int] = None) -> Optional[str]:
     """
     Retrieves high-speed Google CDN thumbnail link from in-memory cache or Google Drive API.
     Directly leverages Google's dynamic resizing parameter (=s{size}) with zero local disk usage.
@@ -49,7 +73,7 @@ def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256) -
         base_url = cached["url"]
         return re.sub(r"=s\d+", f"=s{size}", base_url) if "=s" in base_url else f"{base_url}=s{size}"
 
-    service = get_drive_service(db)
+    service = get_drive_service(db, user_id=user_id)
     if not service:
         return None
 
@@ -74,7 +98,7 @@ def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256) -
 
 _DRIVE_THUMBNAIL_BYTES_CACHE: Dict[str, bytes] = {}
 
-def fetch_google_drive_thumbnail_bytes(file_id: str, db: Session, size: int = 256) -> Optional[bytes]:
+def fetch_google_drive_thumbnail_bytes(file_id: str, db: Session, size: int = 256, user_id: Optional[int] = None) -> Optional[bytes]:
     """
     Fetches Google Drive CDN thumbnail bytes server-side with in-memory caching.
     This bypasses Google's Referer 429 anti-hotlinking block by fetching without browser referrer headers.
@@ -83,15 +107,13 @@ def fetch_google_drive_thumbnail_bytes(file_id: str, db: Session, size: int = 25
     if cache_key in _DRIVE_THUMBNAIL_BYTES_CACHE:
         return _DRIVE_THUMBNAIL_BYTES_CACHE[cache_key]
 
-    cdn_url = get_google_drive_thumbnail_url(file_id, db, size)
+    cdn_url = get_google_drive_thumbnail_url(file_id, db, size, user_id=user_id)
     if not cdn_url:
         return None
 
     try:
-        import requests
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        resp = requests.get(
+        session = get_http_session()
+        resp = session.get(
             cdn_url,
             timeout=8,
             verify=False,
@@ -123,12 +145,12 @@ def cache_drive_thumbnail_link(file_id: str, thumbnail_link: str):
             "expires_at": time.time() + (45 * 60)
         }
 
-def stream_google_drive_file(file_id: str, db: Session, chunk_size: int = 1024 * 512) -> Generator[bytes, None, None]:
+def stream_google_drive_file(file_id: str, db: Session, chunk_size: int = 1024 * 512, user_id: Optional[int] = None) -> Generator[bytes, None, None]:
     """
     Streams the raw, uncompressed original photo directly from Google Drive API in-memory.
     Yields chunks to FastAPI StreamingResponse with zero disk persistence.
     """
-    service = get_drive_service(db)
+    service = get_drive_service(db, user_id=user_id)
     if not service:
         raise RuntimeError("Google Drive service not available")
 
@@ -146,11 +168,11 @@ def stream_google_drive_file(file_id: str, db: Session, chunk_size: int = 1024 *
         buffer.seek(0)
         buffer.truncate(0)
 
-def download_drive_file_to_memory(file_id: str, db: Session) -> Optional[io.BytesIO]:
+def download_drive_file_to_memory(file_id: str, db: Session, user_id: Optional[int] = None) -> Optional[io.BytesIO]:
     """
     Downloads an entire photo directly into an in-memory BytesIO buffer for instant AI processing.
     """
-    service = get_drive_service(db)
+    service = get_drive_service(db, user_id=user_id)
     if not service:
         return None
 

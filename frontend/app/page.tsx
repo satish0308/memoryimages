@@ -118,21 +118,29 @@ export default function PhotosPage() {
     }
   };
 
+  // Main timeline & events fetching (isolated from in-memory smart filters to prevent network thrashing)
+  useEffect(() => {
+    if (!isAuthenticated || isLoading) return;
+    if (!searchQuery.trim()) {
+      fetchTimeline();
+      fetchEvents();
+    }
+  }, [isAuthenticated, isLoading, activeCategory, scale, collapseBursts]);
+
+  // Search execution (debounced and reactive to query and smart filter criteria)
   useEffect(() => {
     if (!isAuthenticated || isLoading) return;
 
-    if (!searchQuery.trim()) {
-      setSearchResults(null);
-      setIsSemanticResult(false);
-      fetchTimeline();
-      fetchEvents();
-    } else {
+    if (searchQuery.trim()) {
       const timeout = setTimeout(() => {
         executeSearch(searchQuery);
       }, 300);
       return () => clearTimeout(timeout);
+    } else {
+      setSearchResults(null);
+      setIsSemanticResult(false);
     }
-  }, [isAuthenticated, isLoading, activeCategory, scale, searchQuery, isSemanticSearch, smartFilters, collapseBursts]);
+  }, [searchQuery, isSemanticSearch, smartFilters, isAuthenticated, isLoading]);
 
   // Listen to background uploads completing for seamless zero-reload refresh
   useEffect(() => {

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import settings
 from app.database import engine, Base
@@ -23,6 +24,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compress JSON API responses (> 1KB) to accelerate network transfers and reduce bandwidth
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 from app.services.watcher import start_watcher, stop_watcher
 
@@ -72,7 +76,7 @@ def check_and_upgrade_schema(db_engine):
                 if "gdrive_backup_folder_name" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backup_folder_name VARCHAR(255)"))
                 if "gdrive_backed_up_at" not in columns:
-                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at DATETIME"))
+                    conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at TIMESTAMP"))
                 if "faces_scanned" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN faces_scanned BOOLEAN DEFAULT FALSE"))
                 if "user_id" not in columns:
