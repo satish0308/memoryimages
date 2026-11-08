@@ -61,6 +61,8 @@ service_account*.json
 *.crt
 *.p12
 *.pfx
+*.license
+minio.license
 
 # Logs
 *.log

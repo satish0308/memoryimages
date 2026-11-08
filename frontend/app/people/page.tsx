@@ -19,11 +19,15 @@ import {
   Eye,
   EyeOff,
   UserCheck,
-  ChevronDown
+  ChevronDown,
+  Square,
+  CheckSquare
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { SearchPersonModal } from '@/components/people/SearchPersonModal';
+import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
+import { useDragSelect } from '@/hooks/useDragSelect';
 import { useAuth } from '@/context/AuthContext';
 import { useTaskQueue } from '@/context/TaskQueueContext';
 
@@ -68,6 +72,7 @@ interface PersonPhotoItem {
   location_name: string | null;
   is_favorite: boolean;
   thumbnail_url: string;
+  file_size?: number;
 }
 
 interface MergeSuggestion {
@@ -129,6 +134,8 @@ export default function PeoplePage() {
   const [selectedPerson, setSelectedPerson] = useState<PersonItem | null>(null);
   const [personPhotos, setPersonPhotos] = useState<PersonPhotoItem[]>([]);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
 
   // Lightbox
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
@@ -242,6 +249,7 @@ export default function PeoplePage() {
   // Load photos when a person is selected
   const openPersonGallery = async (person: PersonItem) => {
     setSelectedPerson(person);
+    setSelectedPhotoIds([]);
     setLoadingPhotos(true);
     try {
       const token = getActiveToken();
@@ -256,6 +264,46 @@ export default function PeoplePage() {
       console.error('Error loading person photos:', e);
     } finally {
       setLoadingPhotos(false);
+    }
+  };
+
+  // 2D Drag-and-Select & Single-Click Select / Double-Click View Hook for Person Photos
+  const {
+    isDragging: isDragSelecting,
+    dragMode,
+    marqueeBox,
+    handlePointerDown,
+    handleItemClick,
+    handleItemDoubleClick,
+  } = useDragSelect({
+    selectedIds: selectedPhotoIds,
+    setSelectedIds: setSelectedPhotoIds,
+    orderedIds: personPhotos.map((p) => p.id),
+    onOpenLightbox: (id) => {
+      const idx = personPhotos.findIndex((p) => p.id === id);
+      if (idx !== -1) setSelectedPhotoIndex(idx);
+    },
+  });
+
+  const handleBatchTrashPersonPhotos = async (ids: number[]) => {
+    if (ids.length === 0) return;
+    if (!confirm(`Move ${ids.length} photo(s) to Trash?`)) return;
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/batch-delete`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ media_ids: ids, permanent: false }),
+      });
+      if (res.ok) {
+        setPersonPhotos((prev) => prev.filter((p) => !ids.includes(p.id)));
+        setSelectedPhotoIds([]);
+      }
+    } catch (e) {
+      console.error('Failed to trash photos:', e);
     }
   };
 
@@ -1130,8 +1178,63 @@ export default function PeoplePage() {
               </div>
             </div>
 
+            {/* Selection Action Toolbar */}
+            {personPhotos.length > 0 && (
+              <div className="px-6 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (selectedPhotoIds.length === personPhotos.length) {
+                        setSelectedPhotoIds([]);
+                      } else {
+                        setSelectedPhotoIds(personPhotos.map((p) => p.id));
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold transition"
+                  >
+                    {selectedPhotoIds.length === personPhotos.length ? (
+                      <CheckSquare className="w-4 h-4 text-indigo-600" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-400" />
+                    )}
+                    <span>{selectedPhotoIds.length === personPhotos.length ? 'Deselect All' : `Select All (${personPhotos.length})`}</span>
+                  </button>
+
+                  {selectedPhotoIds.length > 0 && (
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                      <strong className="text-indigo-600 dark:text-indigo-400">{selectedPhotoIds.length}</strong> photo{selectedPhotoIds.length !== 1 ? 's' : ''} selected
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowGooglePhotosModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold transition shadow-xs"
+                    title="Generate Google Photos search queries for these photos"
+                  >
+                    <Search className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Google Photos Query {selectedPhotoIds.length > 0 ? `(${selectedPhotoIds.length})` : ''}</span>
+                  </button>
+
+                  {selectedPhotoIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleBatchTrashPersonPhotos(selectedPhotoIds)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900 rounded-xl font-semibold transition"
+                      title="Move selected photos to trash"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Trash ({selectedPhotoIds.length})</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Photos Grid with Set Cover Buttons */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6" onPointerDown={handlePointerDown}>
               {loadingPhotos ? (
                 <div className="py-20 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
@@ -1143,43 +1246,68 @@ export default function PeoplePage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {personPhotos.map((photo, index) => (
-                    <div
-                      key={photo.id}
-                      onClick={() => setSelectedPhotoIndex(index)}
-                      className="group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border border-slate-200/60 dark:border-slate-800 hover:shadow-xl hover:scale-[1.02] transition-all duration-300"
-                    >
-                      <img
-                        src={buildMediaUrl(photo.thumbnail_url)}
-                        alt={photo.filename}
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                        loading="lazy"
-                      />
-
-                      {/* Set Cover Hover Button */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSetCover(selectedPerson.id, photo.id);
-                        }}
-                        className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-amber-600 text-white opacity-0 group-hover:opacity-100 transition shadow-md z-10"
-                        title="Set as profile cover"
+                  {personPhotos.map((photo, index) => {
+                    const isSelected = selectedPhotoIds.includes(photo.id);
+                    return (
+                      <div
+                        key={photo.id}
+                        data-media-id={photo.id}
+                        onPointerDown={(e) => handlePointerDown(e, photo.id)}
+                        onClick={(e) => handleItemClick(photo.id, e, personPhotos.map((p) => p.id))}
+                        onDoubleClick={(e) => handleItemDoubleClick(photo.id, e)}
+                        title="Click to select/deselect • Double-click to view full image • Click & drag to multi-select"
+                        className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                          isSelected
+                            ? 'border-indigo-600 ring-2 ring-indigo-500/40'
+                            : 'border-slate-200/60 dark:border-slate-800 hover:shadow-xl'
+                        }`}
                       >
-                        <Star className="w-3 h-3 text-amber-300" />
-                      </button>
+                        <img
+                          src={buildMediaUrl(photo.thumbnail_url)}
+                          alt={photo.filename}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 select-none pointer-events-none"
+                          loading="lazy"
+                          draggable={false}
+                        />
 
-                      {/* Bottom Details Vignette */}
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5">
-                        <p className="text-white text-[11px] font-semibold truncate leading-tight">
-                          {photo.filename}
-                        </p>
-                        <p className="text-slate-300 text-[10px] font-mono mt-0.5">
-                          {new Date(photo.captured_at).toLocaleDateString()}
-                        </p>
+                        {/* Multi-Select Checkbox */}
+                        <div className="absolute top-2 left-2 z-10 transition">
+                          <div
+                            className={`w-6 h-6 rounded-lg flex items-center justify-center backdrop-blur-md shadow-md transition ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white ring-2 ring-white/80'
+                                : 'bg-black/40 text-white/70 group-hover:bg-black/60 group-hover:text-white'
+                            }`}
+                          >
+                            {isSelected ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Square className="w-3.5 h-3.5" />}
+                          </div>
+                        </div>
+
+                        {/* Set Cover Hover Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetCover(selectedPerson.id, photo.id);
+                          }}
+                          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-amber-600 text-white opacity-0 group-hover:opacity-100 transition shadow-md z-10"
+                          title="Set as profile cover"
+                        >
+                          <Star className="w-3 h-3 text-amber-300" />
+                        </button>
+
+                        {/* Bottom Details Vignette */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5 pointer-events-none">
+                          <p className="text-white text-[11px] font-semibold truncate leading-tight">
+                            {photo.filename}
+                          </p>
+                          <p className="text-slate-300 text-[10px] font-mono mt-0.5">
+                            {new Date(photo.captured_at).toLocaleDateString()}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1311,6 +1439,63 @@ export default function PeoplePage() {
           }
         }}
       />
+
+      {/* Google Photos Cloud Deletion / Search Export Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={
+          selectedPhotoIds.length > 0
+            ? personPhotos
+                .filter((p) => selectedPhotoIds.includes(p.id))
+                .map((p) => ({
+                  id: p.id,
+                  filename: p.filename,
+                  file_size: p.file_size,
+                  captured_at: p.captured_at,
+                  thumbnail_url: p.thumbnail_url,
+                }))
+            : personPhotos.map((p) => ({
+                id: p.id,
+                filename: p.filename,
+                file_size: p.file_size,
+                captured_at: p.captured_at,
+                thumbnail_url: p.thumbnail_url,
+              }))
+        }
+        title={`Google Photos Query: ${selectedPerson?.name || 'Person Photos'}`}
+        subtitle="Search and manage this person's photos in your Google Photos cloud account"
+      />
+
+      {/* Floating 2D Drag Marquee Selection Box */}
+      {isDragSelecting && marqueeBox && (
+        <div
+          className={`fixed pointer-events-none z-50 rounded-lg transition-colors border-2 ${
+            dragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20 shadow-lg shadow-indigo-500/10'
+              : 'border-rose-500 bg-rose-500/20 shadow-lg shadow-rose-500/10'
+          }`}
+          style={{
+            left: `${marqueeBox.left}px`,
+            top: `${marqueeBox.top}px`,
+            width: `${marqueeBox.width}px`,
+            height: `${marqueeBox.height}px`,
+          }}
+        />
+      )}
+
+      {/* Drag Status Pill */}
+      {isDragSelecting && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-2xl backdrop-blur-md border border-slate-700/80 flex items-center gap-2 pointer-events-none animate-fadeIn">
+          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-indigo-400' : 'bg-rose-400'}`} />
+          <span>
+            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-slate-400 font-mono">
+            {selectedPhotoIds.length} selected
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -101,7 +101,7 @@ services:
     image: quay.io/minio/aistor/minio:latest
     container_name: memorypics-minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    command: server /data --console-address ":9001" --license /minio.license
     ports:
       - "${MINIO_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -110,6 +110,7 @@ services:
       - MINIO_ROOT_PASSWORD=${S3_SECRET_ACCESS_KEY:-minioadmin123}
     volumes:
       - minio_data:/data
+      - ./minio.license:/minio.license:ro
 
   db:
     image: pgvector/pgvector:pg16

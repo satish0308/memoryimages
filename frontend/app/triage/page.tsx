@@ -634,7 +634,15 @@ export default function TriagePage() {
     setSelectedIds,
     orderedIds: currentTabItemIds,
     onOpenLightbox: (id) => {
-      const allItems = [...screenshots, ...wallpapers, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
+      const allItems = [
+        ...screenshots,
+        ...wallpapers,
+        ...bills,
+        ...blurryPhotos,
+        ...largeFiles,
+        ...memes,
+        ...duplicates.flatMap((d) => d.items),
+      ];
       const found = allItems.find((i) => i.id === id);
       if (found) {
         setInspectingPhoto({
@@ -647,8 +655,8 @@ export default function TriagePage() {
           is_favorite: false,
           is_blurry: false,
           thumbnail_url: found.thumbnail_url,
-          source_type: found.source_type,
-          source_id: found.source_id,
+          source_type: 'source_type' in found ? (found.source_type as any) : 'local',
+          source_id: 'source_id' in found ? (found.source_id as any) : undefined,
         });
       }
     },
@@ -1850,33 +1858,57 @@ export default function TriagePage() {
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                    {cluster.items.map((item) => (
-                      <div
-                        key={item.id}
-                        onClick={() => setActiveCompareCluster(cluster)}
-                        className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border transition-all hover:scale-[1.02] ${
-                          item.is_best_shot
-                            ? 'border-amber-400 dark:border-amber-500 shadow-md ring-1 ring-amber-400/40'
-                            : 'border-slate-200 dark:border-slate-800 hover:border-indigo-500'
-                        }`}
-                      >
-                        <img
-                          src={`${API_URL}${item.thumbnail_url}`}
-                          alt={item.filename}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          loading="lazy"
-                        />
-                        {item.is_best_shot && (
-                          <div className="absolute top-1.5 left-1.5 bg-amber-500 text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-0.5">
-                            <Award className="w-2.5 h-2.5" />
-                            <span>Best Shot</span>
+                    {cluster.items.map((item) => {
+                      const isSelected = selectedIds.includes(item.id);
+                      return (
+                        <div
+                          key={item.id}
+                          data-media-id={item.id}
+                          onPointerDown={(e) => handlePointerDown(e, item.id)}
+                          onClick={(e) => handleItemClick(item.id, e, currentTabItemIds)}
+                          onDoubleClick={(e) => handleItemDoubleClick(item.id, e)}
+                          title="Click to select/deselect • Double-click to view full image • Click & drag to multi-select"
+                          className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                            isSelected
+                              ? 'border-indigo-600 ring-2 ring-indigo-500/40'
+                              : item.is_best_shot
+                              ? 'border-amber-400 dark:border-amber-500 shadow-md ring-1 ring-amber-400/40'
+                              : 'border-slate-200 dark:border-slate-800 hover:border-indigo-500'
+                          }`}
+                        >
+                          <img
+                            src={`${API_URL}${item.thumbnail_url}`}
+                            alt={item.filename}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform select-none pointer-events-none"
+                            loading="lazy"
+                            draggable={false}
+                          />
+
+                          {/* Multi-Select Checkbox */}
+                          <div className="absolute top-2 left-2 z-10 transition">
+                            <div
+                              className={`w-6 h-6 rounded-lg flex items-center justify-center backdrop-blur-md shadow-md transition ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white ring-2 ring-white/80'
+                                  : 'bg-black/40 text-white/70 group-hover:bg-black/60 group-hover:text-white'
+                              }`}
+                            >
+                              {isSelected ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Square className="w-3.5 h-3.5" />}
+                            </div>
                           </div>
-                        )}
-                        <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded-md font-mono">
-                          {((item.file_size || 0) / (1024 * 1024)).toFixed(1)}MB
+
+                          {item.is_best_shot && (
+                            <div className="absolute top-1.5 right-1.5 bg-amber-500 text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-0.5 z-10">
+                              <Award className="w-2.5 h-2.5" />
+                              <span>Best Shot</span>
+                            </div>
+                          )}
+                          <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded-md font-mono pointer-events-none">
+                            {((item.file_size || 0) / (1024 * 1024)).toFixed(1)}MB
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}

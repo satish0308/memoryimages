@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.config import settings
-from app.models.media import Media
+from app.models.media import Media, MediaCategory
 from app.models.person import Person, FaceDetection
 
 logger = logging.getLogger("memorypics.face_engine")
@@ -426,7 +426,7 @@ def align_face_crop(img: Image.Image, landmarks_norm: np.ndarray, output_size=(1
         logger.debug(f"Affine alignment error: {e}")
     return None
 
-def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.50) -> List[Dict[str, Any]]:
+def detect_faces_in_image(image_input: Any, conf_threshold: float = 0.30) -> List[Dict[str, Any]]:
     """Runs state-of-the-art SCRFD detector, with automatic fallback to UltraFace."""
     if isinstance(image_input, Image.Image):
         img_rgb = image_input.convert('RGB')
@@ -450,7 +450,7 @@ def extract_arcface_embedding(face_crop: Image.Image) -> Optional[np.ndarray]:
     if sess is None:
         return None
     try:
-        if face_crop.width < 35 or face_crop.height < 35:
+        if face_crop.width < 20 or face_crop.height < 20:
             return None
 
         crop_112 = face_crop.convert("RGB").resize((112, 112), Image.Resampling.LANCZOS)
@@ -554,7 +554,12 @@ def detect_pets_in_image(image_input: Any, conf_threshold: float = 0.45) -> List
         logger.error(f"Pet detection failed: {e}")
         return []
 
-def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) -> List[FaceDetection]:
+def process_faces_for_media(
+    db: Session,
+    media: Media,
+    overwrite: bool = False,
+    conf_threshold: Optional[float] = None
+) -> List[FaceDetection]:
     """Detects faces & computes ArcFace 512-d embeddings for a photo (supports local and cloud in-memory)."""
     existing = db.query(FaceDetection).filter(FaceDetection.media_id == media.id).all()
     if existing and not overwrite:
@@ -601,8 +606,17 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
         db.commit()
         return []
 
+    # Adaptive confidence threshold: screenshots and document previews often contain
+    # smaller embedded portraits, profile avatars, or downscaled photos where SCRFD confidence is 0.25 - 0.45.
+    if conf_threshold is None:
+        is_screenshot_or_doc = (
+            (hasattr(media, "category") and media.category in (MediaCategory.SCREENSHOT, MediaCategory.DOCUMENT_BILL))
+            or (media.filename and any(k in media.filename.lower() for k in ("screenshot", "screen_shot", "snap", "docs", "doc_")))
+        )
+        conf_threshold = 0.25 if is_screenshot_or_doc else 0.30
+
     W, H = img.size
-    detected = detect_faces_in_image(img)
+    detected = detect_faces_in_image(img, conf_threshold=conf_threshold)
     created_detections = []
 
     for d in detected:
@@ -624,7 +638,7 @@ def process_faces_for_media(db: Session, media: Media, overwrite: bool = False) 
             crop = img.crop((max(0, cx - half), max(0, cy - half), min(W, cx + half), min(H, cy + half)))
         
         # Verify crop size and ArcFace validation
-        if crop.width < 35 or crop.height < 35:
+        if crop.width < 20 or crop.height < 20:
             continue
 
         emb = extract_arcface_embedding(crop)

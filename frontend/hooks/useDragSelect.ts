@@ -38,6 +38,7 @@ export function useDragSelect({
   const isDraggingRef = useRef(false);
   const justFinishedDragRef = useRef(false);
   const lastSelectedIdRef = useRef<number | null>(null);
+  const lastToggledSelectionRef = useRef<{ id: number; action: 'added' | 'removed' } | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const autoScrollRafRef = useRef<number | null>(null);
 
@@ -70,7 +71,13 @@ export function useDragSelect({
     };
     setMarqueeBox(box);
 
-    // Fast Bounding Box & Row/Column Intersection calculation
+    // Bounding Box with slight padding for ultra-responsive row and column sweeps
+    const pad = 6;
+    const testLeft = boxLeft - pad;
+    const testTop = boxTop - pad;
+    const testRight = boxLeft + boxWidth + pad;
+    const testBottom = boxTop + boxHeight + pad;
+
     const cards = document.querySelectorAll<HTMLElement>('[data-media-id]');
     const enclosedIds = new Set<number>();
 
@@ -82,10 +89,10 @@ export function useDragSelect({
 
       // Check if card intersects the 2D drag rectangle (covers fast sweeps, row sweeps, column sweeps, and boxes)
       const intersects = !(
-        rect.right < box.left ||
-        rect.left > box.left + box.width ||
-        rect.bottom < box.top ||
-        rect.top > box.top + box.height
+        rect.right < testLeft ||
+        rect.left > testRight ||
+        rect.bottom < testTop ||
+        rect.top > testBottom
       );
 
       if (intersects) {
@@ -95,10 +102,32 @@ export function useDragSelect({
 
     // Also check current element directly under pointer as fallback
     const curEl = document.elementFromPoint(cur.clientX, cur.clientY)?.closest('[data-media-id]');
+    let curId: number | null = null;
     if (curEl) {
-      const curId = Number(curEl.getAttribute('data-media-id'));
-      if (!isNaN(curId)) {
-        enclosedIds.add(curId);
+      const parsed = Number(curEl.getAttribute('data-media-id'));
+      if (!isNaN(parsed)) {
+        curId = parsed;
+        enclosedIds.add(parsed);
+      }
+    }
+
+    // Line / Row Sweep Support: If dragged along a row line or between two items in reading order
+    if (startIdRef.current !== null && curId !== null && startIdRef.current !== curId) {
+      const itemsList = orderedIdsRef.current;
+      if (itemsList && itemsList.length > 0) {
+        const fromIdx = itemsList.indexOf(startIdRef.current);
+        const toIdx = itemsList.indexOf(curId);
+        if (fromIdx !== -1 && toIdx !== -1) {
+          // If the user swept horizontally across a row line (boxWidth >= boxHeight * 0.9)
+          // or swept across consecutive items, auto-select all items in the row range
+          if (boxWidth >= boxHeight * 0.9 || Math.abs(fromIdx - toIdx) <= 12) {
+            const minIdx = Math.min(fromIdx, toIdx);
+            const maxIdx = Math.max(fromIdx, toIdx);
+            for (let i = minIdx; i <= maxIdx; i++) {
+              enclosedIds.add(itemsList[i]);
+            }
+          }
+        }
       }
     }
 
@@ -179,6 +208,13 @@ export function useDragSelect({
         autoScrollRafRef.current = requestAnimationFrame(checkAutoScroll);
       };
 
+      // Prevent native browser image ghost-drag during pointer movement
+      const onWindowDragStart = (dragEvent: DragEvent) => {
+        if (isDraggingRef.current) {
+          dragEvent.preventDefault();
+        }
+      };
+
       // Window pointermove handler for high-frequency coordinate tracking
       const onWindowPointerMove = (moveEvent: PointerEvent) => {
         if (!startPosRef.current) return;
@@ -187,8 +223,8 @@ export function useDragSelect({
         const dy = moveEvent.pageY - startPosRef.current.pageY;
         const dist = Math.hypot(dx, dy);
 
-        // Engage drag after 4px threshold
-        if (!isDraggingRef.current && dist > 4) {
+        // Engage drag after 10px threshold (prevents micro-movements on double-click from starting a drag)
+        if (!isDraggingRef.current && dist > 10) {
           isDraggingRef.current = true;
           setIsDragging(true);
           document.body.style.userSelect = 'none';
@@ -203,19 +239,20 @@ export function useDragSelect({
             pageY: moveEvent.pageY,
           };
 
-          if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-          rafIdRef.current = requestAnimationFrame(() => {
-            updateSelection(mode);
-          });
+          // Synchronously run updateSelection so fast drags never lag or miss items
+          updateSelection(mode);
         }
       };
 
       const onWindowPointerUp = () => {
         if (isDraggingRef.current) {
+          // Immediately flush the final selection update synchronously so fast mouse releases never drop items
+          updateSelection(mode);
+
           justFinishedDragRef.current = true;
           setTimeout(() => {
             justFinishedDragRef.current = false;
-          }, 150);
+          }, 200);
         }
 
         if (autoScrollRafRef.current) {
@@ -238,11 +275,13 @@ export function useDragSelect({
         window.removeEventListener('pointermove', onWindowPointerMove);
         window.removeEventListener('pointerup', onWindowPointerUp);
         window.removeEventListener('pointercancel', onWindowPointerUp);
+        window.removeEventListener('dragstart', onWindowDragStart);
       };
 
       window.addEventListener('pointermove', onWindowPointerMove);
       window.addEventListener('pointerup', onWindowPointerUp);
       window.addEventListener('pointercancel', onWindowPointerUp);
+      window.addEventListener('dragstart', onWindowDragStart);
     },
     [setSelectedIds, updateSelection]
   );
@@ -251,7 +290,7 @@ export function useDragSelect({
   const handleItemClick = useCallback(
     (id: number, e: React.MouseEvent, visibleIds?: number[]) => {
       // If user was dragging, ignore the click event on release
-      if (justFinishedDragRef.current) {
+      if (justFinishedDragRef.current || isDraggingRef.current) {
         return;
       }
 
@@ -283,6 +322,10 @@ export function useDragSelect({
         }
       }
 
+      // Track the toggle action so double-click can revert it
+      const wasSelected = selectedIdsRef.current.includes(id);
+      lastToggledSelectionRef.current = { id, action: wasSelected ? 'removed' : 'added' };
+
       // Normal single click: toggle selection
       setSelectedIds((prev) =>
         prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
@@ -296,11 +339,22 @@ export function useDragSelect({
   const handleItemDoubleClick = useCallback(
     (id: number, e: React.MouseEvent) => {
       e.stopPropagation();
+      e.preventDefault();
+
+      // If the photo was just toggled by the first click of this double-click sequence, revert it!
+      if (lastToggledSelectionRef.current && lastToggledSelectionRef.current.id === id) {
+        const { action } = lastToggledSelectionRef.current;
+        setSelectedIds((prev) =>
+          action === 'added' ? prev.filter((i) => i !== id) : [...prev, id]
+        );
+        lastToggledSelectionRef.current = null;
+      }
+
       if (onOpenLightbox) {
         onOpenLightbox(id);
       }
     },
-    [onOpenLightbox]
+    [onOpenLightbox, setSelectedIds]
   );
 
   return {

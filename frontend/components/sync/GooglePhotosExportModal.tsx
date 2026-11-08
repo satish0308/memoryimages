@@ -59,9 +59,9 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
       const lastDot = clean.lastIndexOf('.');
       if (lastDot > 0) clean = clean.substring(0, lastDot);
     }
-    // Clean existing quotes then wrap in quotes if spaces are present
+    // Clean existing quotes then wrap in quotes if spaces or special syntax are present
     clean = clean.replace(/"/g, '');
-    if (/\s/.test(clean)) {
+    if (/\s|[()[\]]|^[-]/.test(clean)) {
       return `"${clean}"`;
     }
     return clean;

@@ -897,7 +897,7 @@ export default function PhotosPage() {
       <GooglePhotosExportModal
         isOpen={showGooglePhotosModal}
         onClose={() => setShowGooglePhotosModal(false)}
-        items={allPhotos.filter((p) => selectedIds.includes(p.id))}
+        items={(searchResults || allPhotos).filter((p) => selectedIds.includes(p.id))}
         title="Google Photos Cloud Deletion Helper"
         subtitle="Search and trash selected photos in your Google Photos cloud account"
       />

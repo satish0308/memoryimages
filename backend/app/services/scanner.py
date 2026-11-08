@@ -774,7 +774,12 @@ def scan_file_in_memory(
         from app.services.face_engine import detect_faces_in_image
         buffer.seek(0)
         with Image.open(buffer) as img_faces:
-            face_boxes = detect_faces_in_image(img_faces)
+            is_screenshot = (
+                media.category == MediaCategory.SCREENSHOT
+                or ('screenshot' in (media.filename or '').lower())
+            )
+            thresh = 0.25 if is_screenshot else 0.30
+            face_boxes = detect_faces_in_image(img_faces, conf_threshold=thresh)
             if face_boxes:
                 from app.models.person import FaceDetection
                 for b in face_boxes:
