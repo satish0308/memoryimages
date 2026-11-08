@@ -32,13 +32,11 @@ import {
   Layers
 } from 'lucide-react';
 
-import { 
-  DuplicateResolverModal, 
-  DuplicateCluster 
-} from '@/components/triage/DuplicateResolverModal';
+import { DuplicateResolverModal, DuplicateCluster } from '@/components/triage/DuplicateResolverModal';
 import { BillInspectorModal } from '@/components/triage/BillInspectorModal';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
+import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { useAuth } from '@/context/AuthContext';
 
@@ -230,6 +228,23 @@ export default function TriagePage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isResolvingAll, setIsResolvingAll] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
+
+  const getSelectedItemsData = useCallback(() => {
+    const allItems = [...screenshots, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
+    const itemMap = new Map<number, { id: number; filename: string; file_size?: number; captured_at?: string }>();
+    for (const item of allItems) {
+      if (selectedIds.includes(item.id)) {
+        itemMap.set(item.id, {
+          id: item.id,
+          filename: item.filename,
+          file_size: item.file_size,
+          captured_at: 'captured_at' in item ? (item.captured_at as string) : undefined
+        });
+      }
+    }
+    return Array.from(itemMap.values());
+  }, [screenshots, bills, blurryPhotos, largeFiles, memes, selectedIds]);
 
   // Time Grouping & Collapse States
   const [timeGrouping, setTimeGrouping] = useState<TimeGrouping>('month');
@@ -805,6 +820,16 @@ export default function TriagePage() {
                 <span>Mark Sharp / Keep</span>
               </button>
             )}
+
+            {/* Google Photos Search Export */}
+            <button
+              onClick={() => setShowGooglePhotosModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition shadow-sm"
+              title="Export Google Photos search query for selected items"
+            >
+              <Search className="w-3.5 h-3.5 text-blue-400" />
+              <span>Google Photos Query ({selectedIds.length})</span>
+            </button>
 
             {/* Delete Selected */}
             <button
@@ -1777,6 +1802,8 @@ export default function TriagePage() {
       <BulkDeleteModal
         isOpen={showBulkDeleteModal}
         itemCount={selectedIds.length}
+        filenames={getSelectedItemsData().map((i) => i.filename)}
+        onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
         itemType={
           activeTab === 'memes' ? 'memes & graphics' :
           activeTab === 'screenshots' ? 'screenshots' :
@@ -1786,6 +1813,15 @@ export default function TriagePage() {
         }
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={executeBatchDelete}
+      />
+
+      {/* Google Photos Deletion Search Helper Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={getSelectedItemsData()}
+        title="Triage Google Photos Deletion Helper"
+        subtitle="Search and trash selected clutter items in your Google Photos cloud account"
       />
     </div>
   );

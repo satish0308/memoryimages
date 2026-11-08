@@ -11,6 +11,7 @@ import sys
 import argparse
 import subprocess
 import json
+import urllib.parse
 from typing import List, Dict, Any
 
 CONTAINER_MOUNT_PREFIX = "/data/originals/all_extracts/"
@@ -107,6 +108,14 @@ def main():
         help="Execute deletion immediately without interactive confirmation."
     )
     parser.add_argument(
+        "--google-photos", "--gp", action="store_true",
+        help="Display optimized Google Photos search queries and links to easily delete these in cloud."
+    )
+    parser.add_argument(
+        "--save-query", type=str, default=None,
+        help="Save Google Photos search query or filenames list to specified file path."
+    )
+    parser.add_argument(
         "--host-prefix", default=DEFAULT_HOST_MOUNT_PREFIX,
         help=f"Host filesystem path mapping for {CONTAINER_MOUNT_PREFIX} (default: {DEFAULT_HOST_MOUNT_PREFIX})"
     )
@@ -161,6 +170,33 @@ def main():
     print(f"\n📊 Total Space to Reclaim: {format_size(total_bytes)}")
     print(f"   Files on Disk to Delete: {sum(1 for _, p, _ in valid_files_to_delete if p is not None)}")
     print(f"   Stale DB Records to Clean: {sum(1 for _, p, _ in valid_files_to_delete if p is None)}")
+
+    filenames = [item["filename"] for item in pending if item.get("filename")]
+    if args.google_photos or args.save_query:
+        print("\n=================================================================")
+        print("  Google Photos Search Queries (For Cloud Deletion)")
+        print("=================================================================")
+        batch_size = 15
+        query_lines = []
+        for i in range(0, len(filenames), batch_size):
+            chunk = filenames[i:i + batch_size]
+            b_query = " OR ".join(chunk)
+            query_lines.append(b_query)
+            encoded = urllib.parse.quote(b_query)
+            print(f"\n[Batch {i // batch_size + 1}] ({len(chunk)} files):")
+            print(f"Query : {b_query}")
+            print(f"URL   : https://photos.google.com/search/{encoded}")
+
+        if args.save_query:
+            try:
+                with open(args.save_query, "w", encoding="utf-8") as f:
+                    f.write("\n\n".join(query_lines))
+                print(f"\n💾 Saved Google Photos query to: {args.save_query}")
+            except Exception as e:
+                print(f"\n✗ Error saving query file: {e}", file=sys.stderr)
+
+        if not args.yes and not args.dry_run:
+            print("\nTip: In Google Photos web, select matches and press 'Shift + #' to trash.")
 
     if args.dry_run:
         print("\n🔎 Dry-run mode enabled: No files were touched or deleted.")

@@ -10,13 +10,19 @@ import {
   CheckCircle2, 
   RotateCcw, 
   CloudOff,
-  Loader2
+  Loader2,
+  Search,
+  ExternalLink,
+  Copy,
+  Check
 } from 'lucide-react';
 
 export interface BulkDeleteModalProps {
   isOpen: boolean;
   itemCount: number;
   itemType?: string; // e.g. "items", "photos", "memes", "screenshots"
+  filenames?: string[];
+  onOpenGooglePhotosHelper?: () => void;
   onClose: () => void;
   onConfirm: (permanent: boolean) => Promise<void> | void;
 }
@@ -25,12 +31,15 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
   isOpen,
   itemCount,
   itemType = 'items',
+  filenames = [],
+  onOpenGooglePhotosHelper,
   onClose,
   onConfirm,
 }) => {
   const [deleteMode, setDeleteMode] = useState<'soft' | 'hard'>('soft');
   const [confirmHardDelete, setConfirmHardDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copiedGp, setCopiedGp] = useState(false);
 
   // Reset state whenever modal is opened
   useEffect(() => {
@@ -38,6 +47,7 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
       setDeleteMode('soft');
       setConfirmHardDelete(false);
       setIsDeleting(false);
+      setCopiedGp(false);
     }
   }, [isOpen]);
 
@@ -213,6 +223,55 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
                     I understand and confirm permanent deletion of {itemCount} {itemType}.
                   </span>
                 </label>
+
+                {/* Google Photos Helper Box */}
+                {(onOpenGooglePhotosHelper || (filenames && filenames.length > 0)) && (
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 text-xs mt-2">
+                    <div className="flex items-center gap-2">
+                      <Search className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                      <span className="text-slate-700 dark:text-slate-300 font-medium">
+                        Photos backed up on Google Photos?
+                      </span>
+                    </div>
+                    {onOpenGooglePhotosHelper ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenGooglePhotosHelper();
+                        }}
+                        className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 flex items-center gap-1 shrink-0 ml-2"
+                      >
+                        <span>Open GP Search Helper</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const query = filenames.slice(0, 15).join(' OR ');
+                          navigator.clipboard.writeText(query);
+                          setCopiedGp(true);
+                          setTimeout(() => setCopiedGp(false), 3000);
+                        }}
+                        className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 flex items-center gap-1 shrink-0 ml-2"
+                      >
+                        {copiedGp ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-500" />
+                            <span>Query Copied!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy GP Query</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

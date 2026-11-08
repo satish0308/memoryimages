@@ -1,9 +1,10 @@
 import os
 import logging
+import urllib.parse
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -183,3 +184,75 @@ def confirm_disk_purged(
         "skipped_count": skipped_count,
         "skipped_items": skipped_reasons
     }
+
+@router.get("/google-photos-query")
+def get_google_photos_purge_query(
+    batch_size: int = 15,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generates optimized Google Photos search queries for all items currently
+    marked for permanent deletion on read-only mounts.
+    """
+    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    if not current_user.is_admin:
+        query = query.filter(Media.user_id == current_user.id)
+
+    items = query.order_by(Media.marked_for_deletion_at.desc().nullslast()).all()
+    filenames = [m.filename for m in items if m.filename]
+
+    batches = []
+    for i in range(0, len(filenames), batch_size):
+        chunk = filenames[i:i + batch_size]
+        q_str = " OR ".join(chunk)
+        batches.append({
+            "batch_index": len(batches) + 1,
+            "count": len(chunk),
+            "query": q_str,
+            "google_photos_url": f"https://photos.google.com/search/{urllib.parse.quote(q_str)}"
+        })
+
+    return {
+        "total_count": len(filenames),
+        "filenames": filenames,
+        "full_query": " OR ".join(filenames),
+        "batches": batches
+    }
+
+@router.get("/export-csv")
+def export_pending_purge_csv(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Exports a downloadable CSV report of all items marked for permanent deletion,
+    including mapped host paths, file sizes, and Google Photos direct search URLs.
+    """
+    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    if not current_user.is_admin:
+        query = query.filter(Media.user_id == current_user.id)
+
+    items = query.order_by(Media.marked_for_deletion_at.desc().nullslast()).all()
+
+    lines = ["Filename,Size_Bytes,Size_MB,Host_Path,Date_Marked,Google_Photos_Search_URL"]
+    for m in items:
+        host_p = map_container_to_host_path(m.original_path) or ""
+        size_bytes = m.file_size or 0
+        size_mb = f"{(size_bytes / (1024 * 1024)):.2f}"
+        marked = m.marked_for_deletion_at.isoformat() if m.marked_for_deletion_at else ""
+        encoded_fn = urllib.parse.quote(m.filename or "")
+        search_url = f"https://photos.google.com/search/{encoded_fn}"
+
+        clean_fn = (m.filename or "").replace('"', '""')
+        clean_path = host_p.replace('"', '""')
+        lines.append(f'"{clean_fn}",{size_bytes},{size_mb},"{clean_path}","{marked}","{search_url}"')
+
+    csv_data = "\n".join(lines)
+    filename = f"google_photos_deletion_list_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
