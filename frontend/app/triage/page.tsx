@@ -553,18 +553,58 @@ export default function TriagePage() {
     else if (activeTab === 'memes') fetchMemes();
   }, [activeTab, fetchOverview, fetchScreenshots, fetchWallpapers, fetchBills, fetchDuplicates, fetchBlurry, fetchLargeFiles, fetchMemes]);
 
+  const refreshCurrentTab = useCallback(() => {
+    if (activeTab === 'screenshots') fetchScreenshots();
+    else if (activeTab === 'wallpapers') fetchWallpapers();
+    else if (activeTab === 'bills') fetchBills();
+    else if (activeTab === 'duplicates') fetchDuplicates();
+    else if (activeTab === 'blurry') fetchBlurry();
+    else if (activeTab === 'large_files') fetchLargeFiles();
+    else if (activeTab === 'memes') fetchMemes();
+  }, [activeTab, fetchScreenshots, fetchWallpapers, fetchBills, fetchDuplicates, fetchBlurry, fetchLargeFiles, fetchMemes]);
+
+  // Filtered bills by OCR search
+  const filteredBills = useMemo(() => {
+    if (!billSearchQuery.trim()) return bills;
+    const q = billSearchQuery.toLowerCase();
+    return bills.filter(
+      (b) => b.filename.toLowerCase().includes(q) || (b.extracted_text && b.extracted_text.toLowerCase().includes(q))
+    );
+  }, [bills, billSearchQuery]);
+
+  // Filtered screenshots by age, orientation, and content type (People vs Text)
+  const filteredScreenshots = useMemo(() => {
+    let list = screenshots;
+    if (screenshotFilter === 'expired') list = list.filter((s) => s.is_expired);
+    else if (screenshotFilter === 'recent') list = list.filter((s) => !s.is_expired);
+
+    if (screenshotOrientation === 'portrait') {
+      list = list.filter((s) => s.is_portrait || (s.height && s.width && s.height >= s.width));
+    } else if (screenshotOrientation === 'desktop') {
+      list = list.filter((s) => s.is_landscape || (s.height && s.width && s.width > s.height));
+    }
+
+    if (screenshotContentType === 'text_only') {
+      list = list.filter((s) => !s.has_faces);
+    } else if (screenshotContentType === 'with_people') {
+      list = list.filter((s) => Boolean(s.has_faces));
+    }
+    return list;
+  }, [screenshots, screenshotFilter, screenshotOrientation, screenshotContentType]);
+
   // Current items for active tab selection
   const currentTabItemIds = useMemo(() => {
     if (activeTab === 'screenshots') {
       return filteredScreenshots.map((s) => s.id);
     }
     if (activeTab === 'wallpapers') return wallpapers.map((w) => w.id);
-    if (activeTab === 'bills') return bills.map((b) => b.id);
+    if (activeTab === 'bills') return filteredBills.map((b) => b.id);
     if (activeTab === 'blurry') return blurryPhotos.map((b) => b.id);
     if (activeTab === 'large_files') return largeFiles.map((l) => l.id);
     if (activeTab === 'memes') return memes.map((m) => m.id);
+    if (activeTab === 'duplicates') return duplicates.flatMap((d) => d.items.map((i) => i.id));
     return [];
-  }, [activeTab, screenshots, screenshotFilter, wallpapers, bills, blurryPhotos, largeFiles, memes]);
+  }, [activeTab, filteredScreenshots, filteredBills, wallpapers, blurryPhotos, largeFiles, memes, duplicates]);
 
   const isAllSelected = currentTabItemIds.length > 0 && currentTabItemIds.every((id) => selectedIds.includes(id));
 
@@ -756,45 +796,6 @@ export default function TriagePage() {
       setIsResolvingAll(false);
     }
   };
-
-  const refreshCurrentTab = () => {
-    if (activeTab === 'screenshots') fetchScreenshots();
-    else if (activeTab === 'wallpapers') fetchWallpapers();
-    else if (activeTab === 'bills') fetchBills();
-    else if (activeTab === 'duplicates') fetchDuplicates();
-    else if (activeTab === 'blurry') fetchBlurry();
-    else if (activeTab === 'large_files') fetchLargeFiles();
-    else if (activeTab === 'memes') fetchMemes();
-  };
-
-  // Filtered bills by OCR search
-  const filteredBills = useMemo(() => {
-    if (!billSearchQuery.trim()) return bills;
-    const q = billSearchQuery.toLowerCase();
-    return bills.filter(
-      (b) => b.filename.toLowerCase().includes(q) || (b.extracted_text && b.extracted_text.toLowerCase().includes(q))
-    );
-  }, [bills, billSearchQuery]);
-
-  // Filtered screenshots by age, orientation, and content type (People vs Text)
-  const filteredScreenshots = useMemo(() => {
-    let list = screenshots;
-    if (screenshotFilter === 'expired') list = list.filter((s) => s.is_expired);
-    else if (screenshotFilter === 'recent') list = list.filter((s) => !s.is_expired);
-
-    if (screenshotOrientation === 'portrait') {
-      list = list.filter((s) => s.is_portrait || (s.height && s.width && s.height >= s.width));
-    } else if (screenshotOrientation === 'desktop') {
-      list = list.filter((s) => s.is_landscape || (s.height && s.width && s.width > s.height));
-    }
-
-    if (screenshotContentType === 'text_only') {
-      list = list.filter((s) => !s.has_faces);
-    } else if (screenshotContentType === 'with_people') {
-      list = list.filter((s) => Boolean(s.has_faces));
-    }
-    return list;
-  }, [screenshots, screenshotFilter, screenshotOrientation, screenshotContentType]);
 
   // Time-grouped collections for Week / Month / Year triage views
   const memeGroups = useMemo(() => {
