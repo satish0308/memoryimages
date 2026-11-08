@@ -44,6 +44,7 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **High-DPI Retina Thumbnails**: Ultra-crisp 512px WebP thumbnails rendered with Display P3 color profile preservation and smooth progressive blur backdrops.
 - **Pinch-to-Zoom Timeline Scaling**: Switch seamlessly between **Day**, **Month**, and **Year** chronological zoom levels.
 - **Dynamic Density Scaling**: Adjust grid density from a 10-column compact bird's-eye view to a 4-column detailed card layout.
+- **People Presence Sub-Grouping & With/Without People Mode**: Segregate your library into **Photos with People** (portraits, family memories, selfies, gatherings) and **Photos without People** (nature, landscapes, scenery, travel vistas, architecture, receipts & objects). Includes 1-click filter pills (`All`, `👤 With People`, `🌿 Without People`), dynamic count badges, an optional dual-section split view (**"Group by People"**), and individual face count badges on cards (`👤 2`).
 - **Universal 2D Drag-and-Select & Quick Sweeps**: Click and drag across any photo grid to draw a 2D selection marquee. Includes synchronous pointer release flushing for lightning-fast sweeps, row & column linear sweep auto-selection, single-click select/deselect toggle, and double-click to immediately open full-screen Lightbox.
 - **Group & Batch Multi-Selection**: Select entire months, years, or custom batches with 1-click selection headers and a floating bulk action dock (Favorite, Recategorize, Location Tagging, AI Enhance, Parallel ZIP Export, Google Photos Query Export).
 

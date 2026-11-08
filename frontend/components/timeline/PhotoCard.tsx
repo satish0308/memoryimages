@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Heart, Trash2, Check, Play, Layers, Award, Sparkles, Crown, AlertTriangle, Cloud } from 'lucide-react';
+import { Heart, Trash2, Check, Play, Layers, Award, Sparkles, Crown, AlertTriangle, Cloud, Users } from 'lucide-react';
 import { getCachedThumbnailUrl, prefetchAndCacheThumbnail } from '@/utils/thumbnailCache';
 
 export interface MediaItem {
@@ -14,6 +14,8 @@ export interface MediaItem {
   is_favorite: boolean;
   is_blurry: boolean;
   blurriness_score?: number;
+  has_faces?: boolean;
+  face_count?: number;
   file_size?: number;
   camera_make?: string | null;
   camera_model?: string | null;
@@ -283,6 +285,15 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
           >
             <Crown className="w-2.5 h-2.5 fill-slate-950 text-slate-950" />
             <span>BEST SHOT</span>
+          </span>
+        )}
+        {item.has_faces && (
+          <span
+            className="bg-indigo-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm"
+            title={`${item.face_count || 1} person${(item.face_count || 1) > 1 ? 's' : ''} detected`}
+          >
+            <Users className="w-2.5 h-2.5 text-white" />
+            <span>{item.face_count && item.face_count > 1 ? item.face_count : 'People'}</span>
           </span>
         )}
         {item.category === 'screenshot' && (

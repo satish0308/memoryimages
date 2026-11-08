@@ -16,7 +16,8 @@ import {
   Film,
   Smile,
   Palette,
-  Play
+  Play,
+  Users
 } from 'lucide-react';
 
 export interface SmartFilters {
@@ -33,6 +34,7 @@ export interface SmartFilters {
   color: string;
   mediaType: 'all' | 'photos' | 'videos';
   smilingOnly: boolean;
+  peoplePresence: 'all' | 'with_people' | 'without_people';
 }
 
 export const DEFAULT_SMART_FILTERS: SmartFilters = {
@@ -48,6 +50,7 @@ export const DEFAULT_SMART_FILTERS: SmartFilters = {
   color: 'all',
   mediaType: 'all',
   smilingOnly: false,
+  peoplePresence: 'all',
 };
 
 interface SmartFilterDrawerProps {
@@ -302,7 +305,35 @@ export const SmartFilterDrawer: React.FC<SmartFilterDrawerProps> = ({
             )}
           </div>
 
-          {/* 5. Photo Orientation */}
+          {/* 5. People & Faces */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <Users className="w-3.5 h-3.5" />
+              <span>People & Faces</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: 'all', label: 'All Photos' },
+                { id: 'with_people', label: '👤 With People' },
+                { id: 'without_people', label: '🌿 Scenery / No People' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => update({ peoplePresence: opt.id as SmartFilters['peoplePresence'] })}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-medium border transition ${
+                    filters.peoplePresence === opt.id
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 6. Photo Orientation */}
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <Maximize2 className="w-3.5 h-3.5" />

@@ -60,6 +60,7 @@ def search_photos(
         # Merge results, strictly enforcing current_user.id ownership via single batch query (eliminating N+1)
         all_candidate_ids = list(set([p["id"] for p in photo_results] + [v["id"] for v in video_results]))
         media_map = {}
+        face_counts = {}
         if all_candidate_ids:
             found_records = db.query(Media).filter(
                 Media.id.in_(all_candidate_ids),
@@ -67,6 +68,14 @@ def search_photos(
                 Media.is_deleted == False
             ).all()
             media_map = {m.id: m for m in found_records}
+            face_counts = dict(
+                db.query(
+                    FaceDetection.media_id,
+                    func.count(FaceDetection.id)
+                ).filter(
+                    FaceDetection.media_id.in_(all_candidate_ids)
+                ).group_by(FaceDetection.media_id).all()
+            )
 
         all_results = []
         for p in photo_results:
@@ -76,6 +85,8 @@ def search_photos(
             all_results.append({
                 **p,
                 "is_video": False,
+                "has_faces": p["id"] in face_counts,
+                "face_count": face_counts.get(p["id"], 0),
                 "mood": p_media.mood,
                 "mood_score": p_media.mood_score or 0.0,
                 "is_smiling": p_media.is_smiling or False,
@@ -92,6 +103,8 @@ def search_photos(
                 continue
             all_results.append({
                 **v,
+                "has_faces": v["id"] in face_counts,
+                "face_count": face_counts.get(v["id"], 0),
                 "mood": v_media.mood,
                 "mood_score": v_media.mood_score or 0.0,
                 "is_smiling": v_media.is_smiling or False,
@@ -200,6 +213,18 @@ def search_photos(
                 "results": filtered_fallback
             }
 
+    item_ids = [m.id for m in items]
+    face_counts = {}
+    if item_ids:
+        face_counts = dict(
+            db.query(
+                FaceDetection.media_id,
+                func.count(FaceDetection.id)
+            ).filter(
+                FaceDetection.media_id.in_(item_ids)
+            ).group_by(FaceDetection.media_id).all()
+        )
+
     return {
         "total": total,
         "query": q,
@@ -211,6 +236,8 @@ def search_photos(
             "captured_at": m.captured_at,
             "is_favorite": m.is_favorite,
             "is_blurry": m.is_blurry,
+            "has_faces": m.id in face_counts,
+            "face_count": face_counts.get(m.id, 0),
             "camera_model": m.camera_model,
             "location_name": m.location_name,
             "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256",

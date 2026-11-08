@@ -19,6 +19,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.media import Media, MediaCategory, SourceType
 from app.models.album import Album
+from app.models.person import FaceDetection
 from app.api.auth import get_current_user, get_optional_current_user
 from app.services.scanner import scan_file, extract_exif, reverse_geocode, compute_file_hash
 from app.services.settings_service import get_storage_mode, get_setting
@@ -29,7 +30,7 @@ from app.config import settings
 logger = logging.getLogger("memorypics.api.media")
 router = APIRouter()
 
-def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None):
+def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None, has_faces=False, face_count=0):
     return {
         "id": item.id,
         "filename": item.filename,
@@ -43,6 +44,8 @@ def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None,
         "is_bokeh": getattr(item, "is_bokeh", False) or False,
         "is_enhanced": getattr(item, "is_enhanced", False) or False,
         "enhancement_data": item.enhancement_data,
+        "has_faces": bool(has_faces),
+        "face_count": face_count,
         "file_size": item.file_size,
         "camera_make": item.camera_make,
         "camera_model": item.camera_model,
@@ -120,11 +123,29 @@ def list_media(
     total = query.count()
     items = query.options(defer(Media.extracted_text)).order_by(desc(Media.captured_at)).offset(offset).limit(limit).all()
     
+    item_ids = [it.id for it in items]
+    face_counts = {}
+    if item_ids:
+        face_counts = dict(
+            db.query(
+                FaceDetection.media_id,
+                func.count(FaceDetection.id)
+            ).filter(
+                FaceDetection.media_id.in_(item_ids)
+            ).group_by(FaceDetection.media_id).all()
+        )
+
     return {
         "total": total,
         "offset": offset,
         "limit": limit,
-        "items": [_format_media_item(item) for item in items]
+        "items": [
+            _format_media_item(
+                item,
+                has_faces=item.id in face_counts,
+                face_count=face_counts.get(item.id, 0)
+            ) for item in items
+        ]
     }
 
 @router.get("/timeline")
@@ -132,6 +153,7 @@ def get_timeline(
     category: Optional[MediaCategory] = None,
     scale: str = Query("day", regex="^(day|month|year)$"),
     collapse_bursts: bool = Query(True),
+    has_people: Optional[bool] = Query(None, description="Filter for photos with/without detected people"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
@@ -153,6 +175,23 @@ def get_timeline(
         query = query.filter(Media.category == category)
         
     items = query.order_by(desc(Media.captured_at)).all()
+
+    # 1 fast indexed query to retrieve face detection counts for the user's media
+    face_counts = dict(
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id)
+        ).join(
+            Media, FaceDetection.media_id == Media.id
+        ).filter(
+            Media.user_id == current_user.id
+        ).group_by(FaceDetection.media_id).all()
+    )
+
+    if has_people is True:
+        items = [it for it in items if it.id in face_counts]
+    elif has_people is False:
+        items = [it for it in items if it.id not in face_counts]
 
     # Pre-calculate burst clusters if collapsing is active
     subordinate_burst_ids = set()
@@ -208,6 +247,8 @@ def get_timeline(
             "id": item.id,
             "filename": item.filename,
             "category": item.category,
+            "has_faces": item.id in face_counts,
+            "face_count": face_counts.get(item.id, 0),
             "width": item.width,
             "height": item.height,
             "captured_at": item.captured_at,

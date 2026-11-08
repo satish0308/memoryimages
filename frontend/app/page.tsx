@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers } from 'lucide-react';
+import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers, Users, Mountain } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
@@ -42,6 +42,8 @@ export default function PhotosPage() {
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [smartFilters, setSmartFilters] = useState<SmartFilters>(DEFAULT_SMART_FILTERS);
   const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
+  const [peopleFilter, setPeopleFilter] = useState<'all' | 'with_people' | 'without_people'>('all');
+  const [groupByPeople, setGroupByPeople] = useState<boolean>(false);
 
   // Smart Duplicates & Burst Collapse state
   const [collapseBursts, setCollapseBursts] = useState(true);
@@ -294,9 +296,21 @@ export default function PhotosPage() {
     return Array.from(cameras).sort();
   }, [allPhotos]);
 
+  // People & Face presence distribution counts
+  const peopleCounts = useMemo(() => {
+    const withP = allPhotos.filter((p) => p.has_faces).length;
+    return {
+      all: allPhotos.length,
+      withPeople: withP,
+      withoutPeople: allPhotos.length - withP,
+    };
+  }, [allPhotos]);
+
   // Apply Smart Filters
   const filteredTimeline = useMemo(() => {
     const isFiltered = 
+      peopleFilter !== 'all' ||
+      smartFilters.peoplePresence !== 'all' ||
       smartFilters.datePreset !== 'all' ||
       smartFilters.camera !== 'all' ||
       smartFilters.orientation !== 'all' ||
@@ -321,6 +335,11 @@ export default function PhotosPage() {
 
     return timeline.map((group) => {
       const filteredItems = group.items.filter((item) => {
+        // People Presence Filter (from top category bar or smart filter drawer)
+        const effectivePeopleFilter = peopleFilter !== 'all' ? peopleFilter : smartFilters.peoplePresence;
+        if (effectivePeopleFilter === 'with_people' && !item.has_faces) return false;
+        if (effectivePeopleFilter === 'without_people' && item.has_faces) return false;
+
         const itemDate = new Date(item.captured_at);
 
         // Date Presets
@@ -375,15 +394,38 @@ export default function PhotosPage() {
         count: filteredItems.length,
       };
     }).filter((group) => group.items.length > 0);
-  }, [timeline, smartFilters]);
+  }, [timeline, smartFilters, peopleFilter]);
 
   const allFilteredPhotos = useMemo(() => {
     return filteredTimeline.flatMap((group) => group.items);
   }, [filteredTimeline]);
 
+  // Sub-grouped timelines for 'Group by People' view mode
+  const timelineWithPeople = useMemo(() => {
+    return filteredTimeline
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((it) => it.has_faces),
+        count: g.items.filter((it) => it.has_faces).length,
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [filteredTimeline]);
+
+  const timelineWithoutPeople = useMemo(() => {
+    return filteredTimeline
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((it) => !it.has_faces),
+        count: g.items.filter((it) => !it.has_faces).length,
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [filteredTimeline]);
+
   // Active filter count for badge
   const activeFilterCount = useMemo(() => {
     let count = 0;
+    if (peopleFilter !== 'all') count++;
+    if (smartFilters.peoplePresence !== 'all') count++;
     if (smartFilters.datePreset !== 'all' || smartFilters.startDate || smartFilters.endDate) count++;
     if (smartFilters.camera !== 'all') count++;
     if (smartFilters.orientation !== 'all') count++;
@@ -609,11 +651,16 @@ export default function PhotosPage() {
         </div>
       )}
 
-      {/* Category Filter Pills */}
+      {/* Category Filter Pills & People Sub-Group Controls */}
       {!searchResults && (
         <CategoryFilterBar
           activeCategory={activeCategory}
           onSelectCategory={setActiveCategory}
+          peopleFilter={peopleFilter}
+          onSelectPeopleFilter={setPeopleFilter}
+          peopleCounts={peopleCounts}
+          groupByPeople={groupByPeople}
+          onToggleGroupByPeople={() => setGroupByPeople((prev) => !prev)}
           onRefresh={fetchTimeline}
           loading={loading}
         />
@@ -629,7 +676,10 @@ export default function PhotosPage() {
             </span>
           </div>
           <button
-            onClick={() => setSmartFilters(DEFAULT_SMART_FILTERS)}
+            onClick={() => {
+              setSmartFilters(DEFAULT_SMART_FILTERS);
+              setPeopleFilter('all');
+            }}
             className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
           >
             Clear Filters
@@ -718,7 +768,149 @@ export default function PhotosPage() {
       )}
 
       {/* Main Chronological Timeline Grouped by Day, Month, or Year */}
-      {!searchResults && (
+      {!searchResults && groupByPeople ? (
+        <div className="space-y-8">
+          {/* Sub-Group 1: Photos with People */}
+          <div className="bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-200/60 dark:border-indigo-900/40 rounded-3xl p-5 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 dark:border-indigo-900/40 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/20">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Photos with People
+                    </h2>
+                    <span className="bg-indigo-600 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+                      {timelineWithPeople.reduce((acc, g) => acc + g.items.length, 0)} photos
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Portraits, family memories, candid moments, selfies & gatherings
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const groupIds = timelineWithPeople.flatMap((g) => g.items.map((i) => i.id));
+                    const allSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                    setSelectedIds((prev) =>
+                      allSelected
+                        ? prev.filter((id) => !groupIds.includes(id))
+                        : Array.from(new Set([...prev, ...groupIds]))
+                    );
+                  }}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-slate-700 transition"
+                >
+                  {timelineWithPeople.flatMap((g) => g.items.map((i) => i.id)).length > 0 &&
+                  timelineWithPeople.flatMap((g) => g.items.map((i) => i.id)).every((id) => selectedIds.includes(id))
+                    ? 'Deselect People Photos'
+                    : 'Select All People Photos'}
+                </button>
+              </div>
+            </div>
+
+            {timelineWithPeople.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs">
+                No photos with detected people found in this filter.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {timelineWithPeople.map((group) => (
+                  <DaySection
+                    key={`people-${group.key || group.date}`}
+                    group={group}
+                    apiUrl={API_URL}
+                    selectedIds={selectedIds}
+                    density={density}
+                    onSelect={setSelectedPhoto}
+                    onToggleSelect={handleItemClick}
+                    onPointerDown={handlePointerDown}
+                    onToggleSelectGroup={toggleSelectGroup}
+                    onToggleFavorite={toggleFavorite}
+                    onDelete={deletePhoto}
+                    onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
+                    onBackupToDrive={handleBackupSinglePhoto}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sub-Group 2: Photos without People (Nature, Scenery & Objects) */}
+          <div className="bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/40 rounded-3xl p-5 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 dark:border-emerald-900/40 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20">
+                  <Mountain className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                      Photos without People
+                    </h2>
+                    <span className="bg-emerald-600 text-white text-xs font-semibold px-2 py-0.5 rounded-full">
+                      {timelineWithoutPeople.reduce((acc, g) => acc + g.items.length, 0)} photos
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Nature, landscapes, scenery, architecture, travel vistas, receipts & objects
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const groupIds = timelineWithoutPeople.flatMap((g) => g.items.map((i) => i.id));
+                    const allSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                    setSelectedIds((prev) =>
+                      allSelected
+                        ? prev.filter((id) => !groupIds.includes(id))
+                        : Array.from(new Set([...prev, ...groupIds]))
+                    );
+                  }}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-slate-700 transition"
+                >
+                  {timelineWithoutPeople.flatMap((g) => g.items.map((i) => i.id)).length > 0 &&
+                  timelineWithoutPeople.flatMap((g) => g.items.map((i) => i.id)).every((id) => selectedIds.includes(id))
+                    ? 'Deselect Scenery Photos'
+                    : 'Select All Scenery Photos'}
+                </button>
+              </div>
+            </div>
+
+            {timelineWithoutPeople.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-xs">
+                No scenery or non-people photos found in this filter.
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {timelineWithoutPeople.map((group) => (
+                  <DaySection
+                    key={`scenery-${group.key || group.date}`}
+                    group={group}
+                    apiUrl={API_URL}
+                    selectedIds={selectedIds}
+                    density={density}
+                    onSelect={setSelectedPhoto}
+                    onToggleSelect={handleItemClick}
+                    onPointerDown={handlePointerDown}
+                    onToggleSelectGroup={toggleSelectGroup}
+                    onToggleFavorite={toggleFavorite}
+                    onDelete={deletePhoto}
+                    onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
+                    onBackupToDrive={handleBackupSinglePhoto}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : !searchResults ? (
         <div className="space-y-8">
           {filteredTimeline.map((group) => (
             <DaySection
@@ -738,7 +930,7 @@ export default function PhotosPage() {
             />
           ))}
         </div>
-      )}
+      ) : null}
 
       {/* Interactive Vertical Timeline Minimap Scrubber */}
       {!searchResults && filteredTimeline.length > 0 && (
