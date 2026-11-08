@@ -44,7 +44,8 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **High-DPI Retina Thumbnails**: Ultra-crisp 512px WebP thumbnails rendered with Display P3 color profile preservation and smooth progressive blur backdrops.
 - **Pinch-to-Zoom Timeline Scaling**: Switch seamlessly between **Day**, **Month**, and **Year** chronological zoom levels.
 - **Dynamic Density Scaling**: Adjust grid density from a 10-column compact bird's-eye view to a 4-column detailed card layout.
-- **Group & Batch Multi-Selection**: Select entire months, years, or custom batches with 1-click selection headers and a floating bulk action dock (Favorite, Recategorize, Location Tagging, AI Enhance, Parallel ZIP Export).
+- **Universal 2D Drag-and-Select & Quick Sweeps**: Click and drag across any photo grid to draw a 2D selection marquee. Includes synchronous pointer release flushing for lightning-fast sweeps, row & column linear sweep auto-selection, single-click select/deselect toggle, and double-click to immediately open full-screen Lightbox.
+- **Group & Batch Multi-Selection**: Select entire months, years, or custom batches with 1-click selection headers and a floating bulk action dock (Favorite, Recategorize, Location Tagging, AI Enhance, Parallel ZIP Export, Google Photos Query Export).
 
 ### 🌟 Nostalgia Flashbacks & Curated Memories Tab (`/memories`)
 - **Story-Style Nostalgic Reels**: Dedicated high-engagement Memories hub featuring:
@@ -175,10 +176,12 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 
 ### 👥 People & Face Management Studio & Visual Search (`/people`)
 - **Visual Face Crop & ArcFace Library Search**: Draw a custom box or click any detected face in Lightbox or People studio to compute its 512-dimensional ArcFace biometric vector, query across 15,000+ photos via vector cosine similarity, and 1-click group matches into a named person profile.
+- **Adaptive SCRFD & ArcFace Engine**: State-of-the-art SCRFD neural face detector running with adaptive confidence thresholding (`0.25` for document snips and screenshots; `0.30` for camera photos) and 20px minimum crop validation, ensuring embedded profile avatars, document portraits, and family snapshots are reliably detected without false positives.
 - **AI "Merge Same Person" Suggestions**: Automatically identifies duplicate people profiles with match confidence percentages and 1-click merge.
 - **Relationship Categorization**: Tag profiles with relationship types (**Family**, **Friends**, **Work**, **Partner**, **Self**, **Other**) and filter by relationship category pills.
 - **Custom Cover Photos & Profile Visibility**: Set any photo in a person's gallery as their primary cover thumbnail, and toggle hiding/unhiding unwanted face detections.
-- **UltraFace ONNX Inference**: Sub-millisecond bounding box localization with strict norm thresholding ($>0.70$) and aspect ratio filtering (0.48–1.48) to reject false positives on water, textures, and backgrounds.
+- **Universal Multi-Select & Batch Actions**: Person photo galleries feature 2D drag-and-select, single-click toggle, double-click to view, batch trash, and Google Photos cloud search query generation.
+- **UltraFace ONNX Fallback**: Sub-millisecond bounding box localization with strict norm thresholding ($>0.70$) and aspect ratio filtering (0.48–1.48) to reject false positives on water, textures, and backgrounds.
 - **Default Hidden Bounding Boxes**: Face detection boxes remain hidden upon image preview and display only when explicitly toggled.
 - **On-The-Fly WebP Face Avatars**: Dynamic 180×180 WebP headshots cropped in-memory from full-resolution photos.
 
@@ -191,12 +194,13 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 
 ### 🧹 Comprehensive Smart Triage Dashboard
 - **6 Dedicated Review Trays**:
-  - 📱 **Screenshots Tray**: Separate screenshots with expiry countdown and snooze options.
+  - 📱 **Screenshots Tray**: Differentiates between text-only documents/snips and screenshots containing human faces ("Screenshots with People" vs. "Text Only").
   - 🧾 **Receipts & Bills Vault**: OCR-scanned invoices and documents kept separate from family memories.
-  - 👥 **Duplicate Clusters**: Perceptual hash (pHash) groupings with 1-click "Keep Best Shot" auto-resolution.
+  - 👥 **Duplicate Clusters**: Perceptual hash (pHash) groupings with 1-click "Keep Best Shot" auto-resolution, drag-and-select, and double-click inspection.
   - 🌫️ **Blurry Photos Tray**: Laplacian variance sharpness scoring to identify out-of-focus shots and pocket black frames.
   - 📦 **Large Files Tray**: Identifies heavy camera files (>3MB) for storage review.
   - 🗑️ **Memes & Junk Tray**: Separates viral media and forwarded graphics.
+- **Google Photos Cloud Deletion Helper**: Exports sanitized, batch-optimized search strings (15 items per batch with auto-quotes for special characters and spaces) to easily locate and purge redundant media in Google Photos.
 - **Reclaimable Storage Calculator**: Real-time disk space calculation (e.g. 13.8 GB reclaimable) with safe batch trash actions adhering to Zero Auto-Deletion.
 
 ### 📚 Albums & Smart Collections Hub
@@ -211,10 +215,10 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Chronological Travel Routes**: Animated journey path polyline tracing trips from stop to stop with total distance (km) and duration calculations.
 - **Multi-Ring Density Heatmaps**: Visualizes travel hot-spots and frequently visited regions.
 
-### 🪣 Self-Hosted S3 / MinIO Object Storage Engine
-- **100% Self-Hosted & Private**: Local Docker-based MinIO service (S3 API on port `9002`, Web Console on port `9001`) with zero public cloud dependencies.
+### 🪣 Self-Hosted S3 / MinIO AIStor Object Storage Engine
+- **100% Self-Hosted & Private**: Docker-based MinIO AIStor service with seamless `--license /minio.license` attachment, S3 API on port `9004`, and Web Console on port `9005`.
 - **Zero-Disk In-Memory Streaming**: Originals and WebP thumbnails stream directly through memory buffers without writing cached copies to `/data/originals`.
-- **Direct S3 Ingestion**: Ingest photos directly into the `mymemorypics` S3 bucket with on-the-fly metadata extraction and thumbnail generation.
+- **Direct S3 Ingestion & Bucket Management**: Ingest photos directly into the `mymemorypics` S3 bucket with on-the-fly metadata extraction and thumbnail generation.
 - **Presigned URLs**: Secure, time-limited S3v4 presigned URL generation for sharing or private authenticated access.
 
 ### 🛡️ Automated WAL Backups & Point-in-Time Disaster Recovery
