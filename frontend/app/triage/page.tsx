@@ -29,7 +29,10 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Layers
+  Layers,
+  ShieldCheck,
+  Tag,
+  Filter
 } from 'lucide-react';
 
 import { DuplicateResolverModal, DuplicateCluster } from '@/components/triage/DuplicateResolverModal';
@@ -39,6 +42,7 @@ import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { useAuth } from '@/context/AuthContext';
+import { useDragSelect } from '@/hooks/useDragSelect';
 
 interface TriageOverview {
   total_screenshots: number;
@@ -49,6 +53,7 @@ interface TriageOverview {
   total_motion_blur?: number;
   total_bokeh?: number;
   total_memes: number;
+  total_wallpapers?: number;
   reclaimable_bytes: number;
   reclaimable_mb: number;
 }
@@ -61,6 +66,23 @@ interface ScreenshotItem {
   days_left: number | null;
   is_expired: boolean;
   file_size: number;
+  thumbnail_url: string;
+  source_type?: string;
+  source_id?: string | null;
+  width?: number;
+  height?: number;
+  is_portrait?: boolean;
+  is_landscape?: boolean;
+}
+
+interface WallpaperItem {
+  id: number;
+  filename: string;
+  width: number;
+  height: number;
+  file_size: number;
+  captured_at: string;
+  category: string;
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
@@ -204,7 +226,7 @@ function groupItemsByTime<T extends { id: number; captured_at: string; file_size
   }));
 }
 
-type TriageTab = 'screenshots' | 'bills' | 'duplicates' | 'blurry' | 'large_files' | 'memes';
+type TriageTab = 'screenshots' | 'wallpapers' | 'bills' | 'duplicates' | 'blurry' | 'large_files' | 'memes';
 
 export default function TriagePage() {
   const [overview, setOverview] = useState<TriageOverview | null>(null);
@@ -212,6 +234,7 @@ export default function TriagePage() {
 
   // Data Collections
   const [screenshots, setScreenshots] = useState<ScreenshotItem[]>([]);
+  const [wallpapers, setWallpapers] = useState<WallpaperItem[]>([]);
   const [bills, setBills] = useState<BillItem[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateCluster[]>([]);
   const [blurryPhotos, setBlurryPhotos] = useState<BlurryItem[]>([]);
@@ -221,17 +244,22 @@ export default function TriagePage() {
   // Selection & Filters
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingWallpapers, setLoadingWallpapers] = useState(false);
   const [billSearchQuery, setBillSearchQuery] = useState('');
   const [screenshotFilter, setScreenshotFilter] = useState<'all' | 'expired' | 'recent'>('all');
+  const [screenshotOrientation, setScreenshotOrientation] = useState<'all' | 'portrait' | 'desktop'>('all');
+  const [wallpaperFilter, setWallpaperFilter] = useState<'all' | '4k' | '2k' | '1080p' | 'ultrawide'>('all');
   const [blurFilter, setBlurFilter] = useState<'all' | 'motion_blur' | 'out_of_focus' | 'black_pocket'>('all');
   const [isCleaningPockets, setIsCleaningPockets] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isResolvingAll, setIsResolvingAll] = useState(false);
+  const [isReclassifying, setIsReclassifying] = useState(false);
+  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
 
   const getSelectedItemsData = useCallback(() => {
-    const allItems = [...screenshots, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
+    const allItems = [...screenshots, ...wallpapers, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
     const itemMap = new Map<number, { id: number; filename: string; file_size?: number; captured_at?: string }>();
     for (const item of allItems) {
       if (selectedIds.includes(item.id)) {
@@ -244,7 +272,7 @@ export default function TriagePage() {
       }
     }
     return Array.from(itemMap.values());
-  }, [screenshots, bills, blurryPhotos, largeFiles, memes, selectedIds]);
+  }, [screenshots, wallpapers, bills, blurryPhotos, largeFiles, memes, selectedIds]);
 
   // Time Grouping & Collapse States
   const [timeGrouping, setTimeGrouping] = useState<TimeGrouping>('month');
@@ -402,16 +430,99 @@ export default function TriagePage() {
     }
   }, [API_URL, authHeaders]);
 
+  const fetchWallpapers = useCallback(async () => {
+    try {
+      setLoadingWallpapers(true);
+      const res = await fetch(`${API_URL}/api/v1/triage/wallpapers?resolution=${wallpaperFilter}`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) setWallpapers(await res.json());
+    } catch (e) {
+      console.error('Error fetching wallpapers:', e);
+    } finally {
+      setLoadingWallpapers(false);
+    }
+  }, [API_URL, wallpaperFilter, authHeaders]);
+
+  const handleReclassifyScreenshots = async () => {
+    try {
+      setIsReclassifying(true);
+      const res = await fetch(`${API_URL}/api/v1/triage/reclassify-screenshots`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(
+          `Auto-Rescue Complete! Rescued ${data.rescued_to_memories} real photos to Memories, moved ${data.moved_to_documents} to Documents, and kept ${data.retained_screenshots} genuine screenshots.`
+        );
+        fetchScreenshots();
+        fetchOverview();
+        setTimeout(() => setStatusMessage(null), 8000);
+      }
+    } catch (e) {
+      console.error('Error reclassifying screenshots:', e);
+      setStatusMessage('Failed to auto-rescue false positive screenshots.');
+    } finally {
+      setIsReclassifying(false);
+    }
+  };
+
+  const handleChangeCategory = async (targetCategory: string) => {
+    if (selectedIds.length === 0) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/triage/category`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ media_ids: selectedIds, category: targetCategory }),
+      });
+      if (res.ok) {
+        const catLabel =
+          targetCategory === 'memory' ? 'Personal Memories' :
+          targetCategory === 'screenshot' ? 'Screenshots' :
+          targetCategory === 'document_bill' ? 'Receipts / Documents' : 'Memes / Clutter';
+        setStatusMessage(`Successfully moved ${selectedIds.length} items to ${catLabel}!`);
+        setSelectedIds([]);
+        setShowCategoryMenu(false);
+        refreshCurrentTab();
+        fetchOverview();
+        setTimeout(() => setStatusMessage(null), 4000);
+      }
+    } catch (e) {
+      console.error('Change category error:', e);
+      setStatusMessage('Failed to update category.');
+    }
+  };
+
+  const handleRescueSingle = async (mediaId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/triage/category`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ media_ids: [mediaId], category: 'memory' }),
+      });
+      if (res.ok) {
+        setStatusMessage('Rescued photo back to Personal Memories!');
+        setScreenshots((prev) => prev.filter((s) => s.id !== mediaId));
+        fetchOverview();
+        setTimeout(() => setStatusMessage(null), 3000);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     fetchOverview();
     setSelectedIds([]);
     if (activeTab === 'screenshots') fetchScreenshots();
+    else if (activeTab === 'wallpapers') fetchWallpapers();
     else if (activeTab === 'bills') fetchBills();
     else if (activeTab === 'duplicates') fetchDuplicates();
     else if (activeTab === 'blurry') fetchBlurry();
     else if (activeTab === 'large_files') fetchLargeFiles();
     else if (activeTab === 'memes') fetchMemes();
-  }, [activeTab, fetchOverview, fetchScreenshots, fetchBills, fetchDuplicates, fetchBlurry, fetchLargeFiles, fetchMemes]);
+  }, [activeTab, fetchOverview, fetchScreenshots, fetchWallpapers, fetchBills, fetchDuplicates, fetchBlurry, fetchLargeFiles, fetchMemes]);
 
   // Current items for active tab selection
   const currentTabItemIds = useMemo(() => {
@@ -424,12 +535,13 @@ export default function TriagePage() {
         })
         .map((s) => s.id);
     }
+    if (activeTab === 'wallpapers') return wallpapers.map((w) => w.id);
     if (activeTab === 'bills') return bills.map((b) => b.id);
     if (activeTab === 'blurry') return blurryPhotos.map((b) => b.id);
     if (activeTab === 'large_files') return largeFiles.map((l) => l.id);
     if (activeTab === 'memes') return memes.map((m) => m.id);
     return [];
-  }, [activeTab, screenshots, screenshotFilter, bills, blurryPhotos, largeFiles, memes]);
+  }, [activeTab, screenshots, screenshotFilter, wallpapers, bills, blurryPhotos, largeFiles, memes]);
 
   const isAllSelected = currentTabItemIds.length > 0 && currentTabItemIds.every((id) => selectedIds.includes(id));
 
@@ -444,6 +556,54 @@ export default function TriagePage() {
   const toggleSelect = (id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
+  };
+
+  // Drag-and-Select & Range Selection Hook
+  const {
+    isDragging: isDragSelecting,
+    dragMode,
+    handleItemPointerDown,
+    handleItemPointerEnter,
+    handleTouchMove,
+    handleItemClick,
+  } = useDragSelect({
+    selectedIds,
+    setSelectedIds,
+    onInspect: (id) => {
+      const allItems = [...screenshots, ...wallpapers, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
+      const found = allItems.find((i) => i.id === id);
+      if (found) {
+        setInspectingPhoto({
+          id: found.id,
+          filename: found.filename,
+          category: 'category' in found ? (found.category as string) : 'memory',
+          width: 'width' in found ? (found.width as number) : 1920,
+          height: 'height' in found ? (found.height as number) : 1080,
+          captured_at: found.captured_at,
+          is_favorite: false,
+          is_blurry: false,
+          thumbnail_url: found.thumbnail_url,
+          source_type: found.source_type,
+          source_id: found.source_id,
+        });
+      }
+    },
+  });
+
+  // Invert Selection for currently visible tab items
+  const handleInvertSelection = () => {
+    const currentSet = new Set(selectedIds);
+    const inverted = currentTabItemIds.filter((id) => !currentSet.has(id));
+    const nonTabSelected = selectedIds.filter((id) => !currentTabItemIds.includes(id));
+    setSelectedIds([...nonTabSelected, ...inverted]);
+  };
+
+  // Select Next N items (e.g. 50)
+  const handleSelectNextN = (count: number = 50) => {
+    const currentSet = new Set(selectedIds);
+    const unselected = currentTabItemIds.filter((id) => !currentSet.has(id));
+    const toAdd = unselected.slice(0, count);
+    setSelectedIds((prev) => Array.from(new Set([...prev, ...toAdd])));
   };
 
   // 1-Click Move to Permanent Memories
@@ -575,6 +735,7 @@ export default function TriagePage() {
 
   const refreshCurrentTab = () => {
     if (activeTab === 'screenshots') fetchScreenshots();
+    else if (activeTab === 'wallpapers') fetchWallpapers();
     else if (activeTab === 'bills') fetchBills();
     else if (activeTab === 'duplicates') fetchDuplicates();
     else if (activeTab === 'blurry') fetchBlurry();
@@ -591,12 +752,19 @@ export default function TriagePage() {
     );
   }, [bills, billSearchQuery]);
 
-  // Filtered screenshots by age
+  // Filtered screenshots by age and orientation
   const filteredScreenshots = useMemo(() => {
-    if (screenshotFilter === 'expired') return screenshots.filter((s) => s.is_expired);
-    if (screenshotFilter === 'recent') return screenshots.filter((s) => !s.is_expired);
-    return screenshots;
-  }, [screenshots, screenshotFilter]);
+    let list = screenshots;
+    if (screenshotFilter === 'expired') list = list.filter((s) => s.is_expired);
+    else if (screenshotFilter === 'recent') list = list.filter((s) => !s.is_expired);
+
+    if (screenshotOrientation === 'portrait') {
+      list = list.filter((s) => s.is_portrait || (s.height && s.width && s.height >= s.width));
+    } else if (screenshotOrientation === 'desktop') {
+      list = list.filter((s) => s.is_landscape || (s.height && s.width && s.width > s.height));
+    }
+    return list;
+  }, [screenshots, screenshotFilter, screenshotOrientation]);
 
   // Time-grouped collections for Week / Month / Year triage views
   const memeGroups = useMemo(() => {
@@ -616,7 +784,7 @@ export default function TriagePage() {
   }, [largeFiles, timeGrouping]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-16">
+    <div className="max-w-7xl mx-auto space-y-6 pb-16" onTouchMove={handleTouchMove}>
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-200/60 dark:border-amber-900/60 rounded-3xl p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -655,7 +823,7 @@ export default function TriagePage() {
       </div>
 
       {/* Triage Overview Tabs Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {/* Screenshots Tab */}
         <button
           onClick={() => setActiveTab('screenshots')}
@@ -675,6 +843,25 @@ export default function TriagePage() {
           <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium truncate">
             {overview?.expiring_screenshots || 0} expiring soon
           </p>
+        </button>
+
+        {/* Wallpapers & Artwork Tab */}
+        <button
+          onClick={() => setActiveTab('wallpapers')}
+          className={`p-3.5 rounded-2xl border text-left transition-all ${
+            activeTab === 'wallpapers'
+              ? 'bg-indigo-50 dark:bg-indigo-950/50 border-indigo-400 dark:border-indigo-700 ring-2 ring-indigo-500/20 shadow-sm'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:bg-slate-50'
+          }`}
+        >
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+            <Layers className="w-4 h-4 text-indigo-500" />
+            Wallpapers & Art
+          </div>
+          <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
+            {overview?.total_wallpapers !== undefined ? overview.total_wallpapers : wallpapers.length}
+          </p>
+          <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium truncate">4K/2K Widescreen</p>
         </button>
 
         {/* Bills & Receipts Tab */}
@@ -782,10 +969,26 @@ export default function TriagePage() {
             </span>
             <button
               onClick={() => setSelectedIds([])}
-              className="text-xs text-slate-400 hover:text-white underline"
+              className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
             >
               Deselect All
             </button>
+            <button
+              onClick={handleInvertSelection}
+              className="text-xs text-slate-400 hover:text-white underline cursor-pointer hidden sm:inline"
+              title="Invert selection on visible tab items"
+            >
+              Invert
+            </button>
+            {currentTabItemIds.length > selectedIds.length && (
+              <button
+                onClick={() => handleSelectNextN(50)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer hidden md:inline"
+                title="Select next 50 unselected items in view"
+              >
+                + Next 50
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -798,6 +1001,66 @@ export default function TriagePage() {
               <BookmarkCheck className="w-3.5 h-3.5" />
               <span>Keep as Memories</span>
             </button>
+
+            {/* Change Category Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowCategoryMenu(!showCategoryMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700"
+              >
+                <Tag className="w-3.5 h-3.5 text-amber-400" />
+                <span>Move to...</span>
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+
+              {showCategoryMenu && (
+                <div className="absolute right-0 bottom-full mb-2 w-56 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1.5 z-50 text-slate-800 dark:text-white text-xs">
+                  <div className="px-3 py-1.5 text-[10px] font-bold uppercase text-slate-400 tracking-wider border-b border-slate-100 dark:border-slate-700/60">
+                    Reclassify {selectedIds.length} Selected
+                  </div>
+                  <button
+                    onClick={() => handleChangeCategory('memory')}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2.5 transition"
+                  >
+                    <BookmarkCheck className="w-4 h-4 text-indigo-500 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Personal Memory</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Regular photos & library items</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleChangeCategory('document_bill')}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2.5 transition"
+                  >
+                    <FileText className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Document / Receipt</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Bills, text slides, diagrams</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleChangeCategory('screenshot')}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2.5 transition"
+                  >
+                    <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Screenshot</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Mobile screen captures (30d expiry)</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleChangeCategory('meme_junk')}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2.5 transition"
+                  >
+                    <Smile className="w-4 h-4 text-pink-500 shrink-0" />
+                    <div>
+                      <div className="font-semibold">Meme / Social Junk</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Social forwards & junk graphics</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Snooze (Screenshots) */}
             {activeTab === 'screenshots' && (
@@ -843,9 +1106,47 @@ export default function TriagePage() {
         </div>
       )}
 
+      {/* Active Line-Drag Selection Floating Pill */}
+      {isDragSelecting && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+          <span className="text-xs font-bold tracking-wide">
+            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-[11px] text-slate-400 font-mono">
+            {selectedIds.length} selected
+          </span>
+        </div>
+      )}
+
       {/* Tab 1: Screenshots Review Tray */}
       {activeTab === 'screenshots' && (
         <div className="space-y-4">
+          {/* False Positive Cleanup Banner */}
+          <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-emerald-500/10 border border-blue-200 dark:border-blue-900 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600 dark:text-blue-400 shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                  Screenshots False Positives Cleanup
+                </p>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                  Coursework diagrams, 16:9 wallpapers, and photos with detected human faces were previously misclassified as screenshots.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleReclassifyScreenshots}
+              disabled={isReclassifying}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
+            >
+              <Zap className={`w-3.5 h-3.5 ${isReclassifying ? 'animate-spin' : ''}`} />
+              <span>{isReclassifying ? 'Rescuing Photos...' : 'Auto-Rescue False Positives'}</span>
+            </button>
+          </div>
+
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -866,6 +1167,23 @@ export default function TriagePage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Orientation Filter Chips */}
+              <div className="flex items-center gap-1">
+                {(['all', 'portrait', 'desktop'] as const).map((ori) => (
+                  <button
+                    key={ori}
+                    onClick={() => setScreenshotOrientation(ori)}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition capitalize cursor-pointer ${
+                      screenshotOrientation === ori
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                    }`}
+                  >
+                    {ori === 'all' ? 'All' : ori === 'portrait' ? '📱 Mobile' : '💻 Desktop'}
+                  </button>
+                ))}
+              </div>
+
               {/* Age Filter Chips */}
               <div className="flex items-center gap-1">
                 {(['all', 'expired', 'recent'] as const).map((filter) => (
@@ -1001,30 +1319,20 @@ export default function TriagePage() {
                             return (
                               <div
                                 key={s.id}
-                                onClick={() =>
-                                  setInspectingPhoto({
-                                    id: s.id,
-                                    filename: s.filename,
-                                    category: 'screenshot',
-                                    width: 1080,
-                                    height: 1920,
-                                    captured_at: s.captured_at,
-                                    is_favorite: false,
-                                    is_blurry: false,
-                                    thumbnail_url: s.thumbnail_url,
-                                    source_type: s.source_type,
-                                    source_id: s.source_id,
-                                  })
-                                }
-                                className={`group relative aspect-[9/16] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                                data-media-id={s.id}
+                                onPointerDown={(e) => handleItemPointerDown(s.id, e)}
+                                onPointerEnter={() => handleItemPointerEnter(s.id)}
+                                onClick={(e) => handleItemClick(s.id, e, currentTabItemIds)}
+                                className={`group relative aspect-[9/16] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                                   isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-transparent'
                                 }`}
                               >
                                 <img
                                   src={`${API_URL}${s.thumbnail_url}`}
                                   alt={s.filename}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-cover select-none pointer-events-none"
                                   loading="lazy"
+                                  draggable={false}
                                 />
 
                                 {/* Top Overlay Badge & Checkbox */}
@@ -1037,8 +1345,15 @@ export default function TriagePage() {
                                     {s.is_expired ? '30+ days' : 'Recent'}
                                   </span>
                                   <div
-                                    onClick={(e) => toggleSelect(s.id, e)}
-                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                                    onPointerDown={(e) => {
+                                      e.stopPropagation();
+                                      handleItemPointerDown(s.id, e);
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelect(s.id, e);
+                                    }}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
                                       isSelected
                                         ? 'bg-blue-600 border-white text-white shadow-md scale-110'
                                         : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
@@ -1051,9 +1366,21 @@ export default function TriagePage() {
                                 {/* Bottom Vignette */}
                                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
                                   <p className="text-[11px] font-semibold truncate leading-tight">{s.filename}</p>
-                                  <p className="text-[9px] text-slate-300 font-mono mt-0.5">
-                                    {((s.file_size || 0) / 1024).toFixed(0)} KB
-                                  </p>
+                                  <div className="flex items-center justify-between text-[9px] text-slate-300 font-mono mt-0.5">
+                                    <span>{((s.file_size || 0) / 1024).toFixed(0)} KB</span>
+                                    {s.width && s.height && <span>{s.width}×{s.height}</span>}
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRescueSingle(s.id);
+                                    }}
+                                    className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow-xs transition pointer-events-auto"
+                                    title="Not a screenshot: Move to Personal Memories"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Not a Screenshot</span>
+                                  </button>
                                 </div>
                               </div>
                             );
@@ -1097,7 +1424,117 @@ export default function TriagePage() {
         </div>
       )}
 
-      {/* Tab 2: Bills & Receipts Vault */}
+      {/* Tab 2: Wallpapers & Artwork Tray */}
+      {activeTab === 'wallpapers' && (
+        <div className="space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={toggleSelectAll}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
+              >
+                {isAllSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4 text-slate-400" />}
+                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+              </button>
+              <span className="text-xs text-slate-500 font-medium">
+                {wallpapers.length} widescreen wallpapers & artwork identified
+              </span>
+            </div>
+
+            {/* Resolution Filter Chips */}
+            <div className="flex items-center gap-1">
+              {(['all', '4k', '2k', '1080p', 'ultrawide'] as const).map((res) => (
+                <button
+                  key={res}
+                  onClick={() => setWallpaperFilter(res)}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition capitalize cursor-pointer ${
+                    wallpaperFilter === res
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                  }`}
+                >
+                  {res === 'all' ? 'All Resolutions' : res.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loadingWallpapers ? (
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
+              Loading widescreen wallpapers...
+            </div>
+          ) : wallpapers.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
+              No widescreen wallpapers or artwork match the selected resolution filter.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {wallpapers.map((w) => {
+                const isSelected = selectedIds.includes(w.id);
+                const is4K = w.width >= 3840;
+                const is2K = w.width >= 2560 && w.width < 3840;
+                const isUltrawide = (w.width / (w.height || 1)) >= 2.1;
+
+                return (
+                  <div
+                    key={w.id}
+                    data-media-id={w.id}
+                    onPointerDown={(e) => handleItemPointerDown(w.id, e)}
+                    onPointerEnter={() => handleItemPointerEnter(w.id)}
+                    onClick={(e) => handleItemClick(w.id, e, currentTabItemIds)}
+                    className={`group relative aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                      isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent'
+                    }`}
+                  >
+                    <img
+                      src={`${API_URL}${w.thumbnail_url}`}
+                      alt={w.filename}
+                      className="w-full h-full object-cover select-none pointer-events-none"
+                      loading="lazy"
+                      draggable={false}
+                    />
+
+                    {/* Top Overlay Badge & Selection */}
+                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md bg-black/60 text-white shadow-sm">
+                        {isUltrawide ? 'Ultrawide' : is4K ? '4K UHD' : is2K ? '2K QHD' : `${w.width}×${w.height}`}
+                      </span>
+                      <div
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          handleItemPointerDown(w.id, e);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(w.id, e);
+                        }}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600 border-white text-white shadow-md scale-110'
+                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+
+                    {/* Bottom Vignette */}
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                      <p className="text-[11px] font-semibold truncate leading-tight">{w.filename}</p>
+                      <div className="flex items-center justify-between text-[9px] text-slate-300 font-mono mt-0.5">
+                        <span>{((w.file_size || 0) / 1024).toFixed(0)} KB</span>
+                        <span>{w.width} × {w.height}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab 3: Bills & Receipts Vault */}
       {activeTab === 'bills' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
@@ -1138,16 +1575,26 @@ export default function TriagePage() {
                 return (
                   <div
                     key={b.id}
-                    onClick={() => setInspectingBillId(b.id)}
-                    className={`group relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm flex flex-col justify-between ${
+                    data-media-id={b.id}
+                    onPointerDown={(e) => handleItemPointerDown(b.id, e)}
+                    onPointerEnter={() => handleItemPointerEnter(b.id)}
+                    onClick={(e) => {
+                      if (selectedIds.length > 0 || e.shiftKey) {
+                        handleItemClick(b.id, e, currentTabItemIds);
+                      } else {
+                        setInspectingBillId(b.id);
+                      }
+                    }}
+                    className={`group relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm flex flex-col justify-between select-none ${
                       isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-transparent'
                     }`}
                   >
                     <img
                       src={`${API_URL}${b.thumbnail_url}`}
                       alt={b.filename}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 select-none pointer-events-none"
                       loading="lazy"
+                      draggable={false}
                     />
 
                     {/* Top Checkbox & Receipt Badge */}
@@ -1156,8 +1603,15 @@ export default function TriagePage() {
                         Receipt
                       </span>
                       <div
-                        onClick={(e) => toggleSelect(b.id, e)}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          handleItemPointerDown(b.id, e);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(b.id, e);
+                        }}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-emerald-600 border-white text-white shadow-md scale-110'
                             : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
@@ -1388,33 +1842,20 @@ export default function TriagePage() {
                 return (
                   <div
                     key={b.id}
-                    onClick={() =>
-                      setInspectingPhoto({
-                        id: b.id,
-                        filename: b.filename,
-                        category: 'memory',
-                        width: 1920,
-                        height: 1080,
-                        captured_at: b.captured_at,
-                        is_favorite: false,
-                        is_blurry: true,
-                        blur_type: b.blur_type,
-                        is_bokeh: b.is_bokeh,
-                        is_enhanced: b.is_enhanced,
-                        thumbnail_url: b.thumbnail_url,
-                        source_type: b.source_type,
-                        source_id: b.source_id,
-                      })
-                    }
-                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                    data-media-id={b.id}
+                    onPointerDown={(e) => handleItemPointerDown(b.id, e)}
+                    onPointerEnter={() => handleItemPointerEnter(b.id)}
+                    onClick={(e) => handleItemClick(b.id, e, currentTabItemIds)}
+                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                       isSelected ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-transparent'
                     }`}
                   >
                     <img
                       src={`${API_URL}${b.thumbnail_url}`}
                       alt={b.filename}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover select-none pointer-events-none"
                       loading="lazy"
+                      draggable={false}
                     />
 
                     {/* Sharpness Badge & Checkbox */}
@@ -1427,8 +1868,15 @@ export default function TriagePage() {
                           : `Sharpness: ${b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}`}
                       </span>
                       <div
-                        onClick={(e) => toggleSelect(b.id, e)}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          handleItemPointerDown(b.id, e);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(b.id, e);
+                        }}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-amber-600 border-white text-white shadow-md scale-110'
                             : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
@@ -1478,30 +1926,20 @@ export default function TriagePage() {
                 return (
                   <div
                     key={l.id}
-                    onClick={() =>
-                      setInspectingPhoto({
-                        id: l.id,
-                        filename: l.filename,
-                        category: l.category,
-                        width: l.width,
-                        height: l.height,
-                        captured_at: l.captured_at,
-                        is_favorite: false,
-                        is_blurry: false,
-                        thumbnail_url: l.thumbnail_url,
-                        source_type: l.source_type,
-                        source_id: l.source_id,
-                      })
-                    }
-                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                    data-media-id={l.id}
+                    onPointerDown={(e) => handleItemPointerDown(l.id, e)}
+                    onPointerEnter={() => handleItemPointerEnter(l.id)}
+                    onClick={(e) => handleItemClick(l.id, e, currentTabItemIds)}
+                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                       isSelected ? 'border-red-500 ring-2 ring-red-500/30' : 'border-transparent'
                     }`}
                   >
                     <img
                       src={`${API_URL}${l.thumbnail_url}`}
                       alt={l.filename}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover select-none pointer-events-none"
                       loading="lazy"
+                      draggable={false}
                     />
 
                     {/* File Size Badge & Checkbox */}
@@ -1510,8 +1948,15 @@ export default function TriagePage() {
                         {l.file_size_mb} MB
                       </span>
                       <div
-                        onClick={(e) => toggleSelect(l.id, e)}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          handleItemPointerDown(l.id, e);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(l.id, e);
+                        }}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-red-600 border-white text-white shadow-md scale-110'
                             : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
@@ -1676,30 +2121,20 @@ export default function TriagePage() {
                             return (
                               <div
                                 key={m.id}
-                                onClick={() =>
-                                  setInspectingPhoto({
-                                    id: m.id,
-                                    filename: m.filename,
-                                    category: 'meme_junk',
-                                    width: 1080,
-                                    height: 1080,
-                                    captured_at: m.captured_at,
-                                    is_favorite: false,
-                                    is_blurry: false,
-                                    thumbnail_url: m.thumbnail_url,
-                                    source_type: m.source_type,
-                                    source_id: m.source_id,
-                                  })
-                                }
-                                className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm ${
+                                data-media-id={m.id}
+                                onPointerDown={(e) => handleItemPointerDown(m.id, e)}
+                                onPointerEnter={() => handleItemPointerEnter(m.id)}
+                                onClick={(e) => handleItemClick(m.id, e, currentTabItemIds)}
+                                className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                                   isSelected ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent'
                                 }`}
                               >
                                 <img
                                   src={`${API_URL}${m.thumbnail_url}`}
                                   alt={m.filename}
-                                  className="w-full h-full object-cover"
+                                  className="w-full h-full object-cover select-none pointer-events-none"
                                   loading="lazy"
+                                  draggable={false}
                                 />
 
                                 <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
@@ -1707,8 +2142,15 @@ export default function TriagePage() {
                                     Meme
                                   </span>
                                   <div
-                                    onClick={(e) => toggleSelect(m.id, e)}
-                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                                    onPointerDown={(e) => {
+                                      e.stopPropagation();
+                                      handleItemPointerDown(m.id, e);
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelect(m.id, e);
+                                    }}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
                                       isSelected
                                         ? 'bg-pink-600 border-white text-white shadow-md scale-110'
                                         : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'

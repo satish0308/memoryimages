@@ -71,6 +71,8 @@ interface PhotoCardProps {
   isSelected?: boolean;
   onSelect: (item: MediaItem) => void;
   onToggleSelect?: (id: number, e: React.MouseEvent) => void;
+  onPointerDown?: (id: number, e: React.PointerEvent) => void;
+  onPointerEnter?: (id: number) => void;
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
   onOpenBurst?: (item: MediaItem, e: React.MouseEvent) => void;
@@ -92,6 +94,8 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   isSelected = false,
   onSelect,
   onToggleSelect,
+  onPointerDown,
+  onPointerEnter,
   onToggleFavorite,
   onDelete,
   onOpenBurst,
@@ -174,6 +178,13 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
       )}
 
       <div
+        data-media-id={item.id}
+        onPointerDown={(e) => {
+          if (onPointerDown) onPointerDown(item.id, e);
+        }}
+        onPointerEnter={() => {
+          if (onPointerEnter) onPointerEnter(item.id);
+        }}
         onClick={() => onSelect(item)}
         onMouseEnter={() => setIsHovered(true)}
         onMouseMove={handleMouseMove}
@@ -182,7 +193,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
           setScrubProgress(null);
           setScrubTimeLabel('');
         }}
-        className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition ${
+        className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition select-none ${
           isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
         }`}
       >
@@ -191,7 +202,8 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
           alt={item.filename}
           style={{ filter: filterStyle }}
           onLoad={handleImageLoaded}
-          className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ${
+          draggable={false}
+          className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 select-none pointer-events-none ${
             isSelected ? 'brightness-95' : ''
           }`}
           loading="lazy"
@@ -243,11 +255,15 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
       {/* Select Checkbox Button (Top Left) */}
       <button
         type="button"
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          if (onPointerDown) onPointerDown(item.id, e);
+        }}
         onClick={(e) => {
           e.stopPropagation();
           if (onToggleSelect) onToggleSelect(item.id, e);
         }}
-        className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-md ${
+        className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-md cursor-pointer ${
           isSelected
             ? 'bg-indigo-600 text-white scale-100 opacity-100'
             : 'bg-black/40 text-transparent hover:bg-black/70 hover:text-white/80 opacity-0 group-hover:opacity-100 border border-white/60'

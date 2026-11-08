@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, case
 
 from app.database import get_db
+from app.config import settings
 from app.models.user import User
+from app.models.person import FaceDetection
 from app.models.media import Media, MediaCategory, SourceType
 from app.api.auth import get_current_user, get_optional_current_user
 from app.services.burst_engine import (
@@ -30,6 +32,10 @@ def is_file_on_readonly_mount(file_path: Optional[str]) -> bool:
 class BatchActionRequest(BaseModel):
     media_ids: List[int]
     permanent: bool = False
+
+class ChangeCategoryRequest(BaseModel):
+    media_ids: List[int]
+    category: str  # "memory", "screenshot", "document_bill", "meme_junk"
 
 class SnoozeRequest(BaseModel):
     media_ids: List[int]
@@ -75,6 +81,7 @@ def get_triage_overview(
         func.sum(case((Media.blur_type == "motion_blur", 1), else_=0)).label("total_motion_blur"),
         func.sum(case((Media.is_bokeh == True, 1), else_=0)).label("total_bokeh"),
         func.sum(case((Media.category == MediaCategory.MEME_JUNK, 1), else_=0)).label("total_memes"),
+        func.sum(case(((Media.width >= 1920) & (Media.width > Media.height) & (Media.camera_make.is_(None))), 1), else_=0).label("total_wallpapers"),
         func.sum(case((
             ((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)) |
             ((Media.is_blurry == True) & (Media.is_bokeh == False)) |
@@ -94,6 +101,7 @@ def get_triage_overview(
     total_motion_blur = int(stats.total_motion_blur or 0)
     total_bokeh = int(stats.total_bokeh or 0)
     total_memes = int(stats.total_memes or 0)
+    total_wallpapers = int(stats.total_wallpapers or 0)
     clutter_size = int(stats.clutter_size or 0)
     
     return {
@@ -105,6 +113,7 @@ def get_triage_overview(
         "total_motion_blur": total_motion_blur,
         "total_bokeh": total_bokeh,
         "total_memes": total_memes,
+        "total_wallpapers": total_wallpapers,
         "reclaimable_bytes": clutter_size,
         "reclaimable_mb": round(clutter_size / (1024 * 1024), 2)
     }
@@ -112,10 +121,11 @@ def get_triage_overview(
 @router.get("/screenshots")
 def get_screenshots(
     filter_expired: bool = False,
+    orientation: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists screenshots for current user with expiry countdown information."""
+    """Lists screenshots for current user with expiry countdown and orientation filtering."""
     if not current_user:
         return []
     now = datetime.utcnow()
@@ -126,6 +136,10 @@ def get_screenshots(
     )
     if filter_expired:
         query = query.filter(Media.expires_at <= now)
+    if orientation == "portrait":
+        query = query.filter(Media.height > Media.width)
+    elif orientation == "desktop":
+        query = query.filter(Media.width >= Media.height)
         
     items = query.order_by(Media.expires_at.asc().nullslast()).all()
     
@@ -138,9 +152,15 @@ def get_screenshots(
             days_left = delta.days
             is_expired = delta.total_seconds() <= 0
             
+        w = item.width or 0
+        h = item.height or 0
         results.append({
             "id": item.id,
             "filename": item.filename,
+            "width": w,
+            "height": h,
+            "is_portrait": h > w,
+            "is_landscape": w >= h,
             "captured_at": item.captured_at,
             "expires_at": item.expires_at,
             "days_left": days_left,
@@ -484,3 +504,160 @@ def cleanup_pocket_shots(
     ).update({"is_deleted": True}, synchronize_session=False)
     db.commit()
     return {"status": "success", "count": updated}
+
+@router.post("/reclassify-screenshots")
+def reclassify_screenshots(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Re-evaluates all media currently categorized as SCREENSHOT using improved heuristics.
+    Rescues real camera photos, widescreen desktop wallpapers, and coursework diagrams.
+    """
+    from app.services.triage_engine import classify_media_item
+    
+    query = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.category == MediaCategory.SCREENSHOT,
+        Media.is_deleted == False
+    )
+    items = query.all()
+    if not items:
+        return {
+            "status": "success",
+            "total_evaluated": 0,
+            "rescued_to_memories": 0,
+            "moved_to_documents": 0,
+            "moved_to_memes": 0,
+            "retained_screenshots": 0
+        }
+
+    # Pre-fetch media IDs that have detected faces in 1 fast query (prevents N+1 query loop)
+    item_ids = [m.id for m in items]
+    media_with_faces = set(
+        r[0] for r in db.query(FaceDetection.media_id).filter(
+            FaceDetection.media_id.in_(item_ids)
+        ).distinct().all()
+    )
+    
+    rescued_memories = 0
+    moved_documents = 0
+    moved_memes = 0
+    retained_screenshots = 0
+    
+    for item in items:
+        faces_count = 1 if item.id in media_with_faces else 0
+        new_cat, conf, new_expiry = classify_media_item(
+            filename=item.filename,
+            width=item.width or 0,
+            height=item.height or 0,
+            camera_make=item.camera_make,
+            camera_model=item.camera_model,
+            captured_at=item.captured_at or datetime.utcnow(),
+            iso=item.iso,
+            focal_length=item.focal_length,
+            mime_type=item.mime_type,
+            faces_count=faces_count
+        )
+        
+        if new_cat != MediaCategory.SCREENSHOT:
+            item.category = new_cat
+            item.triage_confidence = conf
+            item.expires_at = new_expiry
+            if new_cat == MediaCategory.MEMORY:
+                rescued_memories += 1
+            elif new_cat == MediaCategory.DOCUMENT_BILL:
+                moved_documents += 1
+            elif new_cat == MediaCategory.MEME_JUNK:
+                moved_memes += 1
+        else:
+            retained_screenshots += 1
+            
+    db.commit()
+    return {
+        "status": "success",
+        "total_evaluated": len(items),
+        "rescued_to_memories": rescued_memories,
+        "moved_to_documents": moved_documents,
+        "moved_to_memes": moved_memes,
+        "retained_screenshots": retained_screenshots
+    }
+
+@router.get("/wallpapers")
+def get_wallpapers(
+    resolution: Optional[str] = Query(None, regex="^(all|4k|2k|1080p|ultrawide)$"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Lists widescreen desktop wallpapers and digital artwork (16:9, 16:10, 21:9 >= 1080p).
+    """
+    if not current_user:
+        return []
+    
+    query = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.is_deleted == False,
+        Media.width >= 1920,
+        Media.width > Media.height,
+        Media.camera_make.is_(None)
+    )
+    
+    if resolution == "4k":
+        query = query.filter(Media.width >= 3840)
+    elif resolution == "2k":
+        query = query.filter(Media.width >= 2560, Media.width < 3840)
+    elif resolution == "1080p":
+        query = query.filter(Media.width == 1920)
+    elif resolution == "ultrawide":
+        query = query.filter((Media.width / Media.height) >= 2.2)
+        
+    items = query.order_by(Media.file_size.desc()).limit(300).all()
+    
+    return [
+        {
+            "id": m.id,
+            "filename": m.filename,
+            "width": m.width,
+            "height": m.height,
+            "file_size": m.file_size,
+            "captured_at": m.captured_at,
+            "category": m.category.value if hasattr(m.category, 'value') else str(m.category),
+            "source_type": (m.source_type.value if hasattr(m.source_type, "value") else str(m.source_type)) if m.source_type else "local",
+            "source_id": m.source_id,
+            "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
+        }
+        for m in items
+    ]
+
+@router.patch("/category")
+def change_media_category(
+    req: ChangeCategoryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk updates the classification category for selected media items.
+    """
+    try:
+        target_category = MediaCategory(req.category)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {req.category}")
+        
+    now = datetime.utcnow()
+    expires_at = now + timedelta(days=settings.SCREENSHOT_DEFAULT_EXPIRY_DAYS) if target_category == MediaCategory.SCREENSHOT else None
+    
+    updated = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
+    ).update({
+        "category": target_category,
+        "expires_at": expires_at
+    }, synchronize_session=False)
+    db.commit()
+    
+    return {
+        "status": "success",
+        "count": updated,
+        "new_category": target_category.value
+    }

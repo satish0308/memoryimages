@@ -22,6 +22,8 @@ interface DaySectionProps {
   density?: 'compact' | 'normal' | 'large';
   onSelect: (item: MediaItem) => void;
   onToggleSelect?: (id: number, e: React.MouseEvent) => void;
+  onPointerDown?: (id: number, e: React.PointerEvent) => void;
+  onPointerEnter?: (id: number) => void;
   onToggleSelectGroup?: (groupIds: number[], selectAll: boolean) => void;
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
@@ -36,6 +38,8 @@ export const DaySection: React.FC<DaySectionProps> = ({
   density = 'normal',
   onSelect,
   onToggleSelect,
+  onPointerDown,
+  onPointerEnter,
   onToggleSelectGroup,
   onToggleFavorite,
   onDelete,
@@ -132,6 +136,8 @@ export const DaySection: React.FC<DaySectionProps> = ({
             isSelected={selectedSet.has(item.id)}
             onSelect={onSelect}
             onToggleSelect={onToggleSelect}
+            onPointerDown={onPointerDown}
+            onPointerEnter={onPointerEnter}
             onToggleFavorite={onToggleFavorite}
             onDelete={onDelete}
             onOpenBurst={onOpenBurst}

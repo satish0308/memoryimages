@@ -19,6 +19,7 @@ import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
 import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
+import { useDragSelect } from '@/hooks/useDragSelect';
 
 export default function PhotosPage() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -171,6 +172,22 @@ export default function PhotosPage() {
   const clearSelection = () => {
     setSelectedIds([]);
   };
+
+  // Drag-and-Select & Range Selection Hook for Timeline
+  const {
+    isDragging: isDragSelecting,
+    dragMode,
+    handleItemPointerDown,
+    handleItemPointerEnter,
+    handleTouchMove,
+  } = useDragSelect({
+    selectedIds,
+    setSelectedIds,
+    onInspect: (id) => {
+      const found = allFlatPhotos.find((p) => p.id === id);
+      if (found) setSelectedPhoto(found);
+    },
+  });
 
   // Bulk Operations
   const handleBatchFavorite = async () => {
@@ -411,7 +428,7 @@ export default function PhotosPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-20">
+    <div className="max-w-7xl mx-auto space-y-6 pb-20" onTouchMove={handleTouchMove}>
       {/* Search Bar with AI Semantic Toggle */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-2xl">
         <div className="relative flex-1">
@@ -662,6 +679,8 @@ export default function PhotosPage() {
                   isSelected={selectedIds.includes(item.id)}
                   onSelect={setSelectedPhoto}
                   onToggleSelect={toggleSelectPhoto}
+                  onPointerDown={handleItemPointerDown}
+                  onPointerEnter={handleItemPointerEnter}
                   onToggleFavorite={toggleFavorite}
                   onDelete={deletePhoto}
                   onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
@@ -707,6 +726,8 @@ export default function PhotosPage() {
               density={density}
               onSelect={setSelectedPhoto}
               onToggleSelect={toggleSelectPhoto}
+              onPointerDown={handleItemPointerDown}
+              onPointerEnter={handleItemPointerEnter}
               onToggleSelectGroup={toggleSelectGroup}
               onToggleFavorite={toggleFavorite}
               onDelete={deletePhoto}
@@ -720,6 +741,19 @@ export default function PhotosPage() {
       {/* Interactive Vertical Timeline Minimap Scrubber */}
       {!searchResults && filteredTimeline.length > 0 && (
         <TimelineScrubber groups={filteredTimeline} />
+      )}
+
+      {/* Active Line-Drag Selection Floating Pill */}
+      {isDragSelecting && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+          <span className="text-xs font-bold tracking-wide">
+            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-[11px] text-slate-400 font-mono">
+            {selectedIds.length} selected
+          </span>
+        </div>
       )}
 
       {/* Floating Bulk Action Bar */}
