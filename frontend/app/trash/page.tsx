@@ -749,10 +749,10 @@ export default function TrashGalleryPage() {
       {/* Photo Gallery Grid */}
       {filteredAndSortedItems.length > 0 && (
         <div
-          className={`grid gap-3 select-none ${
+          className={`grid gap-3.5 select-none ${
             gridDensity === 'compact'
-              ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8'
-              : 'grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4'
+              ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10'
+              : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7'
           }`}
         >
           {filteredAndSortedItems.map((item) => {

@@ -48,13 +48,13 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
 
   // Extract filenames safely and deduplicate
   const filenames = useMemo(() => {
-    const raw = items.map((i) => i.filename.trim()).filter(Boolean);
+    const raw = items.map((i) => (i.filename || '').trim()).filter(Boolean);
     return Array.from(new Set(raw));
   }, [items]);
 
   // Helper to format individual filename token for Google Photos query
   const formatToken = (name: string, format: 'exact' | 'basename') => {
-    let clean = name.trim();
+    let clean = (name || '').trim();
     if (format === 'basename') {
       const lastDot = clean.lastIndexOf('.');
       if (lastDot > 0) clean = clean.substring(0, lastDot);
@@ -99,7 +99,7 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
     const q = searchFilter.toLowerCase();
     return items.filter(
       (it) =>
-        it.filename.toLowerCase().includes(q) ||
+        (it.filename && it.filename.toLowerCase().includes(q)) ||
         (it.host_path && it.host_path.toLowerCase().includes(q))
     );
   }, [items, searchFilter]);
@@ -119,13 +119,14 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
   const handleDownloadCsv = () => {
     const headers = ['Filename', 'Size_Bytes', 'Size_MB', 'Host_Path', 'Date_Marked', 'Google_Photos_Search_URL'];
     const rows = items.map((it) => {
+      const fn = it.filename || '';
       const sizeBytes = it.file_size || 0;
       const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(2);
       const hostPath = it.host_path || '';
       const dateMarked = it.captured_at || '';
-      const searchUrl = `https://photos.google.com/search/${encodeURIComponent(it.filename)}`;
+      const searchUrl = `https://photos.google.com/search/${encodeURIComponent(fn)}`;
       return [
-        `"${it.filename.replace(/"/g, '""')}"`,
+        `"${fn.replace(/"/g, '""')}"`,
         sizeBytes,
         sizeMb,
         `"${hostPath.replace(/"/g, '""')}"`,
