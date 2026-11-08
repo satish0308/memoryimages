@@ -2023,6 +2023,15 @@ def update_media_category(
 
     return {"id": media.id, "category": media.category}
 
+def is_file_on_readonly_mount(file_path: Optional[str]) -> bool:
+    """Returns True if the file or its directory resides on a read-only filesystem."""
+    if not file_path:
+        return False
+    target = file_path if os.path.exists(file_path) else os.path.dirname(file_path)
+    if not target or not os.path.exists(target):
+        return False
+    return not os.access(target, os.W_OK)
+
 @router.delete("/{media_id}")
 def delete_media(
     media_id: int,
@@ -2052,13 +2061,22 @@ def delete_media(
         except Exception as e:
             logger.warning(f"Failed to delete S3 object: {e}")
 
+    is_readonly_mount = False
     if permanent:
-        if media.original_path and os.path.isfile(media.original_path):
-            try:
-                os.remove(media.original_path)
-            except Exception:
-                pass
-        db.delete(media)
+        if media.source_type == SourceType.LOCAL and is_file_on_readonly_mount(media.original_path):
+            is_readonly_mount = True
+
+        if is_readonly_mount:
+            media.is_deleted = True
+            media.pending_disk_deletion = True
+            media.marked_for_deletion_at = datetime.utcnow()
+        else:
+            if media.original_path and os.path.isfile(media.original_path):
+                try:
+                    os.remove(media.original_path)
+                except Exception:
+                    pass
+            db.delete(media)
     else:
         media.is_deleted = True
         
@@ -2070,9 +2088,10 @@ def delete_media(
         pass
 
     return {
-        "status": "deleted",
+        "status": "pending_disk_purge" if is_readonly_mount else "deleted",
         "id": media_id,
         "permanent": permanent,
+        "pending_disk_deletion": is_readonly_mount,
         "deleted_from_source": deleted_from_source,
         "source_type": media.source_type
     }
@@ -2149,6 +2168,9 @@ def batch_delete_media(
         with ThreadPoolExecutor(max_workers=min(len(gdrive_items), 8)) as executor:
             list(executor.map(_del_g, gdrive_items))
 
+    purged_count = 0
+    pending_disk_count = 0
+
     for item in items:
         if item.source_type == SourceType.S3_MINIO and item.source_id and req.permanent:
             try:
@@ -2158,12 +2180,19 @@ def batch_delete_media(
                 pass
 
         if req.permanent:
-            if item.original_path and os.path.isfile(item.original_path):
-                try:
-                    os.remove(item.original_path)
-                except Exception:
-                    pass
-            db.delete(item)
+            if item.source_type == SourceType.LOCAL and is_file_on_readonly_mount(item.original_path):
+                item.is_deleted = True
+                item.pending_disk_deletion = True
+                item.marked_for_deletion_at = datetime.utcnow()
+                pending_disk_count += 1
+            else:
+                if item.original_path and os.path.isfile(item.original_path):
+                    try:
+                        os.remove(item.original_path)
+                    except Exception:
+                        pass
+                db.delete(item)
+                purged_count += 1
         else:
             item.is_deleted = True
 
@@ -2174,7 +2203,13 @@ def batch_delete_media(
     except Exception:
         pass
 
-    return {"status": "success", "count": len(items), "permanent": req.permanent}
+    return {
+        "status": "success",
+        "count": len(items),
+        "permanent": req.permanent,
+        "purged_count": purged_count,
+        "pending_disk_count": pending_disk_count
+    }
 
 class BulkDownloadRequest(BaseModel):
     media_ids: List[int]

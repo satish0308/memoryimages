@@ -59,6 +59,8 @@ class Media(Base):
     is_archived = Column(Boolean, default=False, index=True)
     is_deleted = Column(Boolean, default=False, index=True)
     faces_scanned = Column(Boolean, default=False, index=True)
+    pending_disk_deletion = Column(Boolean, default=False, index=True)
+    marked_for_deletion_at = Column(DateTime, nullable=True)
     
     # EXIF Metadata
     camera_make = Column(String(128), nullable=True)

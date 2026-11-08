@@ -79,6 +79,10 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN gdrive_backed_up_at TIMESTAMP"))
                 if "faces_scanned" not in columns:
                     conn.execute(text("ALTER TABLE media ADD COLUMN faces_scanned BOOLEAN DEFAULT FALSE"))
+                if "pending_disk_deletion" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN pending_disk_deletion BOOLEAN DEFAULT FALSE"))
+                if "marked_for_deletion_at" not in columns:
+                    conn.execute(text("ALTER TABLE media ADD COLUMN marked_for_deletion_at TIMESTAMP"))
                 if "user_id" not in columns:
                     conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
                 conn.commit()

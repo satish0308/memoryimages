@@ -112,6 +112,7 @@ interface DatabaseStatus {
     faces: number;
     albums: number;
     users: number;
+    pending_disk_deletions?: number;
   };
   pgvector_active: boolean;
   hnsw_index_active: boolean;
@@ -127,6 +128,27 @@ interface DatabaseStatus {
   supported_engines: string[];
   vector_dimension: number;
   vector_metric: string;
+}
+
+interface PendingPurgeItem {
+  id: number;
+  filename: string;
+  original_path: string;
+  host_path: string;
+  file_size: number;
+  mime_type?: string;
+  thumbnail_url: string;
+  marked_for_deletion_at: string;
+  file_exists_in_mount: boolean;
+}
+
+interface PendingPurgeData {
+  total_count: number;
+  total_size_bytes: number;
+  items: PendingPurgeItem[];
+  host_prefix: string;
+  container_prefix: string;
+  purge_script_path: string;
 }
 
 export default function AppSettingsPage() {
@@ -186,6 +208,12 @@ export default function AppSettingsPage() {
   const [backingUpS3, setBackingUpS3] = useState(false);
   const [s3Filter, setS3Filter] = useState<'all' | 'photos' | 'thumbnails' | 'backups'>('all');
   const s3UploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Pending OS Disk Purge state (Read-Only Mount)
+  const [pendingPurge, setPendingPurge] = useState<PendingPurgeData | null>(null);
+  const [loadingPendingPurge, setLoadingPendingPurge] = useState(false);
+  const [showPendingPurgeModal, setShowPendingPurgeModal] = useState(false);
+  const [restoringPurgeId, setRestoringPurgeId] = useState<number | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -265,11 +293,53 @@ export default function AppSettingsPage() {
     }
   };
 
+  const fetchPendingPurge = async () => {
+    setLoadingPendingPurge(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/purge/pending`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setPendingPurge(await res.json());
+      }
+    } catch (e) {
+      console.error('Failed to load pending purge list:', e);
+    } finally {
+      setLoadingPendingPurge(false);
+    }
+  };
+
+  const handleCancelPendingPurge = async (mediaId?: number) => {
+    if (mediaId) setRestoringPurgeId(mediaId);
+    try {
+      const body = mediaId ? { media_ids: [mediaId] } : { cancel_all: true };
+      const res = await fetch(`${API_URL}/api/v1/system/purge/cancel`, {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setMessage({
+          type: 'success',
+          text: mediaId ? 'Photo restored from purge queue back to active library.' : 'All photos restored from purge queue.',
+        });
+        setTimeout(() => setMessage(null), 4000);
+        fetchPendingPurge();
+        fetchDbStatus();
+      }
+    } catch (e) {
+      console.error('Error cancelling purge:', e);
+    } finally {
+      setRestoringPurgeId(null);
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
     fetchBackupsAndSchedule();
     fetchS3StatusAndObjects();
     fetchDbStatus();
+    fetchPendingPurge();
   }, [API_URL, authContextToken]);
 
   const handleSaveSettings = async () => {
@@ -1633,6 +1703,72 @@ export default function AppSettingsPage() {
         </div>
       </div>
 
+      {/* PENDING OS DISK PURGE (READ-ONLY MOUNT) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                Read-Only Mount Deletion Queue (Pending OS Purge)
+              </h3>
+              {(pendingPurge?.total_count || 0) > 0 ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                  {pendingPurge?.total_count} files queued ({((pendingPurge?.total_size_bytes || 0) / (1024 * 1024)).toFixed(1)} MB)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Clean (0 pending)
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Photos permanently deleted from read-only host mounts (<code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-700">{pendingPurge?.host_prefix || '/media/satish/Data2/all_extracts/'}</code>) are safely staged here. Run the script on your host terminal to physically remove them.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPendingPurgeModal(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>View Queued Files ({(pendingPurge?.total_count || 0)})</span>
+            </button>
+            <button
+              type="button"
+              onClick={fetchPendingPurge}
+              className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition"
+              title="Refresh purge queue"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingPendingPurge ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Script Command helper box */}
+        <div className="bg-slate-950 text-slate-200 p-3.5 rounded-xl border border-slate-800 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 font-mono">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            <span className="text-slate-500 select-none">$</span>
+            <span className="text-emerald-400">./scripts/delete_files_marked_as_deleted.sh</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText('./scripts/delete_files_marked_as_deleted.sh');
+              setMessage({ type: 'success', text: 'Purge command copied to clipboard!' });
+              setTimeout(() => setMessage(null), 3000);
+            }}
+            className="self-start sm:self-auto px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[11px] font-sans font-semibold transition shrink-0"
+          >
+            Copy Command
+          </button>
+        </div>
+      </div>
+
       {/* Point-in-Time Restore Confirmation Modal */}
       {restoreConfirmModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1822,6 +1958,144 @@ export default function AppSettingsPage() {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Read-Only Mount Pending OS Purge Modal */}
+      {showPendingPurgeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl animate-fadeIn max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900">
+                    Files Marked for Permanent Deletion (Read-Only Mount)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Physical files pending manual deletion via OS host script
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPendingPurgeModal(false)}
+                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Instruction Banner */}
+            <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-900 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                Host Drive Protection Active
+              </p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Because your photo library is mounted read-only (<code className="bg-amber-100/70 px-1 py-0.5 rounded font-mono">:ro</code>), Docker cannot modify your physical host files. Run this command on your host Linux terminal to delete them:
+              </p>
+              <div className="flex items-center justify-between bg-slate-950 text-slate-200 px-3 py-2 rounded-lg font-mono text-[11px] mt-1.5">
+                <span>./scripts/delete_files_marked_as_deleted.sh</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText('./scripts/delete_files_marked_as_deleted.sh');
+                    setMessage({ type: 'success', text: 'Command copied!' });
+                    setTimeout(() => setMessage(null), 3000);
+                  }}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-sans font-semibold ml-2"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            {/* Items List */}
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[200px]">
+              {(!pendingPurge || pendingPurge.items.length === 0) ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center space-y-2 text-slate-400">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                  <p className="text-xs font-semibold text-slate-700">No pending disk purges</p>
+                  <p className="text-[11px] text-slate-500">All read-only files are clean. No deletions queued.</p>
+                </div>
+              ) : (
+                pendingPurge.items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between p-3 rounded-xl border border-slate-200/80 hover:border-slate-300 bg-slate-50/50 transition gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-12 h-12 rounded-lg bg-slate-200 overflow-hidden shrink-0 border border-slate-200 flex items-center justify-center">
+                        <img
+                          src={`${API_URL}${item.thumbnail_url}&token=${authContextToken || ''}`}
+                          alt={item.filename}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="text-xs font-semibold text-slate-900 truncate" title={item.filename}>
+                          {item.filename}
+                        </p>
+                        <p className="text-[11px] font-mono text-slate-500 truncate" title={item.host_path}>
+                          {item.host_path}
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                          <span>{(item.file_size / (1024 * 1024)).toFixed(2)} MB</span>
+                          {item.marked_for_deletion_at && (
+                            <>
+                              <span>•</span>
+                              <span>Marked: {new Date(item.marked_for_deletion_at).toLocaleString()}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleCancelPendingPurge(item.id)}
+                      disabled={restoringPurgeId === item.id}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-indigo-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-sm transition shrink-0 disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      <RotateCcw className={`w-3 h-3 ${restoringPurgeId === item.id ? 'animate-spin' : ''}`} />
+                      <span>Restore</span>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              <span className="text-xs text-slate-500 font-medium">
+                Total: {pendingPurge?.total_count || 0} files ({((pendingPurge?.total_size_bytes || 0) / (1024 * 1024)).toFixed(1)} MB)
+              </span>
+              <div className="flex items-center gap-2">
+                {(pendingPurge?.total_count || 0) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleCancelPendingPurge()}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                  >
+                    Restore All
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPendingPurgeModal(false)}
+                  className="px-4 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-xl shadow-sm transition"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

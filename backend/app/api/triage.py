@@ -18,6 +18,15 @@ from app.services.burst_engine import (
 
 router = APIRouter()
 
+def is_file_on_readonly_mount(file_path: Optional[str]) -> bool:
+    """Returns True if the file or its directory resides on a read-only filesystem."""
+    if not file_path:
+        return False
+    target = file_path if os.path.exists(file_path) else os.path.dirname(file_path)
+    if not target or not os.path.exists(target):
+        return False
+    return not os.access(target, os.W_OK)
+
 class BatchActionRequest(BaseModel):
     media_ids: List[int]
     permanent: bool = False
@@ -288,6 +297,9 @@ def batch_delete(
         with ThreadPoolExecutor(max_workers=min(len(gdrive_items), 8)) as executor:
             list(executor.map(_del_g, gdrive_items))
 
+    purged_count = 0
+    pending_disk_count = 0
+
     for item in items:
         if item.source_type == SourceType.S3_MINIO and item.source_id and req.permanent:
             try:
@@ -297,17 +309,30 @@ def batch_delete(
                 pass
 
         if req.permanent:
-            if item.original_path and os.path.isfile(item.original_path):
-                try:
-                    os.remove(item.original_path)
-                except Exception:
-                    pass
-            db.delete(item)
+            if item.source_type == SourceType.LOCAL and is_file_on_readonly_mount(item.original_path):
+                item.is_deleted = True
+                item.pending_disk_deletion = True
+                item.marked_for_deletion_at = datetime.utcnow()
+                pending_disk_count += 1
+            else:
+                if item.original_path and os.path.isfile(item.original_path):
+                    try:
+                        os.remove(item.original_path)
+                    except Exception:
+                        pass
+                db.delete(item)
+                purged_count += 1
         else:
             item.is_deleted = True
 
     db.commit()
-    return {"status": "deleted", "count": len(items), "permanent": req.permanent}
+    return {
+        "status": "deleted",
+        "count": len(items),
+        "permanent": req.permanent,
+        "purged_count": purged_count,
+        "pending_disk_count": pending_disk_count
+    }
 
 @router.get("/memes")
 def get_memes_and_graphics(

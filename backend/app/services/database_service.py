@@ -41,6 +41,7 @@ def get_database_status() -> Dict[str, Any]:
             "faces": db.query(FaceDetection).count(),
             "albums": db.query(Album).count(),
             "users": db.query(User).count(),
+            "pending_disk_deletions": db.query(Media).filter(Media.pending_disk_deletion == True).count(),
         }
     except Exception as e:
         logger.warning(f"Could not read table counts: {e}")
@@ -168,6 +169,12 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
 
     # Create target tables
     Base.metadata.create_all(bind=tgt_engine)
+    try:
+        from app.main import check_and_upgrade_schema
+        check_and_upgrade_schema(src_engine)
+        check_and_upgrade_schema(tgt_engine)
+    except Exception as e:
+        logger.warning(f"Schema upgrade check notice: {e}")
 
     SrcSession = sessionmaker(bind=src_engine)
     TgtSession = sessionmaker(bind=tgt_engine)
