@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { 
@@ -1745,13 +1746,21 @@ export default function AppSettingsPage() {
                 <span>Google Photos Query</span>
               </button>
             )}
+            <Link
+              href="/trash"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+              title="Open full photo gallery grid for deleted photos"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Full Trash Gallery ({(pendingPurge?.total_count || 0)})</span>
+            </Link>
             <button
               type="button"
               onClick={() => setShowPendingPurgeModal(true)}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-sm transition"
             >
               <Eye className="w-3.5 h-3.5" />
-              <span>View Queued Files ({(pendingPurge?.total_count || 0)})</span>
+              <span>List View</span>
             </button>
             <button
               type="button"
@@ -1996,13 +2005,22 @@ export default function AppSettingsPage() {
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowPendingPurgeModal(false)}
-                className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/trash"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Open Full Gallery ↗</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowPendingPurgeModal(false)}
+                  className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Instruction Banner */}

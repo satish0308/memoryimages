@@ -4,7 +4,7 @@ import urllib.parse
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Response, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -40,24 +40,31 @@ class ConfirmPurgedRequest(BaseModel):
 @router.get("/pending")
 def get_pending_disk_deletions(
     skip: int = 0,
-    limit: int = 200,
+    limit: int = Query(500, ge=1, le=10000),
+    search: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Returns all media items marked for permanent deletion on read-only volume mounts
-    that are pending execution of the host-level deletion script.
+    Returns all media items marked for deletion or queued on read-only volume mounts
+    pending execution of the host-level deletion script.
     """
     query = db.query(Media).filter(
-        Media.pending_disk_deletion == True
+        (Media.pending_disk_deletion == True) | (Media.is_deleted == True)
     )
     if not current_user.is_admin:
         query = query.filter(Media.user_id == current_user.id)
 
-    total_count = query.count()
-    items = query.order_by(Media.marked_for_deletion_at.desc().nullslast()).offset(skip).limit(limit).all()
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(Media.filename.ilike(term) | Media.original_path.ilike(term))
 
-    total_bytes = db.query(Media.file_size).filter(Media.pending_disk_deletion == True)
+    total_count = query.count()
+    items = query.order_by(Media.marked_for_deletion_at.desc().nullslast(), Media.updated_at.desc()).offset(skip).limit(limit).all()
+
+    total_bytes = db.query(Media.file_size).filter(
+        (Media.pending_disk_deletion == True) | (Media.is_deleted == True)
+    )
     if not current_user.is_admin:
         total_bytes = total_bytes.filter(Media.user_id == current_user.id)
     total_size_bytes = sum(r[0] or 0 for r in total_bytes.all())
@@ -72,10 +79,17 @@ def get_pending_disk_deletions(
             "original_path": item.original_path,
             "host_path": host_p,
             "file_size": item.file_size or 0,
+            "width": item.width or 0,
+            "height": item.height or 0,
             "mime_type": item.mime_type,
+            "captured_at": item.captured_at.isoformat() if item.captured_at else None,
             "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
             "marked_for_deletion_at": item.marked_for_deletion_at.isoformat() if item.marked_for_deletion_at else None,
-            "file_exists_in_mount": file_exists
+            "pending_disk_deletion": bool(item.pending_disk_deletion),
+            "is_deleted": bool(item.is_deleted),
+            "file_exists_in_mount": file_exists,
+            "camera_make": item.camera_make,
+            "camera_model": item.camera_model
         })
 
     return {
@@ -94,10 +108,12 @@ def cancel_pending_disk_deletions(
     db: Session = Depends(get_db)
 ):
     """
-    Restores items from the pending disk purge queue back to active status,
+    Restores items from the pending disk purge queue / trash back to active status,
     resetting pending_disk_deletion and is_deleted flags.
     """
-    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    query = db.query(Media).filter(
+        (Media.pending_disk_deletion == True) | (Media.is_deleted == True)
+    )
     if not current_user.is_admin:
         query = query.filter(Media.user_id == current_user.id)
 
@@ -135,7 +151,7 @@ def confirm_disk_purged(
     Called by the OS-level deletion script (or admin) after files have been physically
     removed from the host drive. Purges database records, thumbnails, and AI vector embeddings.
     """
-    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    query = db.query(Media).filter((Media.pending_disk_deletion == True) | (Media.is_deleted == True))
     if not current_user.is_admin:
         query = query.filter(Media.user_id == current_user.id)
 
@@ -195,7 +211,7 @@ def get_google_photos_purge_query(
     Generates optimized Google Photos search queries for all items currently
     marked for permanent deletion on read-only mounts.
     """
-    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    query = db.query(Media).filter((Media.pending_disk_deletion == True) | (Media.is_deleted == True))
     if not current_user.is_admin:
         query = query.filter(Media.user_id == current_user.id)
 
@@ -229,7 +245,7 @@ def export_pending_purge_csv(
     Exports a downloadable CSV report of all items marked for permanent deletion,
     including mapped host paths, file sizes, and Google Photos direct search URLs.
     """
-    query = db.query(Media).filter(Media.pending_disk_deletion == True)
+    query = db.query(Media).filter((Media.pending_disk_deletion == True) | (Media.is_deleted == True))
     if not current_user.is_admin:
         query = query.filter(Media.user_id == current_user.id)
 
