@@ -255,6 +255,11 @@ export function useDragSelect({
         return;
       }
 
+      // If this is the second click of a double-click, ignore to prevent unselecting while opening lightbox
+      if (e.detail > 1) {
+        return;
+      }
+
       // Shift + Click Range Selection
       const itemsList = visibleIds || orderedIdsRef.current;
       if (e.shiftKey && lastSelectedIdRef.current !== null && itemsList.length > 0) {

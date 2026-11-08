@@ -35,6 +35,8 @@ import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowMod
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { ShareEventModal } from '@/components/albums/ShareEventModal';
 import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
+import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
+import { useDragSelect } from '@/hooks/useDragSelect';
 import { useAuth } from '@/context/AuthContext';
 
 interface AlbumItem {
@@ -146,7 +148,28 @@ export default function AlbumsPage() {
   // Collection Group Multi-Select & Batch Delete State
   const [collectionSelectedIds, setCollectionSelectedIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
   const [isRemovingFromAlbum, setIsRemovingFromAlbum] = useState(false);
+
+  // 2D Marquee Drag-and-Select & Range Selection Hook for Album Collections
+  const collectionOrderedIds = (selectedCollection?.photos || []).map((p) => p.id);
+
+  const {
+    isDragging: isDragSelectingCollection,
+    dragMode: collectionDragMode,
+    marqueeBox: collectionMarqueeBox,
+    handlePointerDown: handleCollectionPointerDown,
+    handleItemClick: handleCollectionItemClick,
+    handleItemDoubleClick: handleCollectionItemDoubleClick,
+  } = useDragSelect({
+    selectedIds: collectionSelectedIds,
+    setSelectedIds: setCollectionSelectedIds,
+    orderedIds: collectionOrderedIds,
+    onOpenLightbox: (id) => {
+      const found = selectedCollection?.photos.find((p) => p.id === id);
+      if (found) setSelectedPhoto(found);
+    },
+  });
 
   // Google Drive Outbound Backup state
   const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
@@ -1144,7 +1167,7 @@ export default function AlbumsPage() {
               )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3" onPointerDown={(e) => handleCollectionPointerDown(e)}>
               {/* Collection Selection & Batch Action Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-2xl px-4 py-2.5 shadow-sm">
                 <div className="flex items-center gap-3">
@@ -1167,32 +1190,44 @@ export default function AlbumsPage() {
                   )}
                 </div>
 
-                {collectionSelectedIds.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    {/* If custom album, offer remove from album option */}
-                    {selectedCollection.type === 'album' && (
-                      <button
-                        onClick={handleBatchRemoveFromAlbum}
-                        disabled={isRemovingFromAlbum}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition disabled:opacity-50"
-                        title="Remove selected photos from this album (photos remain in library)"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        <span>{isRemovingFromAlbum ? 'Removing...' : `Remove from Album (${collectionSelectedIds.length})`}</span>
-                      </button>
-                    )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Google Photos Search Query Helper */}
+                  <button
+                    onClick={() => setShowGooglePhotosModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-semibold shadow-xs transition"
+                    title="Generate Google Photos cloud deletion search query"
+                  >
+                    <Search className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Google Photos Query {collectionSelectedIds.length > 0 ? `(${collectionSelectedIds.length})` : ''}</span>
+                  </button>
 
-                    {/* Move to Trash (Safe Soft-Delete) */}
-                    <button
-                      onClick={() => setShowBulkDeleteModal(true)}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
-                      title="Move selected photos to Trash"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete ({collectionSelectedIds.length})</span>
-                    </button>
-                  </div>
-                )}
+                  {collectionSelectedIds.length > 0 && (
+                    <>
+                      {/* If custom album, offer remove from album option */}
+                      {selectedCollection.type === 'album' && (
+                        <button
+                          onClick={handleBatchRemoveFromAlbum}
+                          disabled={isRemovingFromAlbum}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition disabled:opacity-50"
+                          title="Remove selected photos from this album (photos remain in library)"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>{isRemovingFromAlbum ? 'Removing...' : `Remove from Album (${collectionSelectedIds.length})`}</span>
+                        </button>
+                      )}
+
+                      {/* Move to Trash (Safe Soft-Delete) */}
+                      <button
+                        onClick={() => setShowBulkDeleteModal(true)}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-semibold shadow-sm transition"
+                        title="Move selected photos to Trash"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete ({collectionSelectedIds.length})</span>
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Photo Grid */}
@@ -1210,25 +1245,14 @@ export default function AlbumsPage() {
                       <PhotoCard
                         item={photo}
                         apiUrl={API_URL}
+                        isSelected={isSelected}
                         onSelect={setSelectedPhoto}
+                        onToggleSelect={handleCollectionItemClick}
+                        onPointerDown={handleCollectionPointerDown}
                         onToggleFavorite={() => {}}
                         onDelete={() => {}}
                         onBackupToDrive={(item) => handleBackupSinglePhoto(item)}
                       />
-
-                      {/* Multi-Select Checkbox */}
-                      <button
-                        type="button"
-                        onClick={(e) => handleToggleCollectionSelect(photo.id, e)}
-                        className={`absolute top-2 left-2 w-6 h-6 rounded-full flex items-center justify-center transition z-20 ${
-                          isSelected
-                            ? 'bg-indigo-600 text-white ring-2 ring-white shadow-md'
-                            : 'bg-black/40 text-transparent border border-white/70 hover:bg-black/70 group-hover:text-white/40'
-                        }`}
-                        title={isSelected ? 'Deselect photo' : 'Select photo'}
-                      >
-                        <Check className="w-3.5 h-3.5 stroke-[3]" />
-                      </button>
 
                       {/* Remove from Album Button */}
                       {selectedCollection.type === 'album' && (
@@ -1532,13 +1556,63 @@ export default function AlbumsPage() {
         onClose={() => setIsSlideshowOpen(false)}
       />
 
+      {/* 2D Marquee Drag Selection Visual Rectangle Overlay */}
+      {collectionMarqueeBox && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${collectionMarqueeBox.left}px`,
+            top: `${collectionMarqueeBox.top}px`,
+            width: `${collectionMarqueeBox.width}px`,
+            height: `${collectionMarqueeBox.height}px`,
+          }}
+          className={`pointer-events-none z-50 rounded border-2 ${
+            collectionDragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20 shadow-indigo-500/10'
+              : 'border-rose-500 bg-rose-500/20 shadow-rose-500/10'
+          } shadow-lg backdrop-blur-[0.5px] transition-none`}
+        />
+      )}
+
+      {/* Active Line-Drag Selection Floating Pill */}
+      {isDragSelectingCollection && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+          <div className={`w-2.5 h-2.5 rounded-full ${collectionDragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+          <span className="text-xs font-bold tracking-wide">
+            {collectionDragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-[11px] text-slate-400 font-mono">
+            {collectionSelectedIds.length} selected
+          </span>
+        </div>
+      )}
+
       {/* Safe Bulk Delete Modal for Collections */}
       <BulkDeleteModal
         isOpen={showBulkDeleteModal}
         itemCount={collectionSelectedIds.length}
         itemType="photos"
+        filenames={
+          selectedCollection?.photos
+            .filter((p) => collectionSelectedIds.includes(p.id))
+            .map((p) => p.filename) || []
+        }
+        onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={handleExecuteBatchDelete}
+      />
+
+      {/* Google Photos Cloud Deletion Search Helper Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={
+          collectionSelectedIds.length > 0 && selectedCollection
+            ? selectedCollection.photos.filter((p) => collectionSelectedIds.includes(p.id))
+            : selectedCollection?.photos || []
+        }
+        title={`Google Photos Query: ${selectedCollection?.name || 'Album Photos'}`}
+        subtitle="Search and trash matched photos in your Google Photos cloud account"
       />
 
       {/* Share Event & QR Code Modal */}

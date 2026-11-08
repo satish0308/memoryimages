@@ -20,12 +20,15 @@ import {
   Compass,
   Info,
   CheckCircle2,
-  Clock
+  Clock,
+  Search
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
+import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
+import { useDragSelect } from '@/hooks/useDragSelect';
 
 interface SimilarTargetPhoto {
   id: number;
@@ -92,6 +95,7 @@ function SimilarPhotosContent() {
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -149,6 +153,24 @@ function SimilarPhotosContent() {
     if (activeFacet === 'all') return data.results;
     return data.facets[activeFacet] || [];
   }, [data, activeFacet]);
+
+  // 2D Marquee Drag-and-Select & Range Selection Hook for Similar AI
+  const {
+    isDragging: isDragSelecting,
+    dragMode,
+    marqueeBox,
+    handlePointerDown,
+    handleItemClick,
+    handleItemDoubleClick,
+  } = useDragSelect({
+    selectedIds,
+    setSelectedIds,
+    orderedIds: displayedItems.map((p) => p.id),
+    onOpenLightbox: (id) => {
+      const found = displayedItems.find((p) => p.id === id);
+      if (found) setSelectedPhoto(found);
+    },
+  });
 
   // Selection handlers
   const handleToggleSelect = (id: number, e: React.MouseEvent) => {
@@ -253,7 +275,10 @@ function SimilarPhotosContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div 
+      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none"
+      onPointerDown={(e) => handlePointerDown(e)}
+    >
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 sm:px-8 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -533,12 +558,21 @@ function SimilarPhotosContent() {
 
               {/* Multi-Select & Batch Toolbar */}
               {displayedItems.length > 0 && (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={handleSelectAll}
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold border border-slate-700 transition"
                   >
                     {selectedIds.length === displayedItems.length ? 'Deselect All' : `Select All (${displayedItems.length})`}
+                  </button>
+
+                  <button
+                    onClick={() => setShowGooglePhotosModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold shadow-sm transition"
+                    title="Generate Google Photos cloud deletion search query"
+                  >
+                    <Search className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Google Photos Query {selectedIds.length > 0 ? `(${selectedIds.length})` : ''}</span>
                   </button>
 
                   {selectedIds.length > 0 && (
@@ -573,8 +607,12 @@ function SimilarPhotosContent() {
                   return (
                     <div
                       key={item.id}
-                      onClick={() => setSelectedPhoto(item)}
-                      className={`group relative bg-slate-900 border rounded-2xl overflow-hidden cursor-pointer shadow-md transition-all hover:scale-[1.01] hover:border-slate-600 flex flex-col ${
+                      data-media-id={item.id}
+                      onPointerDown={(e) => handlePointerDown(e, item.id)}
+                      onClick={(e) => handleItemClick(item.id, e, displayedItems.map(p => p.id))}
+                      onDoubleClick={(e) => handleItemDoubleClick(item.id, e)}
+                      title="Single-click to select • Double-click to view full image • Click & drag to multi-select"
+                      className={`group relative bg-slate-900 border rounded-2xl overflow-hidden cursor-pointer shadow-md transition-all hover:scale-[1.01] hover:border-slate-600 flex flex-col select-none ${
                         isSelected
                           ? 'border-indigo-500 ring-2 ring-indigo-500/50 shadow-indigo-500/20'
                           : 'border-slate-800'
@@ -585,13 +623,14 @@ function SimilarPhotosContent() {
                         <img
                           src={getAuthUrl(item.thumbnail_url)}
                           alt={item.filename}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform select-none pointer-events-none"
                           loading="lazy"
+                          draggable={false}
                         />
 
                         {/* Match Badge Pill */}
                         {item.match_badge && (
-                          <div className="absolute top-2 left-2 max-w-[85%] bg-slate-950/85 backdrop-blur-md text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-lg border border-amber-400/30 truncate shadow-md flex items-center gap-1">
+                          <div className="absolute top-2 left-2 max-w-[85%] bg-slate-950/85 backdrop-blur-md text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-lg border border-amber-400/30 truncate shadow-md flex items-center gap-1 pointer-events-none">
                             <Sparkles className="w-3 h-3 text-amber-400 flex-shrink-0" />
                             <span className="truncate">{item.match_badge}</span>
                           </div>
@@ -600,13 +639,17 @@ function SimilarPhotosContent() {
                         {/* Multi-Select Checkbox */}
                         <button
                           type="button"
-                          onClick={(e) => handleToggleSelect(item.id, e)}
-                          className={`absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center transition ${
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleItemClick(item.id, e, displayedItems.map(p => p.id));
+                          }}
+                          className={`absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center transition z-10 ${
                             isSelected
                               ? 'bg-indigo-600 text-white ring-2 ring-white shadow-md'
                               : 'bg-black/40 text-transparent border border-white/60 hover:bg-black/70 group-hover:text-white/40'
                           }`}
-                          title="Select photo"
+                          title={isSelected ? 'Deselect photo' : 'Select photo'}
                         >
                           <Check className="w-3.5 h-3.5 stroke-[3]" />
                         </button>
@@ -673,13 +716,59 @@ function SimilarPhotosContent() {
         onClose={() => setIsSlideshowOpen(false)}
       />
 
+      {/* 2D Marquee Drag Selection Visual Rectangle Overlay */}
+      {marqueeBox && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${marqueeBox.left}px`,
+            top: `${marqueeBox.top}px`,
+            width: `${marqueeBox.width}px`,
+            height: `${marqueeBox.height}px`,
+          }}
+          className={`pointer-events-none z-50 rounded border-2 ${
+            dragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20 shadow-indigo-500/10'
+              : 'border-rose-500 bg-rose-500/20 shadow-rose-500/10'
+          } shadow-lg backdrop-blur-[0.5px] transition-none`}
+        />
+      )}
+
+      {/* Active Line-Drag Selection Floating Pill */}
+      {isDragSelecting && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+          <span className="text-xs font-bold tracking-wide">
+            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-[11px] text-slate-400 font-mono">
+            {selectedIds.length} selected
+          </span>
+        </div>
+      )}
+
       {/* Bulk Delete Modal */}
       <BulkDeleteModal
         isOpen={showBulkDeleteModal}
         itemCount={selectedIds.length}
         itemType="photos"
+        filenames={displayedItems.filter((p) => selectedIds.includes(p.id)).map((p) => p.filename)}
+        onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={handleExecuteBatchDelete}
+      />
+
+      {/* Google Photos Cloud Deletion Search Helper Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={
+          selectedIds.length > 0
+            ? displayedItems.filter((p) => selectedIds.includes(p.id))
+            : displayedItems
+        }
+        title="Similar Clutter Google Photos Deletion Helper"
+        subtitle="Search and trash similar photos in your Google Photos cloud account"
       />
     </div>
   );

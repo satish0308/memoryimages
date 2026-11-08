@@ -19,6 +19,7 @@ import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
 import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
 import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
 import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
+import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { useDragSelect } from '@/hooks/useDragSelect';
 
 export default function PhotosPage() {
@@ -46,6 +47,7 @@ export default function PhotosPage() {
   const [collapseBursts, setCollapseBursts] = useState(true);
   const [inspectingBurstLead, setInspectingBurstLead] = useState<MediaItem | null>(null);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
 
   // Google Drive Outbound Backup state
   const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
@@ -422,9 +424,9 @@ export default function PhotosPage() {
   } = useDragSelect({
     selectedIds,
     setSelectedIds,
-    orderedIds: allFlatPhotos.map((p) => p.id),
+    orderedIds: searchResults ? searchResults.map((p) => p.id) : allFlatPhotos.map((p) => p.id),
     onOpenLightbox: (id) => {
-      const found = allFlatPhotos.find((p) => p.id === id);
+      const found = (searchResults || allFlatPhotos).find((p) => p.id === id);
       if (found) setSelectedPhoto(found);
     },
   });
@@ -798,6 +800,7 @@ export default function PhotosPage() {
           clearSelection();
         }}
         onBatchBackupToDrive={handleBackupBulkPhotos}
+        onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
       />
 
       {/* Moment & Outing Story Detail Modal */}
@@ -884,8 +887,19 @@ export default function PhotosPage() {
         isOpen={showBulkDeleteModal}
         itemCount={selectedIds.length}
         itemType="photos"
+        filenames={allPhotos.filter((p) => selectedIds.includes(p.id)).map((p) => p.filename)}
+        onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
         onClose={() => setShowBulkDeleteModal(false)}
         onConfirm={executeBatchDelete}
+      />
+
+      {/* Google Photos Cloud Deletion Search Helper Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={allPhotos.filter((p) => selectedIds.includes(p.id))}
+        title="Google Photos Cloud Deletion Helper"
+        subtitle="Search and trash selected photos in your Google Photos cloud account"
       />
 
       {/* Google Drive Outbound Backup Modal */}

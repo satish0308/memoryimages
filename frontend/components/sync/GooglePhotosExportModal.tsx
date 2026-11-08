@@ -44,11 +44,28 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [activeBatchIndex, setActiveBatchIndex] = useState(0);
   const [searchFilter, setSearchFilter] = useState('');
+  const [queryFormat, setQueryFormat] = useState<'exact' | 'basename'>('exact');
 
-  // Extract filenames safely
+  // Extract filenames safely and deduplicate
   const filenames = useMemo(() => {
-    return items.map((i) => i.filename.trim()).filter(Boolean);
+    const raw = items.map((i) => i.filename.trim()).filter(Boolean);
+    return Array.from(new Set(raw));
   }, [items]);
+
+  // Helper to format individual filename token for Google Photos query
+  const formatToken = (name: string, format: 'exact' | 'basename') => {
+    let clean = name.trim();
+    if (format === 'basename') {
+      const lastDot = clean.lastIndexOf('.');
+      if (lastDot > 0) clean = clean.substring(0, lastDot);
+    }
+    // Clean existing quotes then wrap in quotes if spaces are present
+    clean = clean.replace(/"/g, '');
+    if (/\s/.test(clean)) {
+      return `"${clean}"`;
+    }
+    return clean;
+  };
 
   // Split into batches of 15 filenames
   const batches = useMemo(() => {
@@ -61,14 +78,14 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
 
   const currentBatch = batches[activeBatchIndex] || batches[0] || [];
 
-  // Formatted queries
+  // Formatted queries with proper quoting and format selection
   const currentBatchQuery = useMemo(() => {
-    return currentBatch.join(' OR ');
-  }, [currentBatch]);
+    return currentBatch.map((fn) => formatToken(fn, queryFormat)).join(' OR ');
+  }, [currentBatch, queryFormat]);
 
   const fullQuery = useMemo(() => {
-    return filenames.join(' OR ');
-  }, [filenames]);
+    return filenames.map((fn) => formatToken(fn, queryFormat)).join(' OR ');
+  }, [filenames, queryFormat]);
 
   // Current batch search URL
   const currentBatchSearchUrl = useMemo(() => {
@@ -235,15 +252,40 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
 
         {/* Primary Action Box */}
         <div className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
               {batches.length > 1
-                ? `Google Photos Search Query (Batch ${activeBatchIndex + 1}):`
+                ? `Google Photos Search Query (Batch ${activeBatchIndex + 1} of ${batches.length}):`
                 : 'Google Photos Search Query:'}
             </span>
-            <span className="text-[11px] text-slate-400 font-mono">
-              {currentBatch.length} filenames
-            </span>
+
+            {/* Query Format Selector (Exact with extension vs Base Name without extension) */}
+            <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5 rounded-xl text-[10px]">
+              <button
+                type="button"
+                onClick={() => setQueryFormat('exact')}
+                className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                  queryFormat === 'exact'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Full filename with extension (e.g. 'PXL_2022.jpg')"
+              >
+                Exact Filename
+              </button>
+              <button
+                type="button"
+                onClick={() => setQueryFormat('basename')}
+                className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                  queryFormat === 'basename'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+                title="Base filename without extension (e.g. 'PXL_2022') - useful if Google Photos stripped extension"
+              >
+                Base Name Only
+              </button>
+            </div>
           </div>
 
           {/* Query String Display */}
@@ -253,34 +295,46 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
+            {/* 1-Click Copy & Open Google Photos with Auto-Advance */}
             <button
               type="button"
-              onClick={() => handleCopy(currentBatchQuery, `batch_${activeBatchIndex}`)}
+              onClick={async () => {
+                await handleCopy(currentBatchQuery, `batch_${activeBatchIndex}`);
+                window.open(currentBatchSearchUrl, '_blank', 'noopener,noreferrer');
+                if (activeBatchIndex < batches.length - 1) {
+                  setActiveBatchIndex((prev) => prev + 1);
+                }
+              }}
               disabled={!currentBatchQuery}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+              title="Copy query and open Google Photos in new tab (auto-advances to next batch)"
             >
-              {copiedType === `batch_${activeBatchIndex}` ? (
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>
+                {batches.length > 1 && activeBatchIndex < batches.length - 1
+                  ? 'Copy & Open ➔ Next Batch'
+                  : 'Copy & Open Google Photos'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleCopy(currentBatchQuery, `batch_only_${activeBatchIndex}`)}
+              disabled={!currentBatchQuery}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold transition disabled:opacity-50"
+            >
+              {copiedType === `batch_only_${activeBatchIndex}` ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>Copied Query!</span>
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Copied!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy Search Query</span>
+                  <Copy className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Copy Query</span>
                 </>
               )}
             </button>
-
-            <a
-              href={currentBatchSearchUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 text-white dark:text-slate-900 rounded-xl text-xs font-semibold shadow-sm transition"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Open in Google Photos</span>
-            </a>
 
             {batches.length > 1 && (
               <button

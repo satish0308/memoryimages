@@ -17,7 +17,8 @@ import {
   Share2,
   Layout,
   Film,
-  Cloud
+  Cloud,
+  Search
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
 import { HighlightReelModal } from '../studio/HighlightReelModal';
@@ -40,6 +41,7 @@ interface BulkActionBarProps {
   onBatchLocationUpdated?: () => void;
   onBatchEnhanced?: () => void;
   onBatchBackupToDrive?: (mediaIds: number[]) => void;
+  onOpenGooglePhotosHelper?: () => void;
 }
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
@@ -54,6 +56,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onBatchLocationUpdated,
   onBatchEnhanced,
   onBatchBackupToDrive,
+  onOpenGooglePhotosHelper,
 }) => {
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
@@ -370,6 +373,22 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
             <Cloud className="w-3.5 h-3.5 text-indigo-400" />
             <span>Backup to Drive</span>
             <span className="text-[10px] bg-indigo-800 text-indigo-200 px-1.5 py-0.2 rounded-full font-bold">
+              {selectedIds.length}
+            </span>
+          </button>
+        )}
+
+        {/* Google Photos Cloud Deletion Query Helper */}
+        {onOpenGooglePhotosHelper && (
+          <button
+            onClick={onOpenGooglePhotosHelper}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/60 hover:bg-indigo-800/80 text-indigo-200 hover:text-white border border-indigo-600/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            title="Search and trash selected photos in Google Photos cloud"
+          >
+            <Search className="w-3.5 h-3.5 text-indigo-300" />
+            <span>Google Photos Query</span>
+            <span className="text-[10px] bg-indigo-700 text-indigo-100 px-1.5 py-0.2 rounded-full font-bold">
               {selectedIds.length}
             </span>
           </button>

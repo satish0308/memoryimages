@@ -216,12 +216,20 @@ def get_google_photos_purge_query(
         query = query.filter(Media.user_id == current_user.id)
 
     items = query.order_by(Media.marked_for_deletion_at.desc().nullslast()).all()
-    filenames = [m.filename for m in items if m.filename]
+    # Deduplicate filenames safely
+    raw_filenames = [m.filename.strip() for m in items if m.filename]
+    filenames = list(dict.fromkeys(raw_filenames))
+
+    def format_gp_token(name: str) -> str:
+        clean = name.replace('"', '').strip()
+        if ' ' in clean:
+            return f'"{clean}"'
+        return clean
 
     batches = []
     for i in range(0, len(filenames), batch_size):
         chunk = filenames[i:i + batch_size]
-        q_str = " OR ".join(chunk)
+        q_str = " OR ".join(format_gp_token(fn) for fn in chunk)
         batches.append({
             "batch_index": len(batches) + 1,
             "count": len(chunk),
@@ -232,7 +240,7 @@ def get_google_photos_purge_query(
     return {
         "total_count": len(filenames),
         "filenames": filenames,
-        "full_query": " OR ".join(filenames),
+        "full_query": " OR ".join(format_gp_token(fn) for fn in filenames),
         "batches": batches
     }
 
