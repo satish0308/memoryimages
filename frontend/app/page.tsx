@@ -173,22 +173,6 @@ export default function PhotosPage() {
     setSelectedIds([]);
   };
 
-  // Drag-and-Select & Range Selection Hook for Timeline
-  const {
-    isDragging: isDragSelecting,
-    dragMode,
-    handleItemPointerDown,
-    handleItemPointerEnter,
-    handleTouchMove,
-  } = useDragSelect({
-    selectedIds,
-    setSelectedIds,
-    onInspect: (id) => {
-      const found = allFlatPhotos.find((p) => p.id === id);
-      if (found) setSelectedPhoto(found);
-    },
-  });
-
   // Bulk Operations
   const handleBatchFavorite = async () => {
     if (selectedIds.length === 0) return;
@@ -427,8 +411,26 @@ export default function PhotosPage() {
     if (hasNext) setSelectedPhoto(allFlatPhotos[currentPhotoIndex + 1]);
   };
 
+  // 2D Marquee Drag-and-Select & Range Selection Hook for Timeline
+  const {
+    isDragging: isDragSelecting,
+    dragMode,
+    marqueeBox,
+    handlePointerDown,
+    handleItemClick,
+    handleItemDoubleClick,
+  } = useDragSelect({
+    selectedIds,
+    setSelectedIds,
+    orderedIds: allFlatPhotos.map((p) => p.id),
+    onOpenLightbox: (id) => {
+      const found = allFlatPhotos.find((p) => p.id === id);
+      if (found) setSelectedPhoto(found);
+    },
+  });
+
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-20" onTouchMove={handleTouchMove}>
+    <div className="max-w-7xl mx-auto space-y-6 pb-20" onPointerDown={handlePointerDown}>
       {/* Search Bar with AI Semantic Toggle */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-2xl">
         <div className="relative flex-1">
@@ -678,9 +680,8 @@ export default function PhotosPage() {
                   apiUrl={API_URL}
                   isSelected={selectedIds.includes(item.id)}
                   onSelect={setSelectedPhoto}
-                  onToggleSelect={toggleSelectPhoto}
-                  onPointerDown={handleItemPointerDown}
-                  onPointerEnter={handleItemPointerEnter}
+                  onToggleSelect={handleItemClick}
+                  onPointerDown={handlePointerDown}
                   onToggleFavorite={toggleFavorite}
                   onDelete={deletePhoto}
                   onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
@@ -725,9 +726,8 @@ export default function PhotosPage() {
               selectedIds={selectedIds}
               density={density}
               onSelect={setSelectedPhoto}
-              onToggleSelect={toggleSelectPhoto}
-              onPointerDown={handleItemPointerDown}
-              onPointerEnter={handleItemPointerEnter}
+              onToggleSelect={handleItemClick}
+              onPointerDown={handlePointerDown}
               onToggleSelectGroup={toggleSelectGroup}
               onToggleFavorite={toggleFavorite}
               onDelete={deletePhoto}
@@ -741,6 +741,24 @@ export default function PhotosPage() {
       {/* Interactive Vertical Timeline Minimap Scrubber */}
       {!searchResults && filteredTimeline.length > 0 && (
         <TimelineScrubber groups={filteredTimeline} />
+      )}
+
+      {/* 2D Marquee Drag Selection Visual Rectangle Overlay */}
+      {marqueeBox && (
+        <div
+          style={{
+            position: 'fixed',
+            left: `${marqueeBox.left}px`,
+            top: `${marqueeBox.top}px`,
+            width: `${marqueeBox.width}px`,
+            height: `${marqueeBox.height}px`,
+          }}
+          className={`pointer-events-none z-50 rounded border-2 ${
+            dragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20 shadow-indigo-500/10'
+              : 'border-rose-500 bg-rose-500/20 shadow-rose-500/10'
+          } shadow-lg backdrop-blur-[0.5px] transition-none`}
+        />
       )}
 
       {/* Active Line-Drag Selection Floating Pill */}

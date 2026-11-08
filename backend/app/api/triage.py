@@ -81,7 +81,7 @@ def get_triage_overview(
         func.sum(case((Media.blur_type == "motion_blur", 1), else_=0)).label("total_motion_blur"),
         func.sum(case((Media.is_bokeh == True, 1), else_=0)).label("total_bokeh"),
         func.sum(case((Media.category == MediaCategory.MEME_JUNK, 1), else_=0)).label("total_memes"),
-        func.sum(case(((Media.width >= 1920) & (Media.width > Media.height) & (Media.camera_make.is_(None))), 1), else_=0).label("total_wallpapers"),
+        func.sum(case((((Media.width >= 1920) & (Media.width > Media.height) & (Media.camera_make.is_(None))), 1), else_=0)).label("total_wallpapers"),
         func.sum(case((
             ((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)) |
             ((Media.is_blurry == True) & (Media.is_bokeh == False)) |

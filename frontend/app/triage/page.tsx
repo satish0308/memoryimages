@@ -558,18 +558,19 @@ export default function TriagePage() {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
   };
 
-  // Drag-and-Select & Range Selection Hook
+  // Drag-and-Select & Range Selection Hook (with 2D Row/Column Marquee & Double-Click Big View)
   const {
     isDragging: isDragSelecting,
     dragMode,
-    handleItemPointerDown,
-    handleItemPointerEnter,
-    handleTouchMove,
+    marqueeBox,
+    handlePointerDown,
     handleItemClick,
+    handleItemDoubleClick,
   } = useDragSelect({
     selectedIds,
     setSelectedIds,
-    onInspect: (id) => {
+    orderedIds: currentTabItemIds,
+    onOpenLightbox: (id) => {
       const allItems = [...screenshots, ...wallpapers, ...bills, ...blurryPhotos, ...largeFiles, ...memes];
       const found = allItems.find((i) => i.id === id);
       if (found) {
@@ -784,7 +785,7 @@ export default function TriagePage() {
   }, [largeFiles, timeGrouping]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-16" onTouchMove={handleTouchMove}>
+    <div className="max-w-7xl mx-auto space-y-6 pb-16" onPointerDown={(e) => handlePointerDown(e)}>
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-200/60 dark:border-amber-900/60 rounded-3xl p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1106,6 +1107,24 @@ export default function TriagePage() {
         </div>
       )}
 
+      {/* 2D Marquee Drag-to-Select Box */}
+      {isDragSelecting && marqueeBox && marqueeBox.width > 2 && marqueeBox.height > 2 && (
+        <div
+          style={{
+            position: 'fixed',
+            left: marqueeBox.left,
+            top: marqueeBox.top,
+            width: marqueeBox.width,
+            height: marqueeBox.height,
+          }}
+          className={`border-2 rounded-lg pointer-events-none z-50 shadow-lg ${
+            dragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20'
+              : 'border-rose-500 bg-rose-500/20'
+          }`}
+        />
+      )}
+
       {/* Active Line-Drag Selection Floating Pill */}
       {isDragSelecting && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
@@ -1320,9 +1339,10 @@ export default function TriagePage() {
                               <div
                                 key={s.id}
                                 data-media-id={s.id}
-                                onPointerDown={(e) => handleItemPointerDown(s.id, e)}
-                                onPointerEnter={() => handleItemPointerEnter(s.id)}
+                                onPointerDown={(e) => handlePointerDown(e, s.id)}
                                 onClick={(e) => handleItemClick(s.id, e, currentTabItemIds)}
+                                onDoubleClick={(e) => handleItemDoubleClick(s.id, e)}
+                                title="Click to select/deselect • Double-click to view full image"
                                 className={`group relative aspect-[9/16] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                                   isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-transparent'
                                 }`}
@@ -1344,11 +1364,10 @@ export default function TriagePage() {
                                   >
                                     {s.is_expired ? '30+ days' : 'Recent'}
                                   </span>
-                                  <div
-                                    onPointerDown={(e) => {
-                                      e.stopPropagation();
-                                      handleItemPointerDown(s.id, e);
-                                    }}
+                                  <button
+                                    type="button"
+                                    data-selection-checkbox="true"
+                                    onPointerDown={(e) => e.stopPropagation()}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       toggleSelect(s.id, e);
@@ -1360,7 +1379,7 @@ export default function TriagePage() {
                                     }`}
                                   >
                                     <Check className="w-3.5 h-3.5" />
-                                  </div>
+                                  </button>
                                 </div>
 
                                 {/* Bottom Vignette */}
@@ -1479,9 +1498,10 @@ export default function TriagePage() {
                   <div
                     key={w.id}
                     data-media-id={w.id}
-                    onPointerDown={(e) => handleItemPointerDown(w.id, e)}
-                    onPointerEnter={() => handleItemPointerEnter(w.id)}
+                    onPointerDown={(e) => handlePointerDown(e, w.id)}
                     onClick={(e) => handleItemClick(w.id, e, currentTabItemIds)}
+                    onDoubleClick={(e) => handleItemDoubleClick(w.id, e)}
+                    title="Click to select/deselect • Double-click to view full image"
                     className={`group relative aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                       isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent'
                     }`}
@@ -1499,11 +1519,10 @@ export default function TriagePage() {
                       <span className="text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md bg-black/60 text-white shadow-sm">
                         {isUltrawide ? 'Ultrawide' : is4K ? '4K UHD' : is2K ? '2K QHD' : `${w.width}×${w.height}`}
                       </span>
-                      <div
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleItemPointerDown(w.id, e);
-                        }}
+                      <button
+                        type="button"
+                        data-selection-checkbox="true"
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleSelect(w.id, e);
@@ -1515,7 +1534,7 @@ export default function TriagePage() {
                         }`}
                       >
                         <Check className="w-3.5 h-3.5" />
-                      </div>
+                      </button>
                     </div>
 
                     {/* Bottom Vignette */}
@@ -1576,15 +1595,13 @@ export default function TriagePage() {
                   <div
                     key={b.id}
                     data-media-id={b.id}
-                    onPointerDown={(e) => handleItemPointerDown(b.id, e)}
-                    onPointerEnter={() => handleItemPointerEnter(b.id)}
-                    onClick={(e) => {
-                      if (selectedIds.length > 0 || e.shiftKey) {
-                        handleItemClick(b.id, e, currentTabItemIds);
-                      } else {
-                        setInspectingBillId(b.id);
-                      }
+                    onPointerDown={(e) => handlePointerDown(e, b.id)}
+                    onClick={(e) => handleItemClick(b.id, e, currentTabItemIds)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setInspectingBillId(b.id);
                     }}
+                    title="Click to select/deselect • Double-click to inspect OCR"
                     className={`group relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm flex flex-col justify-between select-none ${
                       isSelected ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-transparent'
                     }`}
@@ -1602,11 +1619,10 @@ export default function TriagePage() {
                       <span className="bg-emerald-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                         Receipt
                       </span>
-                      <div
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleItemPointerDown(b.id, e);
-                        }}
+                      <button
+                        type="button"
+                        data-selection-checkbox="true"
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleSelect(b.id, e);
@@ -1618,7 +1634,7 @@ export default function TriagePage() {
                         }`}
                       >
                         <Check className="w-3.5 h-3.5" />
-                      </div>
+                      </button>
                     </div>
 
                     {/* Bottom Metadata & OCR Inspect link */}
@@ -1843,9 +1859,10 @@ export default function TriagePage() {
                   <div
                     key={b.id}
                     data-media-id={b.id}
-                    onPointerDown={(e) => handleItemPointerDown(b.id, e)}
-                    onPointerEnter={() => handleItemPointerEnter(b.id)}
+                    onPointerDown={(e) => handlePointerDown(e, b.id)}
                     onClick={(e) => handleItemClick(b.id, e, currentTabItemIds)}
+                    onDoubleClick={(e) => handleItemDoubleClick(b.id, e)}
+                    title="Click to select/deselect • Double-click to view full image"
                     className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                       isSelected ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-transparent'
                     }`}
@@ -1867,11 +1884,10 @@ export default function TriagePage() {
                           ? '🌑 Dark Shot'
                           : `Sharpness: ${b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}`}
                       </span>
-                      <div
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleItemPointerDown(b.id, e);
-                        }}
+                      <button
+                        type="button"
+                        data-selection-checkbox="true"
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleSelect(b.id, e);
@@ -1883,7 +1899,7 @@ export default function TriagePage() {
                         }`}
                       >
                         <Check className="w-3.5 h-3.5" />
-                      </div>
+                      </button>
                     </div>
 
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1927,9 +1943,10 @@ export default function TriagePage() {
                   <div
                     key={l.id}
                     data-media-id={l.id}
-                    onPointerDown={(e) => handleItemPointerDown(l.id, e)}
-                    onPointerEnter={() => handleItemPointerEnter(l.id)}
+                    onPointerDown={(e) => handlePointerDown(e, l.id)}
                     onClick={(e) => handleItemClick(l.id, e, currentTabItemIds)}
+                    onDoubleClick={(e) => handleItemDoubleClick(l.id, e)}
+                    title="Click to select/deselect • Double-click to view full image"
                     className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                       isSelected ? 'border-red-500 ring-2 ring-red-500/30' : 'border-transparent'
                     }`}
@@ -1947,11 +1964,10 @@ export default function TriagePage() {
                       <span className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                         {l.file_size_mb} MB
                       </span>
-                      <div
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          handleItemPointerDown(l.id, e);
-                        }}
+                      <button
+                        type="button"
+                        data-selection-checkbox="true"
+                        onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleSelect(l.id, e);
@@ -1963,7 +1979,7 @@ export default function TriagePage() {
                         }`}
                       >
                         <Check className="w-3.5 h-3.5" />
-                      </div>
+                      </button>
                     </div>
 
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">
@@ -2122,9 +2138,10 @@ export default function TriagePage() {
                               <div
                                 key={m.id}
                                 data-media-id={m.id}
-                                onPointerDown={(e) => handleItemPointerDown(m.id, e)}
-                                onPointerEnter={() => handleItemPointerEnter(m.id)}
+                                onPointerDown={(e) => handlePointerDown(e, m.id)}
                                 onClick={(e) => handleItemClick(m.id, e, currentTabItemIds)}
+                                onDoubleClick={(e) => handleItemDoubleClick(m.id, e)}
+                                title="Click to select/deselect • Double-click to view full image"
                                 className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                                   isSelected ? 'border-pink-500 ring-2 ring-pink-500/30' : 'border-transparent'
                                 }`}
@@ -2141,11 +2158,10 @@ export default function TriagePage() {
                                   <span className="bg-pink-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                                     Meme
                                   </span>
-                                  <div
-                                    onPointerDown={(e) => {
-                                      e.stopPropagation();
-                                      handleItemPointerDown(m.id, e);
-                                    }}
+                                  <button
+                                    type="button"
+                                    data-selection-checkbox="true"
+                                    onPointerDown={(e) => e.stopPropagation()}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       toggleSelect(m.id, e);
@@ -2157,7 +2173,7 @@ export default function TriagePage() {
                                     }`}
                                   >
                                     <Check className="w-3.5 h-3.5" />
-                                  </div>
+                                  </button>
                                 </div>
 
                                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">

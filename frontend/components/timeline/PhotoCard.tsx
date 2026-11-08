@@ -71,8 +71,7 @@ interface PhotoCardProps {
   isSelected?: boolean;
   onSelect: (item: MediaItem) => void;
   onToggleSelect?: (id: number, e: React.MouseEvent) => void;
-  onPointerDown?: (id: number, e: React.PointerEvent) => void;
-  onPointerEnter?: (id: number) => void;
+  onPointerDown?: (e: React.PointerEvent, id: number) => void;
   onToggleFavorite: (id: number, e: React.MouseEvent) => void;
   onDelete: (id: number, e: React.MouseEvent) => void;
   onOpenBurst?: (item: MediaItem, e: React.MouseEvent) => void;
@@ -95,7 +94,6 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   onSelect,
   onToggleSelect,
   onPointerDown,
-  onPointerEnter,
   onToggleFavorite,
   onDelete,
   onOpenBurst,
@@ -180,12 +178,16 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
       <div
         data-media-id={item.id}
         onPointerDown={(e) => {
-          if (onPointerDown) onPointerDown(item.id, e);
+          if (onPointerDown) onPointerDown(e, item.id);
         }}
-        onPointerEnter={() => {
-          if (onPointerEnter) onPointerEnter(item.id);
+        onClick={(e) => {
+          if (onToggleSelect) onToggleSelect(item.id, e);
         }}
-        onClick={() => onSelect(item)}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onSelect(item);
+        }}
+        title="Click to select/deselect • Double-click to view full image"
         onMouseEnter={() => setIsHovered(true)}
         onMouseMove={handleMouseMove}
         onMouseLeave={() => {
@@ -255,10 +257,8 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
       {/* Select Checkbox Button (Top Left) */}
       <button
         type="button"
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          if (onPointerDown) onPointerDown(item.id, e);
-        }}
+        data-selection-checkbox="true"
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           if (onToggleSelect) onToggleSelect(item.id, e);
