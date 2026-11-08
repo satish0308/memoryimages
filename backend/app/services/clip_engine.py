@@ -12,7 +12,10 @@ from app.models.media import Media, MediaEmbedding
 
 logger = logging.getLogger(__name__)
 
-VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv'}
+VIDEO_EXTENSIONS = {
+    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
+    '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
+}
 
 _image_model = None
 _text_model = None

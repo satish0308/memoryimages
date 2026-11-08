@@ -157,7 +157,14 @@ def analyze_media_mood(db: Session, media: Media, commit: bool = True) -> Dict[s
     elif media.thumbnail_1080_path and os.path.isfile(media.thumbnail_1080_path):
         image_path = media.thumbnail_1080_path
     elif media.original_path and os.path.isfile(media.original_path):
-        image_path = media.original_path
+        is_video = (media.mime_type and media.mime_type.startswith("video/")) or (
+            os.path.splitext(media.original_path)[1].lower() in (
+                '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
+                '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
+            )
+        )
+        if not is_video:
+            image_path = media.original_path
 
     from io import BytesIO
     from app.models.media import SourceType

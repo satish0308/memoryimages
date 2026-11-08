@@ -290,8 +290,15 @@ def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> 
         except Exception:
             pass
 
-    # 2. Check local original file
-    if media.original_path and os.path.isfile(media.original_path):
+    is_video = (media.mime_type and media.mime_type.startswith("video/")) or (
+        media.original_path and os.path.splitext(media.original_path)[1].lower() in (
+            '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
+            '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
+        )
+    )
+
+    # 2. Check local original file (only for images)
+    if not is_video and media.original_path and os.path.isfile(media.original_path):
         try:
             return Image.open(media.original_path)
         except Exception:
@@ -313,7 +320,8 @@ def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> 
             from app.services.s3_storage import get_s3_client
             from app.config import settings
             client = get_s3_client()
-            resp = client.get_object(Bucket=settings.MINIO_BUCKET, Key=media.source_id)
+            bucket = getattr(settings, "S3_BUCKET_NAME", "mymemorypics")
+            resp = client.get_object(Bucket=bucket, Key=media.source_id)
             data = resp["Body"].read()
             return Image.open(BytesIO(data))
         except Exception as e:

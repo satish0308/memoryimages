@@ -180,7 +180,13 @@ def hard_nms(box_scores: np.ndarray, iou_threshold: float = 0.3, top_k: int = -1
 
 def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> Optional[Image.Image]:
     """Loads an image into a PIL Image object from local disk or in-memory cloud stream."""
-    if media.mime_type and media.mime_type.startswith("video/"):
+    is_video = (media.mime_type and media.mime_type.startswith("video/")) or (
+        media.original_path and os.path.splitext(media.original_path)[1].lower() in (
+            '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
+            '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
+        )
+    )
+    if is_video and not (media.thumbnail_1080_path or media.thumbnail_256_path):
         return None
 
     if prefer_preview and media.thumbnail_1080_path and os.path.isfile(media.thumbnail_1080_path):
@@ -189,7 +195,7 @@ def load_media_image(media: Media, db: Session, prefer_preview: bool = True) -> 
         except Exception:
             pass
 
-    if media.original_path and os.path.isfile(media.original_path):
+    if not is_video and media.original_path and os.path.isfile(media.original_path):
         try:
             return Image.open(media.original_path)
         except Exception:

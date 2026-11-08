@@ -160,21 +160,25 @@ def generate_presigned_url(key: str, expiration: int = 3600, bucket_name: Option
     return url
 
 def list_s3_objects(prefix: str = "", bucket_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Lists objects in the bucket matching an optional prefix."""
+    """Lists objects in the bucket matching an optional prefix, safely handling missing buckets or connection errors."""
     bucket = bucket_name or settings.S3_BUCKET_NAME
-    s3 = get_s3_client()
     results = []
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for item in page.get("Contents", []):
-            results.append({
-                "key": item["Key"],
-                "size_bytes": item["Size"],
-                "size_kb": round(item["Size"] / 1024, 1),
-                "last_modified": item["LastModified"].isoformat(),
-                "etag": item.get("ETag", "").strip('"')
-            })
-    return sorted(results, key=lambda x: x["last_modified"], reverse=True)
+    try:
+        s3 = get_s3_client()
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for item in page.get("Contents", []):
+                results.append({
+                    "key": item["Key"],
+                    "size_bytes": item["Size"],
+                    "size_kb": round(item["Size"] / 1024, 1),
+                    "last_modified": item["LastModified"].isoformat(),
+                    "etag": item.get("ETag", "").strip('"')
+                })
+        return sorted(results, key=lambda x: x["last_modified"], reverse=True)
+    except Exception as e:
+        logger.warning(f"Error listing S3 objects in bucket '{bucket}' with prefix '{prefix}': {e}")
+        return []
 
 def delete_s3_object(key: str, bucket_name: Optional[str] = None) -> bool:
     """Deletes an object from MinIO/S3."""

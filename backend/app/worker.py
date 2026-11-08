@@ -41,7 +41,7 @@ signal.signal(signal.SIGTERM, handle_exit_signal)
 def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Generates CLIP ViT-B/32 multimodal vectors for all unindexed photos with step-by-step progress."""
     from app.models.media import Media, MediaEmbedding
-    from app.services.clip_engine import get_image_model, embed_image, embed_images_batch
+    from app.services.clip_engine import get_image_model, embed_image, embed_images_batch, VIDEO_EXTENSIONS
     import numpy as np
 
     with SessionLocal() as db:
@@ -85,7 +85,7 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             for item in chunk_items:
                 target_path = None
                 is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
-                    item.original_path and os.path.splitext(item.original_path)[1].lower() in ('.mp4', '.mov', '.avi', '.mkv', '.webm')
+                    item.original_path and os.path.splitext(item.original_path)[1].lower() in VIDEO_EXTENSIONS
                 )
 
                 if item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
@@ -425,6 +425,15 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             if _should_exit or TaskQueue.is_cancelled(task_id):
                 logger.info(f"Task {task_id} cancelled during 1080p pregeneration.")
                 return {"processed_count": processed, "cancelled": True}
+
+            is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
+                item.original_path and os.path.splitext(item.original_path)[1].lower() in (
+                    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
+                    '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
+                )
+            )
+            if is_video:
+                continue
 
             thumb_1080_rel = f"thumb_{item.id}_1080.webp"
             thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, thumb_1080_rel)

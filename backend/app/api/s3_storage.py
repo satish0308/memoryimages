@@ -51,7 +51,10 @@ def s3_list_objects(
     else:
         effective_prefix = prefix or user_prefix
 
-    return list_s3_objects(prefix=effective_prefix)
+    try:
+        return list_s3_objects(prefix=effective_prefix)
+    except Exception as e:
+        return []
 
 @router.post("/upload")
 async def s3_upload_photos(
