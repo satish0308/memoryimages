@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, case
+from sqlalchemy import func, desc, case, select
 
 from app.database import get_db
 from app.config import settings
@@ -71,9 +71,13 @@ def get_triage_overview(
     seven_days = now + timedelta(days=7)
     uid = current_user.id
     
-    # Consolidate 9 separate SQL queries into 1 single conditional aggregation query
+    # Subquery for media_ids having detected human faces
+    faces_sub = db.query(FaceDetection.media_id).distinct().subquery()
+
+    # Consolidate SQL queries into 1 single conditional aggregation query
     stats = db.query(
         func.sum(case((Media.category == MediaCategory.SCREENSHOT, 1), else_=0)).label("total_screenshots"),
+        func.sum(case((((Media.category == MediaCategory.SCREENSHOT) & (Media.id.in_(select(faces_sub)))), 1), else_=0)).label("screenshots_with_people"),
         func.sum(case(((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= seven_days), 1), else_=0)).label("expiring_screenshots"),
         func.sum(case((Media.category == MediaCategory.DOCUMENT_BILL, 1), else_=0)).label("total_bills"),
         func.sum(case(((Media.is_blurry == True) & (Media.is_bokeh == False), 1), else_=0)).label("total_blurry"),
@@ -94,6 +98,8 @@ def get_triage_overview(
     ).one()
 
     total_screenshots = int(stats.total_screenshots or 0)
+    screenshots_with_people = int(stats.screenshots_with_people or 0)
+    screenshots_text_only = max(0, total_screenshots - screenshots_with_people)
     expiring_screenshots = int(stats.expiring_screenshots or 0)
     total_bills = int(stats.total_bills or 0)
     total_blurry = int(stats.total_blurry or 0)
@@ -106,6 +112,8 @@ def get_triage_overview(
     
     return {
         "total_screenshots": total_screenshots,
+        "screenshots_with_people": screenshots_with_people,
+        "screenshots_text_only": screenshots_text_only,
         "expiring_screenshots": expiring_screenshots,
         "total_bills_receipts": total_bills,
         "total_blurry": total_blurry,
@@ -122,29 +130,54 @@ def get_triage_overview(
 def get_screenshots(
     filter_expired: bool = False,
     orientation: Optional[str] = None,
+    content_type: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists screenshots for current user with expiry countdown and orientation filtering."""
+    """Lists screenshots for current user with expiry countdown, orientation filtering, and text vs people differentiation."""
     if not current_user:
         return []
     now = datetime.utcnow()
-    query = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.category == MediaCategory.SCREENSHOT,
-        Media.is_deleted == False
+    
+    # Subquery grouping face count by media_id
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
     )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.category == MediaCategory.SCREENSHOT,
+            Media.is_deleted == False
+        )
+    )
+
     if filter_expired:
         query = query.filter(Media.expires_at <= now)
     if orientation == "portrait":
         query = query.filter(Media.height > Media.width)
     elif orientation == "desktop":
         query = query.filter(Media.width >= Media.height)
+
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type == "text_only":
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
         
     items = query.order_by(Media.expires_at.asc().nullslast()).all()
     
     results = []
-    for item in items:
+    for item, fc in items:
         days_left = None
         is_expired = False
         if item.expires_at:
@@ -154,6 +187,10 @@ def get_screenshots(
             
         w = item.width or 0
         h = item.height or 0
+        has_people = fc > 0
+        has_text = bool(item.extracted_text and len(item.extracted_text.strip()) > 0)
+        text_preview = item.extracted_text[:120].strip() if has_text else None
+
         results.append({
             "id": item.id,
             "filename": item.filename,
@@ -166,6 +203,10 @@ def get_screenshots(
             "days_left": days_left,
             "is_expired": is_expired,
             "file_size": item.file_size,
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
             "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"

@@ -32,7 +32,8 @@ import {
   Layers,
   ShieldCheck,
   Tag,
-  Filter
+  Filter,
+  Users
 } from 'lucide-react';
 
 import { DuplicateResolverModal, DuplicateCluster } from '@/components/triage/DuplicateResolverModal';
@@ -47,6 +48,8 @@ import { useDragSelect } from '@/hooks/useDragSelect';
 interface TriageOverview {
   total_screenshots: number;
   expiring_screenshots: number;
+  screenshots_with_people?: number;
+  screenshots_text_only?: number;
   total_bills_receipts: number;
   total_blurry: number;
   total_pocket_shots?: number;
@@ -73,6 +76,10 @@ interface ScreenshotItem {
   height?: number;
   is_portrait?: boolean;
   is_landscape?: boolean;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 interface WallpaperItem {
@@ -248,6 +255,8 @@ export default function TriagePage() {
   const [billSearchQuery, setBillSearchQuery] = useState('');
   const [screenshotFilter, setScreenshotFilter] = useState<'all' | 'expired' | 'recent'>('all');
   const [screenshotOrientation, setScreenshotOrientation] = useState<'all' | 'portrait' | 'desktop'>('all');
+  const [screenshotContentType, setScreenshotContentType] = useState<'all' | 'text_only' | 'with_people'>('all');
+  const [screenshotGrouping, setScreenshotGrouping] = useState<'content' | 'week' | 'month' | 'year' | 'all'>('content');
   const [wallpaperFilter, setWallpaperFilter] = useState<'all' | '4k' | '2k' | '1080p' | 'ultrawide'>('all');
   const [blurFilter, setBlurFilter] = useState<'all' | 'motion_blur' | 'out_of_focus' | 'black_pocket'>('all');
   const [isCleaningPockets, setIsCleaningPockets] = useState(false);
@@ -512,6 +521,26 @@ export default function TriagePage() {
     }
   };
 
+  const handleRescueGroup = async (mediaIds: number[]) => {
+    if (mediaIds.length === 0) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/triage/category`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ media_ids: mediaIds, category: 'memory' }),
+      });
+      if (res.ok) {
+        setStatusMessage(`Rescued ${mediaIds.length} personal photos with human faces to Personal Memories!`);
+        setScreenshots((prev) => prev.filter((s) => !mediaIds.includes(s.id)));
+        fetchOverview();
+        setTimeout(() => setStatusMessage(null), 4000);
+      }
+    } catch (e) {
+      console.error('Error rescuing group:', e);
+      setStatusMessage('Failed to rescue group.');
+    }
+  };
+
   useEffect(() => {
     fetchOverview();
     setSelectedIds([]);
@@ -527,13 +556,7 @@ export default function TriagePage() {
   // Current items for active tab selection
   const currentTabItemIds = useMemo(() => {
     if (activeTab === 'screenshots') {
-      return screenshots
-        .filter((s) => {
-          if (screenshotFilter === 'expired') return s.is_expired;
-          if (screenshotFilter === 'recent') return !s.is_expired;
-          return true;
-        })
-        .map((s) => s.id);
+      return filteredScreenshots.map((s) => s.id);
     }
     if (activeTab === 'wallpapers') return wallpapers.map((w) => w.id);
     if (activeTab === 'bills') return bills.map((b) => b.id);
@@ -753,7 +776,7 @@ export default function TriagePage() {
     );
   }, [bills, billSearchQuery]);
 
-  // Filtered screenshots by age and orientation
+  // Filtered screenshots by age, orientation, and content type (People vs Text)
   const filteredScreenshots = useMemo(() => {
     let list = screenshots;
     if (screenshotFilter === 'expired') list = list.filter((s) => s.is_expired);
@@ -764,8 +787,14 @@ export default function TriagePage() {
     } else if (screenshotOrientation === 'desktop') {
       list = list.filter((s) => s.is_landscape || (s.height && s.width && s.width > s.height));
     }
+
+    if (screenshotContentType === 'text_only') {
+      list = list.filter((s) => !s.has_faces);
+    } else if (screenshotContentType === 'with_people') {
+      list = list.filter((s) => Boolean(s.has_faces));
+    }
     return list;
-  }, [screenshots, screenshotFilter, screenshotOrientation]);
+  }, [screenshots, screenshotFilter, screenshotOrientation, screenshotContentType]);
 
   // Time-grouped collections for Week / Month / Year triage views
   const memeGroups = useMemo(() => {
@@ -773,8 +802,34 @@ export default function TriagePage() {
   }, [memes, timeGrouping]);
 
   const screenshotGroups = useMemo(() => {
-    return groupItemsByTime(filteredScreenshots, timeGrouping);
-  }, [filteredScreenshots, timeGrouping]);
+    if (screenshotGrouping === 'content') {
+      const textOnly = filteredScreenshots.filter((s) => !s.has_faces);
+      const withPeople = filteredScreenshots.filter((s) => s.has_faces);
+      const groups: TriageTimeGroup<ScreenshotItem>[] = [];
+
+      if (textOnly.length > 0) {
+        groups.push({
+          key: 'text_only',
+          label: '📄 Text, Documents & App UI (No Human Faces)',
+          items: textOnly,
+          totalBytes: textOnly.reduce((acc, s) => acc + (s.file_size || 0), 0),
+        });
+      }
+
+      if (withPeople.length > 0) {
+        groups.push({
+          key: 'with_people',
+          label: '👥 Memories & Social Media (With Detected Human Faces)',
+          items: withPeople,
+          totalBytes: withPeople.reduce((acc, s) => acc + (s.file_size || 0), 0),
+        });
+      }
+
+      return groups;
+    }
+
+    return groupItemsByTime(filteredScreenshots, screenshotGrouping);
+  }, [filteredScreenshots, screenshotGrouping]);
 
   const blurryGroups = useMemo(() => {
     return groupItemsByTime(blurryPhotos, timeGrouping);
@@ -841,9 +896,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {overview?.total_screenshots || 0}
           </p>
-          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium truncate">
-            {overview?.expiring_screenshots || 0} expiring soon
-          </p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">📄 {overview?.screenshots_text_only ?? 0}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.screenshots_with_people ?? 0}</span>
+          </div>
         </button>
 
         {/* Wallpapers & Artwork Tab */}
@@ -1186,6 +1242,31 @@ export default function TriagePage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Content Type Filter: All vs Text-Only vs People */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'text_only', 'with_people'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setScreenshotContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      screenshotContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : type === 'text_only'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All (${screenshots.length})`
+                      : type === 'text_only'
+                      ? `📄 Text & UI (${screenshots.filter((s) => !s.has_faces).length})`
+                      : `👥 People (${screenshots.filter((s) => s.has_faces).length})`}
+                  </button>
+                ))}
+              </div>
+
               {/* Orientation Filter Chips */}
               <div className="flex items-center gap-1">
                 {(['all', 'portrait', 'desktop'] as const).map((ori) => (
@@ -1220,28 +1301,28 @@ export default function TriagePage() {
                 ))}
               </div>
 
-              {/* Time Grouping Selector */}
+              {/* Grouping Selector */}
               <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
                 <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-400" />
+                  <Layers className="w-3 h-3 text-slate-400" />
                   Group:
                 </span>
-                {(['week', 'month', 'year', 'all'] as const).map((mode) => (
+                {(['content', 'week', 'month', 'year', 'all'] as const).map((mode) => (
                   <button
                     key={mode}
-                    onClick={() => setTimeGrouping(mode)}
+                    onClick={() => setScreenshotGrouping(mode)}
                     className={`px-2 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
-                      timeGrouping === mode
+                      screenshotGrouping === mode
                         ? 'bg-blue-600 text-white shadow-sm'
                         : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    {mode === 'all' ? 'All (Flat)' : mode}
+                    {mode === 'content' ? '👥 People vs Text' : mode === 'all' ? 'All (Flat)' : mode}
                   </button>
                 ))}
               </div>
 
-              {timeGrouping !== 'all' && screenshotGroups.length > 0 && (
+              {screenshotGrouping !== 'all' && screenshotGroups.length > 0 && (
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => collapseAllGroups(screenshotGroups.map((g) => g.key))}
@@ -1274,7 +1355,7 @@ export default function TriagePage() {
                 const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
                 const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
                 const limit = expandedGroupLimits[group.key] || 48;
-                const visibleItems = timeGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const visibleItems = screenshotGrouping === 'all' ? group.items : group.items.slice(0, limit);
                 const hasMore = visibleItems.length < group.items.length;
 
                 return (
@@ -1282,21 +1363,39 @@ export default function TriagePage() {
                     key={group.key}
                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    {/* Time Group Header */}
-                    {timeGrouping !== 'all' && (
+                    {/* Time or Content Group Header */}
+                    {screenshotGrouping !== 'all' && (
                       <div
                         onClick={() => toggleGroupCollapse(group.key)}
-                        className="flex items-center justify-between p-3.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition"
+                        className={`flex items-center justify-between p-3.5 border-b cursor-pointer transition ${
+                          group.key === 'with_people'
+                            ? 'bg-purple-50/80 dark:bg-purple-950/30 border-purple-200/60 dark:border-purple-900/40 hover:bg-purple-100/70'
+                            : group.key === 'text_only'
+                            ? 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-200/60 dark:border-amber-900/40 hover:bg-amber-100/60'
+                            : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-200/60 dark:border-slate-800 hover:bg-slate-100/70'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5">
                           <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
                             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </span>
                           <div className="flex items-center gap-2">
-                            <Calendar className="w-4 h-4 text-blue-500" />
+                            {group.key === 'with_people' ? (
+                              <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            ) : group.key === 'text_only' ? (
+                              <FileText className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                            ) : (
+                              <Calendar className="w-4 h-4 text-blue-500" />
+                            )}
                             <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
                           </div>
-                          <span className="text-[11px] font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 px-2.5 py-0.5 rounded-full">
+                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                            group.key === 'with_people'
+                              ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'
+                              : group.key === 'text_only'
+                              ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300'
+                              : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                          }`}>
                             {group.items.length} {group.items.length === 1 ? 'screenshot' : 'screenshots'}
                           </span>
                           {group.totalBytes > 0 && (
@@ -1307,6 +1406,18 @@ export default function TriagePage() {
                         </div>
 
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick Rescue Button for People screenshots group */}
+                          {group.key === 'with_people' && (
+                            <button
+                              onClick={() => handleRescueGroup(groupIds)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-xs"
+                              title="Rescue all personal memories with people in this group to Personal Memories"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Rescue All People ({group.items.length})</span>
+                            </button>
+                          )}
+
                           <button
                             onClick={() => toggleSelectGroup(groupIds)}
                             className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
@@ -1319,10 +1430,7 @@ export default function TriagePage() {
                           >
                             {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
                             <span>
-                              {isGroupAllSelected
-                                ? `Deselect ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`
-                                : `Select ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`}{' '}
-                              ({group.items.length})
+                              {isGroupAllSelected ? 'Deselect Group' : 'Select Group'} ({group.items.length})
                             </span>
                           </button>
                         </div>
@@ -1357,13 +1465,32 @@ export default function TriagePage() {
 
                                 {/* Top Overlay Badge & Checkbox */}
                                 <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                                  <span
-                                    className={`text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md shadow-sm ${
-                                      s.is_expired ? 'bg-amber-600 text-white' : 'bg-black/60 text-white'
-                                    }`}
-                                  >
-                                    {s.is_expired ? '30+ days' : 'Recent'}
-                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <span
+                                      className={`text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md shadow-sm ${
+                                        s.is_expired ? 'bg-amber-600 text-white' : 'bg-black/60 text-white'
+                                      }`}
+                                    >
+                                      {s.is_expired ? '30+ days' : 'Recent'}
+                                    </span>
+                                    {s.has_faces ? (
+                                      <span
+                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md shadow-sm bg-purple-600/95 text-white flex items-center gap-0.5"
+                                        title={`${s.face_count || 1} detected human face${(s.face_count || 1) > 1 ? 's' : ''}`}
+                                      >
+                                        <Users className="w-2.5 h-2.5" />
+                                        <span>{s.face_count} {s.face_count === 1 ? 'Person' : 'People'}</span>
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md shadow-sm bg-slate-700/80 text-slate-200 flex items-center gap-0.5"
+                                        title="No human faces detected - pure text / app UI"
+                                      >
+                                        <FileText className="w-2.5 h-2.5" />
+                                        <span>Text/UI</span>
+                                      </span>
+                                    )}
+                                  </div>
                                   <button
                                     type="button"
                                     data-selection-checkbox="true"
