@@ -62,6 +62,7 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Smooth Ken Burns Motion**: Elegant panning and zooming transitions bringing static photos to life.
 - **Ambient Widgets**: Live clock, date, photo location badge, and capture date overlay.
 - **Configurable Controls**: Auto-hiding HUD with 5s, 8s, 15s, or 30s slide intervals, fullscreen toggle (`F`), and instant source switching (*All Photos*, *Favorites Only*, or *Places Only*).
+- **Person Face Filter & In-Kiosk Switcher**: Launch a dedicated fullscreen memory slideshow filtered exclusively to any identified person (`/kiosk?person_id={id}&person_name={name}`). Displays an ambient top badge (`Memories of [Name] · Photo X of Y`), an in-HUD dropdown switcher to jump between family members, and a 1-click button to return directly to their Life Timeline.
 
 ### 🔗 Event Sharing, QR Code Generator & Public Guest Portal (`/share/[token]`)
 - **1-Click Event Sharing**: Turn any album into a collaborative event album with a signed, tokenized public link (`/share/{token}`).
@@ -185,6 +186,12 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **UltraFace ONNX Fallback**: Sub-millisecond bounding box localization with strict norm thresholding ($>0.70$) and aspect ratio filtering (0.48–1.48) to reject false positives on water, textures, and backgrounds.
 - **Default Hidden Bounding Boxes**: Face detection boxes remain hidden upon image preview and display only when explicitly toggled.
 - **On-The-Fly WebP Face Avatars**: Dynamic 180×180 WebP headshots cropped in-memory from full-resolution photos.
+
+### 👤 Individual Person Life Timeline & Face Scrubber Filter
+- **Chronological Life Timeline**: Filter the entire Photos Timeline exclusively for any identified person with zero loss of timeline power—Year/Month/Day scaling, chronological grouping, the vertical minimap scrubber rail, burst collapse, drag-and-select, and Lightbox inspection all work seamlessly filtered to that person.
+- **Top Quick Face Bar**: Prominent interactive face timeline row with circular avatars, names, and photo counts (`Everyone`, `Satish (1,824)`, `Susmita (1,232)`, etc.) directly above the main timeline.
+- **Active Person Life Timeline Hero Banner**: Displays a glowing personal banner with high-resolution avatar, photo count badge, 1-click **"Launch Person Kiosk"** button, and **"Clear Filter"** button.
+- **1-Click Launch from People Studio**: In `/people`, each person card and the person modal header include dedicated **"📅 Life Timeline"** and **"📺 Kiosk Frame"** buttons for instant navigation.
 
 ### 📦 High-Speed Parallel Streaming ZIP Exporter
 - **In-Memory Parallel Generation**: Multi-threaded parallel packaging (`ThreadPoolExecutor(max_workers=6)`) streaming directly into a ZIP archive without writing temporary files to server disk.

@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers, Users, Mountain } from 'lucide-react';
+import Link from 'next/link';
+import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers, Users, Mountain, Calendar } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { MediaItem, PhotoCard } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
 import { MomentsCarousel, EventStory } from '@/components/timeline/MomentsCarousel';
 import { MomentStoryModal } from '@/components/timeline/MomentStoryModal';
-import { CategoryFilterBar } from '@/components/timeline/CategoryFilterBar';
+import { CategoryFilterBar, PersonQuickItem } from '@/components/timeline/CategoryFilterBar';
 import { ScaleSelector, TimelineScale, GridDensity } from '@/components/timeline/ScaleSelector';
 import { BulkActionBar } from '@/components/timeline/BulkActionBar';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
@@ -51,6 +52,11 @@ export default function PhotosPage() {
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
   const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
 
+  // Individual Face / Person Life Timeline state
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [selectedPersonName, setSelectedPersonName] = useState<string>('');
+  const [peopleList, setPeopleList] = useState<PersonQuickItem[]>([]);
+
   // Google Drive Outbound Backup state
   const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
@@ -74,8 +80,9 @@ export default function PhotosPage() {
     try {
       setLoading(true);
       const categoryParam = activeCategory !== 'all' ? `&category=${activeCategory}` : '';
+      const personParam = selectedPersonId ? `&person_id=${selectedPersonId}` : '';
       const res = await fetch(
-        `${API_URL}/api/v1/media/timeline?scale=${scale}${categoryParam}&collapse_bursts=${collapseBursts}`
+        `${API_URL}/api/v1/media/timeline?scale=${scale}${categoryParam}${personParam}&collapse_bursts=${collapseBursts}`
       );
       if (res.ok) {
         setTimeline(await res.json());
@@ -123,6 +130,69 @@ export default function PhotosPage() {
     }
   };
 
+  // Parse URL search params for direct deep-linking to person timeline
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const personIdStr = params.get('person_id');
+      const personNameStr = params.get('person_name');
+      if (personIdStr) {
+        const pid = parseInt(personIdStr, 10);
+        if (!isNaN(pid)) {
+          setSelectedPersonId(pid);
+          if (personNameStr) {
+            setSelectedPersonName(personNameStr);
+          }
+        }
+      }
+    }
+  }, []);
+
+  // Fetch identified people list for the face filter bar
+  useEffect(() => {
+    if (!isAuthenticated || isLoading) return;
+    const fetchTopPeople = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/people?filter_type=people`);
+        if (res.ok) {
+          const data = await res.json();
+          const named = data
+            .filter((p: any) => p.name && !p.name.startsWith('Unnamed'))
+            .map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              avatar_url: p.avatar_url,
+              photo_count: p.photo_count || p.faces_count || 0,
+            }));
+          setPeopleList(named);
+          if (selectedPersonId && !selectedPersonName) {
+            const found = named.find((p: any) => p.id === selectedPersonId);
+            if (found) setSelectedPersonName(found.name);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch people for timeline:', e);
+      }
+    };
+    fetchTopPeople();
+  }, [isAuthenticated, isLoading, selectedPersonId, selectedPersonName, API_URL]);
+
+  const handleSelectPerson = (personId: number | null, personName?: string) => {
+    setSelectedPersonId(personId);
+    setSelectedPersonName(personName || '');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (personId) {
+        url.searchParams.set('person_id', String(personId));
+        if (personName) url.searchParams.set('person_name', personName);
+      } else {
+        url.searchParams.delete('person_id');
+        url.searchParams.delete('person_name');
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
   // Main timeline & events fetching (isolated from in-memory smart filters to prevent network thrashing)
   useEffect(() => {
     if (!isAuthenticated || isLoading) return;
@@ -130,7 +200,7 @@ export default function PhotosPage() {
       fetchTimeline();
       fetchEvents();
     }
-  }, [isAuthenticated, isLoading, activeCategory, scale, collapseBursts]);
+  }, [isAuthenticated, isLoading, activeCategory, scale, collapseBursts, selectedPersonId]);
 
   // Search execution (debounced and reactive to query and smart filter criteria)
   useEffect(() => {
@@ -661,9 +731,71 @@ export default function PhotosPage() {
           peopleCounts={peopleCounts}
           groupByPeople={groupByPeople}
           onToggleGroupByPeople={() => setGroupByPeople((prev) => !prev)}
+          selectedPersonId={selectedPersonId}
+          onSelectPerson={handleSelectPerson}
+          peopleList={peopleList}
+          apiUrl={API_URL}
           onRefresh={fetchTimeline}
           loading={loading}
         />
+      )}
+
+      {/* Active Person Life Timeline Hero Banner */}
+      {!searchResults && selectedPersonId && (
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white p-5 sm:p-6 shadow-xl shadow-indigo-950/20 border border-indigo-700/50 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+          <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="relative shrink-0">
+                <img
+                  src={`${API_URL}/api/v1/people/${selectedPersonId}/avatar`}
+                  alt={selectedPersonName || 'Person'}
+                  className="w-16 h-16 rounded-2xl object-cover ring-4 ring-white/30 shadow-md bg-indigo-950"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+                <div className="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 text-xs font-black rounded-full w-5 h-5 flex items-center justify-center shadow">
+                  ✨
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-200">
+                    Personal Life Timeline
+                  </span>
+                  <span className="bg-indigo-500/40 text-indigo-100 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-400/30">
+                    {allFilteredPhotos.length} {allFilteredPhotos.length === 1 ? 'photo' : 'photos'}
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                  {selectedPersonName || 'Identified Person'}
+                </h2>
+                <p className="text-xs text-indigo-200/90 mt-0.5 max-w-xl">
+                  Viewing full chronological memory timeline filtered exclusively for {selectedPersonName || 'this person'} across all years with Year/Month/Day scaling and minimap scrubber.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+              <Link
+                href={`/kiosk?person_id=${selectedPersonId}&person_name=${encodeURIComponent(selectedPersonName || '')}`}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-indigo-950 font-bold text-xs hover:bg-indigo-50 transition shadow-md hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <Play className="w-4 h-4 fill-indigo-950 text-indigo-950" />
+                <span>Launch Person Kiosk</span>
+              </Link>
+              <button
+                onClick={() => handleSelectPerson(null)}
+                className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-semibold text-xs transition border border-white/20"
+                title="Exit person timeline filter"
+              >
+                <X className="w-4 h-4" />
+                <span className="hidden sm:inline">Clear Filter</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Active Filters Summary Pill when filtered */}
@@ -679,6 +811,7 @@ export default function PhotosPage() {
             onClick={() => {
               setSmartFilters(DEFAULT_SMART_FILTERS);
               setPeopleFilter('all');
+              handleSelectPerson(null);
             }}
             className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
           >

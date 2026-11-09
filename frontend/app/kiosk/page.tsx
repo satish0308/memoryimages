@@ -15,7 +15,9 @@ import {
   Heart, 
   ArrowLeft,
   Sparkles,
-  Loader2
+  Loader2,
+  Users,
+  X
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { useAuth } from '@/context/AuthContext';
@@ -33,6 +35,11 @@ export default function KioskPage() {
   const [animVariant, setAnimVariant] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
+  // Person Face Timeline Filter State
+  const [personId, setPersonId] = useState<number | null>(null);
+  const [personName, setPersonName] = useState<string>('');
+  const [peopleList, setPeopleList] = useState<{ id: number; name: string; avatar_url?: string | null; photo_count?: number }[]>([]);
+
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const hudTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -47,6 +54,63 @@ export default function KioskPage() {
     return authContextToken || localStorage.getItem('memorypics_token');
   }, [authContextToken]);
 
+  // Parse URL search params for direct person kiosk deep-link
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const pid = params.get('person_id');
+      const pname = params.get('person_name');
+      if (pid) {
+        const parsed = parseInt(pid, 10);
+        if (!isNaN(parsed)) {
+          setPersonId(parsed);
+          if (pname) setPersonName(pname);
+        }
+      }
+    }
+  }, []);
+
+  // Load named people for Kiosk switcher
+  useEffect(() => {
+    const activeToken = getActiveToken();
+    const headers: HeadersInit = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+    fetch(`${API_URL}/api/v1/people?filter_type=people`, { headers })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        const named = data
+          .filter((p: any) => p.name && !p.name.startsWith('Unnamed'))
+          .map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            avatar_url: p.avatar_url,
+            photo_count: p.photo_count || p.faces_count || 0,
+          }));
+        setPeopleList(named);
+        if (personId && !personName) {
+          const found = named.find((p: any) => p.id === personId);
+          if (found) setPersonName(found.name);
+        }
+      })
+      .catch((err) => console.error('Failed to load kiosk people:', err));
+  }, [API_URL, getActiveToken, personId, personName]);
+
+  const handleSelectPerson = (newPersonId: number | null, newPersonName?: string) => {
+    setPersonId(newPersonId);
+    setPersonName(newPersonName || '');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (newPersonId) {
+        url.searchParams.set('person_id', String(newPersonId));
+        if (newPersonName) url.searchParams.set('person_name', newPersonName);
+      } else {
+        url.searchParams.delete('person_id');
+        url.searchParams.delete('person_name');
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
   // Live Clock updater
   useEffect(() => {
     const updateTime = () => {
@@ -59,12 +123,13 @@ export default function KioskPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch photos based on filter & token
+  // Fetch photos based on filter & token & person_id
   useEffect(() => {
     const activeToken = getActiveToken();
     setLoading(true);
 
-    let url = `${API_URL}/api/v1/media?limit=200`;
+    let url = `${API_URL}/api/v1/media?limit=300`;
+    if (personId) url += `&person_id=${personId}`;
     if (filterMode === 'favorites') url += '&is_favorite=true';
     if (filterMode === 'places') url += '&geotagged_only=true';
     if (activeToken) url += `&token=${activeToken}`;
@@ -88,7 +153,7 @@ export default function KioskPage() {
         console.error('Kiosk fetch error:', err);
       })
       .finally(() => setLoading(false));
-  }, [API_URL, filterMode, getActiveToken]);
+  }, [API_URL, filterMode, getActiveToken, personId]);
 
   // Slideshow progression timer
   useEffect(() => {
@@ -212,29 +277,68 @@ export default function KioskPage() {
           <Sparkles className="w-10 h-10 text-indigo-400" />
           <h3 className="text-base font-bold text-white">No Photos Found</h3>
           <p className="text-xs text-slate-400 max-w-sm">
-            {filterMode === 'favorites'
+            {personId
+              ? `No photos found for ${personName || 'this person'} with current filters.`
+              : filterMode === 'favorites'
               ? 'You have not favorited any photos yet. Tap the Heart icon on photos in your timeline to add them here.'
               : filterMode === 'places'
               ? 'No geotagged photos with GPS coordinates found.'
               : 'Your photo library is currently empty.'}
           </p>
-          {filterMode !== 'all' && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setFilterMode('all');
-              }}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-semibold text-white shadow-md transition"
-            >
-              Switch to All Photos
-            </button>
+          {(filterMode !== 'all' || personId) && (
+            <div className="flex items-center gap-2">
+              {personId && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectPerson(null);
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-semibold text-white shadow-md transition"
+                >
+                  Show Everyone
+                </button>
+              )}
+              {filterMode !== 'all' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFilterMode('all');
+                  }}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-semibold text-white shadow-md transition"
+                >
+                  Switch to All Photos
+                </button>
+              )}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* Top Center: Active Person Ambient Badge */}
+      {personId && (
+        <div className="absolute top-6 inset-x-0 flex justify-center z-20 pointer-events-none">
+          <div className="bg-indigo-950/80 backdrop-blur-md border border-indigo-400/30 text-white text-xs font-semibold px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2.5">
+            <img
+              src={`${API_URL}/api/v1/people/${personId}/avatar${tokenQuery ? `?token=${activeToken}` : ''}`}
+              alt={personName}
+              className="w-5 h-5 rounded-full object-cover border border-white/60"
+              onError={(e) => {
+                (e.target as HTMLElement).style.display = 'none';
+              }}
+            />
+            <span>Memories of <strong>{personName || 'Person'}</strong></span>
+            {photos.length > 0 && (
+              <span className="text-[10px] bg-indigo-500/40 text-indigo-100 font-mono px-2 py-0.5 rounded-full">
+                {currentIndex + 1} / {photos.length}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
       {/* Top Center: Pause Indicator Badge */}
       {!isPlaying && (
-        <div className="absolute top-6 inset-x-0 flex justify-center z-20 pointer-events-none">
+        <div className={`absolute ${personId ? 'top-16' : 'top-6'} inset-x-0 flex justify-center z-20 pointer-events-none`}>
           <div className="bg-slate-900/80 backdrop-blur-md border border-white/20 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 animate-fadeIn">
             <Pause className="w-3.5 h-3.5 text-amber-400" />
             <span>Slideshow Paused</span>
@@ -300,9 +404,9 @@ export default function KioskPage() {
         <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-xl border border-white/20 px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 sm:gap-4 text-white">
           {/* Back to App */}
           <Link
-            href="/"
+            href={personId ? `/?person_id=${personId}&person_name=${encodeURIComponent(personName)}` : '/'}
             className="p-2 hover:bg-white/15 rounded-full transition text-slate-300 hover:text-white"
-            title="Exit Kiosk Mode"
+            title={personId ? `Return to ${personName}'s Timeline` : 'Exit Kiosk Mode'}
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
@@ -410,6 +514,38 @@ export default function KioskPage() {
               Places
             </button>
           </div>
+
+          {/* People Quick Switcher */}
+          {peopleList.length > 0 && (
+            <>
+              <div className="h-4 w-px bg-white/20" />
+              <div className="flex items-center gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <select
+                  value={personId ? String(personId) : 'all'}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    const val = e.target.value;
+                    if (val === 'all') {
+                      handleSelectPerson(null);
+                    } else {
+                      const pid = parseInt(val, 10);
+                      const found = peopleList.find((p) => p.id === pid);
+                      handleSelectPerson(pid, found?.name);
+                    }
+                  }}
+                  className="bg-black/60 border border-white/20 rounded-lg px-2 py-1 text-[11px] text-white font-medium focus:outline-none focus:border-indigo-400 cursor-pointer max-w-[120px] truncate"
+                >
+                  <option value="all" className="bg-slate-900 text-white">Everyone</option>
+                  {peopleList.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
 
           <div className="h-4 w-px bg-white/20" />
 

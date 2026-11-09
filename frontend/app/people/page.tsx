@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { 
   Users, 
   Edit2, 
@@ -21,7 +22,9 @@ import {
   UserCheck,
   ChevronDown,
   Square,
-  CheckSquare
+  CheckSquare,
+  Calendar,
+  Play
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
@@ -1007,6 +1010,26 @@ export default function PeoplePage() {
                         {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
                       </button>
                     </div>
+
+                    {/* Life Timeline & Kiosk Quick Links */}
+                    <div className="flex items-center justify-center gap-1.5 pt-2 mt-1 border-t border-slate-100 dark:border-slate-800">
+                      <Link
+                        href={`/?person_id=${person.id}&person_name=${encodeURIComponent(person.name)}`}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition"
+                        title={`Open ${person.name}'s life timeline with scrubber & zoom`}
+                      >
+                        <Calendar className="w-3 h-3" />
+                        <span>Timeline</span>
+                      </Link>
+                      <Link
+                        href={`/kiosk?person_id=${person.id}&person_name=${encodeURIComponent(person.name)}`}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 px-2 py-0.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/50 transition"
+                        title={`Start ambient digital photo frame slideshow for ${person.name}`}
+                      >
+                        <Play className="w-3 h-3 fill-current" />
+                        <span>Kiosk</span>
+                      </Link>
+                    </div>
                   </div>
                 </div>
               );
@@ -1155,6 +1178,26 @@ export default function PeoplePage() {
                   )}
                   <span>{selectedPerson.is_hidden ? 'Unhide' : 'Hide'}</span>
                 </button>
+
+                {/* Life Timeline */}
+                <Link
+                  href={`/?person_id=${selectedPerson.id}&person_name=${encodeURIComponent(selectedPerson.name)}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-semibold transition shadow-xs"
+                  title={`View ${selectedPerson.name}'s life timeline with Year/Month/Day zoom & scrubber`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Life Timeline</span>
+                </Link>
+
+                {/* Kiosk Frame */}
+                <Link
+                  href={`/kiosk?person_id=${selectedPerson.id}&person_name=${encodeURIComponent(selectedPerson.name)}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-xl text-xs font-semibold transition shadow-xs"
+                  title={`Start ambient digital photo frame slideshow for ${selectedPerson.name}`}
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Kiosk Frame</span>
+                </Link>
 
                 {/* Merge Button */}
                 <button

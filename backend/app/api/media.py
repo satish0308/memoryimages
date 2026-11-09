@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session, defer
-from sqlalchemy import func, desc, extract
+from sqlalchemy import func, desc, extract, select
 
 from app.database import get_db
 from app.models.user import User
@@ -90,6 +90,7 @@ def list_media(
     is_deleted: bool = False,
     geotagged_only: bool = Query(False),
     ids: Optional[str] = Query(None),
+    person_id: Optional[int] = Query(None, description="Filter media strictly for a specific person"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -119,6 +120,13 @@ def list_media(
         query = query.filter(Media.is_favorite == is_favorite)
     if geotagged_only:
         query = query.filter(Media.latitude != None, Media.longitude != None)
+    if person_id:
+        person_media_ids = [
+            r[0] for r in db.query(FaceDetection.media_id)
+            .filter(FaceDetection.person_id == person_id)
+            .distinct().all()
+        ]
+        query = query.filter(Media.id.in_(person_media_ids))
         
     total = query.count()
     items = query.options(defer(Media.extracted_text)).order_by(desc(Media.captured_at)).offset(offset).limit(limit).all()
@@ -154,6 +162,7 @@ def get_timeline(
     scale: str = Query("day", regex="^(day|month|year)$"),
     collapse_bursts: bool = Query(True),
     has_people: Optional[bool] = Query(None, description="Filter for photos with/without detected people"),
+    person_id: Optional[int] = Query(None, description="Filter timeline strictly for a specific person"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
@@ -173,20 +182,28 @@ def get_timeline(
     ).options(defer(Media.extracted_text))
     if category:
         query = query.filter(Media.category == category)
+    if person_id:
+        person_media_ids = [
+            r[0] for r in db.query(FaceDetection.media_id)
+            .filter(FaceDetection.person_id == person_id)
+            .distinct().all()
+        ]
+        query = query.filter(Media.id.in_(person_media_ids))
         
     items = query.order_by(desc(Media.captured_at)).all()
 
-    # 1 fast indexed query to retrieve face detection counts for the user's media
-    face_counts = dict(
-        db.query(
-            FaceDetection.media_id,
-            func.count(FaceDetection.id)
-        ).join(
-            Media, FaceDetection.media_id == Media.id
-        ).filter(
-            Media.user_id == current_user.id
-        ).group_by(FaceDetection.media_id).all()
-    )
+    # 1 fast indexed query to retrieve face detection counts for the returned media items
+    item_ids = [it.id for it in items]
+    face_counts = {}
+    if item_ids:
+        face_counts = dict(
+            db.query(
+                FaceDetection.media_id,
+                func.count(FaceDetection.id)
+            ).filter(
+                FaceDetection.media_id.in_(item_ids)
+            ).group_by(FaceDetection.media_id).all()
+        )
 
     if has_people is True:
         items = [it for it in items if it.id in face_counts]
