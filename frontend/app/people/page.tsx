@@ -1,16 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { 
   Users, 
   Edit2, 
   Check, 
-  UserPlus, 
   Sparkles, 
   RefreshCw, 
   X, 
   ArrowRight, 
+  ArrowLeft,
   Trash2, 
   Merge, 
   CheckCircle2, 
@@ -19,17 +19,24 @@ import {
   Star,
   Eye,
   EyeOff,
-  UserCheck,
-  ChevronDown,
   Square,
   CheckSquare,
   Calendar,
-  Play
+  Play,
+  Layers
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
+import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
+import { ScaleSelector, TimelineScale, GridDensity } from '@/components/timeline/ScaleSelector';
+import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
+import { BulkActionBar } from '@/components/timeline/BulkActionBar';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
-import { SearchPersonModal } from '@/components/people/SearchPersonModal';
+import { AmbientSlideshowModal } from '@/components/timeline/AmbientSlideshowModal';
+import { BurstInspectorModal } from '@/components/timeline/BurstInspectorModal';
+import { BulkDeleteModal } from '@/components/timeline/BulkDeleteModal';
+import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
+import { SearchPersonModal } from '@/components/people/SearchPersonModal';
 import { useDragSelect } from '@/hooks/useDragSelect';
 import { useAuth } from '@/context/AuthContext';
 import { useTaskQueue } from '@/context/TaskQueueContext';
@@ -68,17 +75,6 @@ interface UnnamedFaceItem {
   confidence: number;
 }
 
-interface PersonPhotoItem {
-  id: number;
-  filename: string;
-  category: string;
-  captured_at: string;
-  location_name: string | null;
-  is_favorite: boolean;
-  thumbnail_url: string;
-  file_size?: number;
-}
-
 interface MergeSuggestion {
   target_person: {
     id: number;
@@ -112,6 +108,8 @@ export default function PeoplePage() {
   const { activeTasks = [], recentTasks = [] } = useTaskQueue() || {};
   const isFaceDetectActive = activeTasks.some((t) => t.type === 'face_detect_all');
   const isFaceClusterActive = activeTasks.some((t) => t.type === 'face_cluster_all');
+
+  // Directory State
   const [people, setPeople] = useState<PersonItem[]>([]);
   const [stats, setStats] = useState<PeopleStats | null>(null);
   const [unnamedFaces, setUnnamedFaces] = useState<UnnamedFaceItem[]>([]);
@@ -119,6 +117,7 @@ export default function PeoplePage() {
   const [filterType, setFilterType] = useState<'all' | 'people' | 'pets'>('all');
   const [selectedRelationship, setSelectedRelationship] = useState<string>('all');
   const [showHidden, setShowHidden] = useState(false);
+  const [searchNameQuery, setSearchNameQuery] = useState('');
 
   // Merge Suggestions
   const [mergeSuggestions, setMergeSuggestions] = useState<MergeSuggestion[]>([]);
@@ -134,16 +133,23 @@ export default function PeoplePage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
 
-  // Selected Person Gallery Modal
+  // Selected Person Full-Screen Life Timeline State
   const [selectedPerson, setSelectedPerson] = useState<PersonItem | null>(null);
-  const [personPhotos, setPersonPhotos] = useState<PersonPhotoItem[]>([]);
-  const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const [personTimeline, setPersonTimeline] = useState<TimelineGroup[]>([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [scale, setScale] = useState<TimelineScale>('day');
+  const [density, setDensity] = useState<GridDensity>('normal');
+  const [collapseBursts, setCollapseBursts] = useState(true);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
-  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
 
-  // Lightbox
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
-  const [unnamedPhotoMedia, setUnnamedPhotoMedia] = useState<MediaItem | null>(null);
+  // Modals
+  const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
+  const [inspectingBurstLead, setInspectingBurstLead] = useState<MediaItem | null>(null);
+  const [isSlideshowOpen, setIsSlideshowOpen] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+  const [backupModalMediaIds, setBackupModalMediaIds] = useState<number[]>([]);
 
   // Merge modal
   const [showMergeModal, setShowMergeModal] = useState(false);
@@ -225,6 +231,45 @@ export default function PeoplePage() {
     }
   }, [API_URL, getActiveToken]);
 
+  const fetchPersonDetail = useCallback(async (personId: number) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPerson(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch person detail:', err);
+    }
+  }, [API_URL, getActiveToken]);
+
+  // Fetch Chronological Timeline for Selected Person
+  const fetchPersonTimeline = useCallback(async (personId: number) => {
+    try {
+      setLoadingTimeline(true);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(
+        `${API_URL}/api/v1/media/timeline?person_id=${personId}&scale=${scale}&collapse_bursts=${collapseBursts}`,
+        { headers }
+      );
+      if (res.ok) {
+        const data: TimelineGroup[] = await res.json();
+        setPersonTimeline(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch person timeline:', err);
+    } finally {
+      setLoadingTimeline(false);
+    }
+  }, [API_URL, scale, collapseBursts, getActiveToken]);
+
   useEffect(() => {
     fetchPeople();
     fetchMergeSuggestions();
@@ -236,62 +281,209 @@ export default function PeoplePage() {
     }
   }, [activeTab, fetchUnnamedFaces]);
 
-  // Automatically refresh people, stats, and merge suggestions when face tasks complete
-  const prevCompletedTasksCount = React.useRef(0);
+  // Deep Link URL Sync: on mount or popstate, open person timeline if ?person_id is in query
   useEffect(() => {
-    const completedFaceTasks = recentTasks.filter(
-      (t) => (t.type === 'face_detect_all' || t.type === 'face_cluster_all') && t.status === 'completed'
-    ).length;
-    if (completedFaceTasks > prevCompletedTasksCount.current) {
-      prevCompletedTasksCount.current = completedFaceTasks;
-      fetchPeople();
-      fetchMergeSuggestions();
-      if (activeTab === 'unnamed') fetchUnnamedFaces();
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const pidStr = params.get('person_id');
+    if (pidStr) {
+      const pid = parseInt(pidStr, 10);
+      if (!isNaN(pid)) {
+        const found = people.find((p) => p.id === pid);
+        if (found) {
+          setSelectedPerson(found);
+        } else if (!selectedPerson || selectedPerson.id !== pid) {
+          fetchPersonDetail(pid);
+        }
+      }
     }
-  }, [recentTasks, fetchPeople, fetchMergeSuggestions, fetchUnnamedFaces, activeTab]);
+  }, [people, fetchPersonDetail]);
 
-  // Load photos when a person is selected
-  const openPersonGallery = async (person: PersonItem) => {
+  // Automatically fetch timeline when selectedPerson, scale, or collapseBursts change
+  useEffect(() => {
+    if (selectedPerson) {
+      fetchPersonTimeline(selectedPerson.id);
+    }
+  }, [selectedPerson?.id, scale, collapseBursts, fetchPersonTimeline]);
+
+  // Navigation handlers
+  const openPersonTimeline = (person: PersonItem) => {
     setSelectedPerson(person);
     setSelectedPhotoIds([]);
-    setLoadingPhotos(true);
-    try {
-      const token = getActiveToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
-      if (res.ok) {
-        setPersonPhotos(await res.json());
-      }
-    } catch (e) {
-      console.error('Error loading person photos:', e);
-    } finally {
-      setLoadingPhotos(false);
+    setSelectedPhoto(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('person_id', String(person.id));
+      window.history.pushState(null, '', url.toString());
     }
   };
 
-  // 2D Drag-and-Select & Single-Click Select / Double-Click View Hook for Person Photos
+  const closePersonTimeline = () => {
+    setSelectedPerson(null);
+    setPersonTimeline([]);
+    setSelectedPhotoIds([]);
+    setSelectedPhoto(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('person_id');
+      window.history.pushState(null, '', url.pathname + (url.search ? url.search : ''));
+    }
+  };
+
+  // Keyboard shortcut: Esc to return to all people when no modal is open
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        const hasOpenModal =
+          Boolean(selectedPhoto) ||
+          Boolean(inspectingBurstLead) ||
+          isSlideshowOpen ||
+          showBulkDeleteModal ||
+          showGooglePhotosModal ||
+          isBackupModalOpen ||
+          showMergeModal ||
+          isSearchPersonOpen;
+
+        if (!hasOpenModal && selectedPerson) {
+          closePersonTimeline();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    selectedPerson,
+    selectedPhoto,
+    inspectingBurstLead,
+    isSlideshowOpen,
+    showBulkDeleteModal,
+    showGooglePhotosModal,
+    isBackupModalOpen,
+    showMergeModal,
+    isSearchPersonOpen,
+  ]);
+
+  // Flat array of all photos in current person timeline
+  const allPersonPhotos = useMemo(() => {
+    return personTimeline.flatMap((group) => group.items);
+  }, [personTimeline]);
+
+  // 2D Drag-and-Select Hook for Person Timeline
   const {
     isDragging: isDragSelecting,
     dragMode,
     marqueeBox,
     handlePointerDown,
     handleItemClick,
-    handleItemDoubleClick,
   } = useDragSelect({
     selectedIds: selectedPhotoIds,
     setSelectedIds: setSelectedPhotoIds,
-    orderedIds: personPhotos.map((p) => p.id),
+    orderedIds: allPersonPhotos.map((p) => p.id),
     onOpenLightbox: (id) => {
-      const idx = personPhotos.findIndex((p) => p.id === id);
-      if (idx !== -1) setSelectedPhotoIndex(idx);
+      const found = allPersonPhotos.find((p) => p.id === id);
+      if (found) setSelectedPhoto(found);
     },
   });
 
-  const handleBatchTrashPersonPhotos = async (ids: number[]) => {
-    if (ids.length === 0) return;
-    if (!confirm(`Move ${ids.length} photo(s) to Trash?`)) return;
+  // Photo Actions for Person Timeline
+  const toggleFavorite = async (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/${id}/favorite`, {
+        method: 'POST',
+        headers,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPersonTimeline((prev) =>
+          prev.map((g) => ({
+            ...g,
+            items: g.items.map((it) => (it.id === id ? { ...it, is_favorite: data.is_favorite } : it)),
+          }))
+        );
+        if (selectedPhoto && selectedPhoto.id === id) {
+          setSelectedPhoto((prev) => (prev ? { ...prev, is_favorite: data.is_favorite } : null));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+    }
+  };
+
+  const deletePhoto = async (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm('Move this photo to trash?')) return;
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/${id}`, {
+        method: 'DELETE',
+        headers,
+      });
+      if (res.ok) {
+        setPersonTimeline((prev) =>
+          prev
+            .map((g) => ({
+              ...g,
+              items: g.items.filter((it) => it.id !== id),
+            }))
+            .filter((g) => g.items.length > 0)
+        );
+        setSelectedPhotoIds((prev) => prev.filter((pid) => pid !== id));
+        if (selectedPhoto && selectedPhoto.id === id) {
+          setSelectedPhoto(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete photo:', err);
+    }
+  };
+
+  const toggleSelectGroup = (groupIds: number[], selectAll: boolean) => {
+    setSelectedPhotoIds((prev) => {
+      if (selectAll) {
+        return Array.from(new Set([...prev, ...groupIds]));
+      } else {
+        return prev.filter((id) => !groupIds.includes(id));
+      }
+    });
+  };
+
+  const handleBatchFavorite = async () => {
+    if (selectedPhotoIds.length === 0) return;
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/batch-favorite`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ media_ids: selectedPhotoIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const favSet = new Set(data.favorited_ids || selectedPhotoIds);
+        setPersonTimeline((prev) =>
+          prev.map((g) => ({
+            ...g,
+            items: g.items.map((it) => (favSet.has(it.id) ? { ...it, is_favorite: true } : it)),
+          }))
+        );
+      }
+    } catch (err) {
+      console.error('Failed to batch favorite:', err);
+    }
+  };
+
+  const executeBatchDelete = async (permanent: boolean) => {
+    if (selectedPhotoIds.length === 0) return;
     try {
       const token = getActiveToken();
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -300,17 +492,52 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/media/batch-delete`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ media_ids: ids, permanent: false }),
+        body: JSON.stringify({ media_ids: selectedPhotoIds, permanent }),
       });
       if (res.ok) {
-        setPersonPhotos((prev) => prev.filter((p) => !ids.includes(p.id)));
+        const deletedSet = new Set(selectedPhotoIds);
+        setPersonTimeline((prev) =>
+          prev
+            .map((g) => ({
+              ...g,
+              items: g.items.filter((it) => !deletedSet.has(it.id)),
+            }))
+            .filter((g) => g.items.length > 0)
+        );
         setSelectedPhotoIds([]);
+        setShowBulkDeleteModal(false);
       }
-    } catch (e) {
-      console.error('Failed to trash photos:', e);
+    } catch (err) {
+      console.error('Failed to execute batch delete:', err);
     }
   };
 
+  const handleBackupSinglePhoto = (photo: MediaItem) => {
+    setBackupModalMediaIds([photo.id]);
+    setIsBackupModalOpen(true);
+  };
+
+  const handleBackupBulkPhotos = (ids: number[]) => {
+    setBackupModalMediaIds(ids);
+    setIsBackupModalOpen(true);
+  };
+
+  // Lightbox Navigation
+  const currentPhotoIndex = selectedPhoto
+    ? allPersonPhotos.findIndex((p) => p.id === selectedPhoto.id)
+    : -1;
+  const hasPrev = currentPhotoIndex > 0;
+  const hasNext = currentPhotoIndex !== -1 && currentPhotoIndex < allPersonPhotos.length - 1;
+
+  const navigatePrev = () => {
+    if (hasPrev) setSelectedPhoto(allPersonPhotos[currentPhotoIndex - 1]);
+  };
+
+  const navigateNext = () => {
+    if (hasNext) setSelectedPhoto(allPersonPhotos[currentPhotoIndex + 1]);
+  };
+
+  // Person Metadata Updates
   const handleSaveName = async (id: number) => {
     if (!editName.trim()) return;
     try {
@@ -321,7 +548,7 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/people/${id}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ name: editName.trim() })
+        body: JSON.stringify({ name: editName.trim() }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -347,7 +574,7 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/people/${personId}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ relationship_type: rel || null })
+        body: JSON.stringify({ relationship_type: rel || null }),
       });
       if (res.ok) {
         setPeople((prev) =>
@@ -364,27 +591,6 @@ export default function PeoplePage() {
     }
   };
 
-  const handleSetCover = async (personId: number, mediaId: number) => {
-    try {
-      const token = getActiveToken();
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_URL}/api/v1/people/${personId}/cover`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ media_id: mediaId })
-      });
-      if (res.ok) {
-        fetchPeople();
-        setStatusMessage('Profile cover updated!');
-        setTimeout(() => setStatusMessage(null), 3000);
-      }
-    } catch (e) {
-      console.error('Set cover error:', e);
-    }
-  };
-
   const handleToggleHidePerson = async (personId: number, shouldHide: boolean) => {
     try {
       const token = getActiveToken();
@@ -394,10 +600,14 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/people/${personId}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ is_hidden: shouldHide })
+        body: JSON.stringify({ is_hidden: shouldHide }),
       });
       if (res.ok) {
-        setSelectedPerson(null);
+        if (shouldHide && selectedPerson && selectedPerson.id === personId) {
+          closePersonTimeline();
+        } else if (selectedPerson && selectedPerson.id === personId) {
+          setSelectedPerson((prev) => (prev ? { ...prev, is_hidden: shouldHide } : null));
+        }
         fetchPeople();
         setStatusMessage(shouldHide ? 'Person hidden from library' : 'Person unhidden');
         setTimeout(() => setStatusMessage(null), 3000);
@@ -419,11 +629,10 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/people/merge`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ source_person_id: sourceId, target_person_id: targetId })
+        body: JSON.stringify({ source_person_id: sourceId, target_person_id: targetId }),
       });
 
       if (res.ok) {
-        // Purge any suggestion containing the dissolved source person ID
         setMergeSuggestions((prev) =>
           prev.filter((s) => s.source_person.id !== sourceId && s.target_person.id !== sourceId)
         );
@@ -433,7 +642,6 @@ export default function PeoplePage() {
       } else {
         const err = await res.json().catch(() => ({ detail: 'Merge failed.' }));
         if (res.status === 404) {
-          // Already merged in a prior action, remove stale card
           setMergeSuggestions((prev) =>
             prev.filter((s) => s.source_person.id !== sourceId && s.target_person.id !== sourceId)
           );
@@ -450,7 +658,7 @@ export default function PeoplePage() {
     }
   };
 
-  // Run AI Auto-Clustering with ArcFace 512-d embeddings
+  // Auto-Clustering with ArcFace 512-d embeddings
   const handleAutoCluster = async () => {
     try {
       setIsClustering(true);
@@ -477,7 +685,7 @@ export default function PeoplePage() {
     }
   };
 
-  // Scan library photos for human faces and household pets
+  // Deep Scan Library Photos
   const handleScanFaces = async () => {
     try {
       setIsScanning(true);
@@ -524,8 +732,8 @@ export default function PeoplePage() {
         headers,
         body: JSON.stringify({
           source_person_id: mergeSourceId,
-          target_person_id: mergeTargetId
-        })
+          target_person_id: mergeTargetId,
+        }),
       });
       if (res.ok) {
         setShowMergeModal(false);
@@ -533,7 +741,13 @@ export default function PeoplePage() {
         setMergeTargetId(null);
         setModalError(null);
         if (selectedPerson && selectedPerson.id === mergeSourceId) {
-          setSelectedPerson(null);
+          const target = people.find((p) => p.id === mergeTargetId);
+          if (target) {
+            setSelectedPerson(target);
+            fetchPersonTimeline(target.id);
+          } else {
+            closePersonTimeline();
+          }
         }
         fetchPeople();
         fetchMergeSuggestions();
@@ -552,7 +766,7 @@ export default function PeoplePage() {
   };
 
   const openFaceInLightbox = (face: UnnamedFaceItem) => {
-    setUnnamedPhotoMedia({
+    setSelectedPhoto({
       id: face.media_id,
       filename: face.filename,
       category: 'memory',
@@ -561,599 +775,141 @@ export default function PeoplePage() {
       captured_at: face.captured_at || new Date().toISOString(),
       is_favorite: false,
       is_blurry: false,
-      thumbnail_url: `/api/v1/media/${face.media_id}/thumbnail?size=256`
-    });
+      thumbnail_url: `/api/v1/media/${face.media_id}/thumbnail?size=256`,
+    } as MediaItem);
   };
 
-  const openPersonFullscreen = async (person: PersonItem, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setSelectedPerson(person);
-    setLoadingPhotos(true);
-    try {
-      const token = getActiveToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`${API_URL}/api/v1/people/${person.id}/photos`, { headers });
-      if (res.ok) {
-        const photos = await res.json();
-        setPersonPhotos(photos);
-        if (photos.length > 0) {
-          setSelectedPhotoIndex(0);
-        }
-      }
-    } catch (e) {
-      console.error('Error loading person photos for fullscreen:', e);
-    } finally {
-      setLoadingPhotos(false);
-    }
-  };
-
-  const activeMediaItem: MediaItem | null = unnamedPhotoMedia
-    ? unnamedPhotoMedia
-    : selectedPhotoIndex !== null && personPhotos[selectedPhotoIndex]
-    ? {
-        id: personPhotos[selectedPhotoIndex].id,
-        filename: personPhotos[selectedPhotoIndex].filename,
-        category: personPhotos[selectedPhotoIndex].category,
-        width: 1920,
-        height: 1080,
-        captured_at: personPhotos[selectedPhotoIndex].captured_at,
-        is_favorite: personPhotos[selectedPhotoIndex].is_favorite,
-        is_blurry: false,
-        location_name: personPhotos[selectedPhotoIndex].location_name,
-        thumbnail_url: personPhotos[selectedPhotoIndex].thumbnail_url,
-      }
-    : null;
+  // Filtered people by name for directory view
+  const filteredPeople = useMemo(() => {
+    if (!searchNameQuery.trim()) return people;
+    const q = searchNameQuery.toLowerCase().trim();
+    return people.filter((p) => p.name.toLowerCase().includes(q));
+  }, [people, searchNameQuery]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-12">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-200/60 dark:border-indigo-900/60 rounded-3xl p-6 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-bold text-lg">
-              <Users className="w-5 h-5 text-indigo-600" />
-              <span>People & Face Management Studio</span>
-            </div>
-            <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl">
-              Automatic face clustering, ArcFace biometric matching, relationship management, and 1-click visual face search.
-            </p>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={handleAutoCluster}
-              disabled={isClustering || isFaceClusterActive}
-              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
-              title="Automatically cluster faces with ArcFace biometric embeddings"
-            >
-              <Sparkles className={`w-3.5 h-3.5 ${(isClustering || isFaceClusterActive) ? 'animate-spin text-amber-300' : ''}`} />
-              <span>{isClustering || isFaceClusterActive ? 'Clustering...' : 'Auto-Cluster Faces'}</span>
-            </button>
-
-            <button
-              onClick={handleScanFaces}
-              disabled={isScanning || isFaceDetectActive}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
-              title="Scan library photos for new faces"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${(isScanning || isFaceDetectActive) ? 'animate-spin text-indigo-500' : ''}`} />
-              <span className="hidden sm:inline">{isFaceDetectActive ? 'Scanning Library...' : 'Scan Library'}</span>
-            </button>
-
-            <button
-              onClick={() => setShowMergeModal(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition"
-              title="Merge two duplicate person profiles"
-            >
-              <Merge className="w-3.5 h-3.5 text-purple-500" />
-              <span className="hidden sm:inline">Manual Merge</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Real-Time Stats Chips */}
-        {stats && (
-          <div className="flex items-center gap-3 mt-4 pt-4 border-t border-slate-200/60 dark:border-slate-800 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-              <span className="font-bold text-slate-900 dark:text-white">{stats.total_people}</span>
-              <span>People Identified</span>
-            </div>
-            <span className="text-slate-300">•</span>
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-              <span className="font-bold text-slate-900 dark:text-white">{stats.total_faces}</span>
-              <span>Faces Detected</span>
-            </div>
-            <span className="text-slate-300">•</span>
-            <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-              <span className="font-bold text-slate-900 dark:text-white">{stats.photos_with_faces}</span>
-              <span>Photos with Faces</span>
-            </div>
-
-            {stats.total_pets !== undefined && stats.total_pets > 0 && (
-              <>
-                <span className="text-slate-300">•</span>
-                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-                  <span className="font-bold text-amber-600 dark:text-amber-400">{stats.total_pets}</span>
-                  <span>Pets (🐾 Dogs & Cats)</span>
-                </div>
-              </>
-            )}
-
-            {statusMessage && (
-              <div className="ml-auto flex items-center gap-1.5 text-xs text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 animate-fade-in">
-                <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
-                <span>{statusMessage}</span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* AI Merge Same Person Suggestions Banner */}
-      {mergeSuggestions.length > 0 && !showHidden && (
-        <div className="bg-gradient-to-r from-purple-950/70 via-indigo-950/50 to-slate-900 border border-purple-500/40 rounded-3xl p-5 shadow-xl space-y-3 animate-fadeIn">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-              <h3 className="font-bold text-sm text-white">
-                AI Duplicate Face Suggestions ({mergeSuggestions.length})
-              </h3>
-            </div>
-            <span className="text-[11px] text-slate-400">
-              High-confidence biometric vector matches across people
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
-            {mergeSuggestions.map((s) => (
-              <div
-                key={`${s.source_person.id}-${s.target_person.id}`}
-                className="flex-shrink-0 bg-slate-900/90 border border-slate-700/80 rounded-2xl p-3 flex items-center gap-3 shadow-md"
-              >
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-purple-500/50 shadow-inner">
-                    <img
-                      src={buildMediaUrl(s.source_person.avatar_url)}
-                      alt={s.source_person.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-xs font-bold text-white max-w-[90px] truncate">
-                      {s.source_person.name}
-                    </p>
-                    <p className="text-[10px] text-slate-400">{s.source_person.faces_count} faces</p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-center px-1">
-                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded-full">
-                    {s.confidence_pct}% Match
-                  </span>
-                  <ArrowRight className="w-3.5 h-3.5 text-purple-400 mt-0.5" />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-indigo-500/50 shadow-inner">
-                    <img
-                      src={buildMediaUrl(s.target_person.avatar_url)}
-                      alt={s.target_person.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-xs font-bold text-white max-w-[90px] truncate">
-                      {s.target_person.name}
-                    </p>
-                    <p className="text-[10px] text-slate-400">{s.target_person.faces_count} faces</p>
-                  </div>
-                </div>
-
+    <div className="max-w-7xl mx-auto space-y-6 pb-24">
+      {/* ========================================================
+          VIEW MODE A: BIG-SCREEN PERSON LIFE TIMELINE
+          ======================================================== */}
+      {selectedPerson ? (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Top Sticky/Hero Navigation Bar */}
+          <div className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-md transition-all">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+              {/* Left: Back button + Profile Avatar + Name + Badges */}
+              <div className="flex items-start sm:items-center gap-4">
+                {/* Back Button */}
                 <button
-                  type="button"
-                  onClick={() => handleQuickMerge(s.source_person.id, s.target_person.id)}
-                  disabled={mergingId === `${s.source_person.id}-${s.target_person.id}`}
-                  className="ml-2 px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
+                  onClick={closePersonTimeline}
+                  className="group flex items-center gap-2 px-3.5 py-2.5 bg-slate-100 hover:bg-indigo-50 dark:bg-slate-800 dark:hover:bg-indigo-950/60 text-slate-700 hover:text-indigo-600 dark:text-slate-300 dark:hover:text-indigo-400 rounded-2xl text-xs font-bold transition shadow-xs flex-shrink-0"
+                  title="Return to all people (or press Esc)"
                 >
-                  {mergingId === `${s.source_person.id}-${s.target_person.id}` ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Merge className="w-3.5 h-3.5" />
-                  )}
-                  <span>Merge</span>
+                  <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" />
+                  <span className="hidden sm:inline">All People</span>
+                  <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-slate-500 dark:text-slate-400">
+                    Esc
+                  </kbd>
                 </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* View Switcher Tabs */}
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              setActiveTab('people');
-              setShowHidden(false);
-            }}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
-              activeTab === 'people' && !showHidden
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Identified People ({people.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('unnamed')}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-2 ${
-              activeTab === 'unnamed'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <UserPlus className="w-3.5 h-3.5" />
-            <span>Untagged Faces Review Tray</span>
-          </button>
-        </div>
-
-        {/* Hidden People Toggle */}
-        <button
-          onClick={() => {
-            setShowHidden(!showHidden);
-            setActiveTab('people');
-          }}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition ${
-            showHidden
-              ? 'bg-amber-600 text-white shadow-sm'
-              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-200'
-          }`}
-          title="Toggle view of hidden people"
-        >
-          {showHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-          <span>{showHidden ? 'Viewing Hidden People' : 'Hidden People'}</span>
-        </button>
-      </div>
-
-      {/* Tab 1: Identified People Grid */}
-      {activeTab === 'people' && (
-        <>
-          {/* Sub-Filters: Type & Relationship Category */}
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => setFilterType('all')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  filterType === 'all'
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                All ({people.length})
-              </button>
-              <button
-                onClick={() => setFilterType('people')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  filterType === 'people'
-                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                People ({people.filter((p) => !p.is_pet).length})
-              </button>
-              <button
-                onClick={() => setFilterType('pets')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                  filterType === 'pets'
-                    ? 'bg-amber-600 text-white shadow-sm'
-                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <span>🐾 Pets ({people.filter((p) => p.is_pet).length})</span>
-              </button>
-            </div>
-
-            {/* Relationship Category Filter Pills */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[11px] text-slate-400 font-medium">Category:</span>
-              {RELATIONSHIP_FILTERS.map((rf) => (
-                <button
-                  key={rf.value}
-                  onClick={() => setSelectedRelationship(rf.value)}
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
-                    selectedRelationship === rf.value
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                  }`}
-                >
-                  {rf.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {people.length === 0 && !loading && (
-            <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-12 text-center max-w-md mx-auto space-y-4">
-              <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
-                <Users className="w-7 h-7" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 dark:text-white text-sm">
-                  {showHidden ? 'No Hidden People' : 'No People in this Category'}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  {showHidden
-                    ? 'You have not hidden any person profiles.'
-                    : 'Click "Auto-Cluster Faces" or use Visual Face Search to group your loved ones.'}
-                </p>
-              </div>
-              {!showHidden && (
-                <button
-                  onClick={handleAutoCluster}
-                  disabled={isClustering}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-md transition"
-                >
-                  Auto-Cluster Faces Now
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {people.map((person) => {
-              const avatarSrc = person.avatar_url
-                ? buildMediaUrl(person.avatar_url)
-                : person.cover_thumbnail_url
-                ? buildMediaUrl(person.cover_thumbnail_url)
-                : null;
-
-              return (
-                <div
-                  key={person.id}
-                  className="group bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-4 text-center space-y-3 shadow-sm hover:shadow-xl hover:border-indigo-400 dark:hover:border-indigo-600 transition-all duration-300 relative"
-                >
-                  {/* Face Crop Avatar Circle */}
-                  <div
-                    onClick={() => openPersonGallery(person)}
-                    className="relative w-24 h-24 mx-auto rounded-full overflow-hidden bg-slate-900 ring-4 ring-slate-100 dark:ring-slate-800 group-hover:ring-indigo-500/50 cursor-pointer transition-all duration-300 group-hover:scale-105 shadow-md"
-                  >
-                    {avatarSrc ? (
-                      <img
-                        src={avatarSrc}
-                        alt={person.name}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-slate-400">
-                        <Users className="w-8 h-8" />
-                      </div>
-                    )}
-
-                    {/* Hover Inspect & Fullscreen Indicator */}
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2">
-                      <button
-                        onClick={(e) => openPersonFullscreen(person, e)}
-                        className="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg transition hover:scale-110"
-                        title="View Fullscreen Lightbox"
-                      >
-                        <Maximize2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Name & Inline Rename */}
-                  <div>
-                    {editingId === person.id ? (
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSaveName(person.id)}
-                          className="w-full text-xs font-bold text-center border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-800 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => handleSaveName(person.id)}
-                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
-                          title="Save Name"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div
-                        onClick={() => {
-                          setEditingId(person.id);
-                          setEditName(person.name);
-                        }}
-                        className="group/name flex items-center justify-center gap-1.5 cursor-pointer"
-                        title="Click to rename"
-                      >
-                        <h4 className="font-bold text-xs text-slate-800 dark:text-white truncate max-w-[120px]">
-                          {person.name}
-                        </h4>
-                        <Edit2 className="w-3 h-3 text-slate-400 opacity-0 group-hover/name:opacity-100 transition" />
-                      </div>
-                    )}
-
-                    {/* Relationship Badge */}
-                    {person.relationship_type && (
-                      <div className="mt-1 flex justify-center">
-                        <span className="text-[9px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
-                          {person.relationship_type}
-                        </span>
-                      </div>
-                    )}
-
-                    {person.is_pet && (
-                      <div className="mt-1 flex justify-center">
-                        <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
-                          <span>🐾</span>
-                          <span>{person.pet_type?.toUpperCase() || 'PET'}</span>
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Photo Count & Gallery Trigger */}
-                    <div className="flex items-center justify-center gap-2 mt-1">
-                      <button
-                        onClick={() => openPersonGallery(person)}
-                        className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
-                        title="Browse all photos in gallery"
-                      >
-                        {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
-                      </button>
-                    </div>
-
-                    {/* Life Timeline & Kiosk Quick Links */}
-                    <div className="flex items-center justify-center gap-1.5 pt-2 mt-1 border-t border-slate-100 dark:border-slate-800">
-                      <Link
-                        href={`/?person_id=${person.id}&person_name=${encodeURIComponent(person.name)}`}
-                        className="flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition"
-                        title={`Open ${person.name}'s life timeline with scrubber & zoom`}
-                      >
-                        <Calendar className="w-3 h-3" />
-                        <span>Timeline</span>
-                      </Link>
-                      <Link
-                        href={`/kiosk?person_id=${person.id}&person_name=${encodeURIComponent(person.name)}`}
-                        className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 px-2 py-0.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/50 transition"
-                        title={`Start ambient digital photo frame slideshow for ${person.name}`}
-                      >
-                        <Play className="w-3 h-3 fill-current" />
-                        <span>Kiosk</span>
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      {/* Tab 2: Untagged Faces Review Tray with Visual Face Search */}
-      {activeTab === 'unnamed' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                Detected Faces Awaiting Label ({unnamedFaces.length})
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Click &quot;Search Person&quot; on any face to instantly find and group all matching photos across your library.
-              </p>
-            </div>
-            <button
-              onClick={fetchUnnamedFaces}
-              className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 rounded-xl hover:bg-slate-50 transition"
-              title="Refresh untagged faces"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-
-          {unnamedFaces.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-12 text-center text-slate-400 text-xs">
-              All detected faces are assigned to named people!
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {unnamedFaces.map((face) => (
-                <div
-                  key={face.id}
-                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 text-center space-y-2 shadow-sm hover:shadow-md transition"
-                >
-                  <div
-                    onClick={() => openFaceInLightbox(face)}
-                    className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-slate-900 border-2 border-slate-100 dark:border-slate-800 shadow-sm cursor-pointer hover:border-indigo-500 transition hover:scale-105 group/crop relative"
-                    title="Click to view full photo in full screen"
-                  >
-                    <img
-                      src={buildMediaUrl(face.crop_url)}
-                      alt={face.filename}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/crop:opacity-100 transition-opacity flex items-center justify-center text-white">
-                      <Maximize2 className="w-4 h-4" />
-                    </div>
-                  </div>
-
-                  <p className="text-[10px] text-slate-400 truncate max-w-[120px] mx-auto">
-                    {face.filename}
-                  </p>
-
-                  {/* 1-Click Visual Search Button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchModalFaceId(face.id);
-                      setIsSearchPersonOpen(true);
-                    }}
-                    className="w-full py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-[10px] font-bold shadow-xs flex items-center justify-center gap-1 transition"
-                    title="Search & group all photos of this person in library"
-                  >
-                    <Search className="w-3 h-3 text-amber-300" />
-                    <span>Search Person</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Selected Person Gallery Modal */}
-      {selectedPerson && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-6 border-b border-slate-200/80 dark:border-slate-800 flex items-center justify-between flex-wrap gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full overflow-hidden bg-slate-900 border-2 border-indigo-500 shadow-md">
+                {/* Avatar with Ring */}
+                <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden bg-slate-900 ring-4 ring-indigo-500/30 flex-shrink-0 shadow-lg">
                   {selectedPerson.avatar_url ? (
                     <img
                       src={buildMediaUrl(selectedPerson.avatar_url)}
                       alt={selectedPerson.name}
                       className="w-full h-full object-cover"
                     />
+                  ) : selectedPerson.cover_thumbnail_url ? (
+                    <img
+                      src={buildMediaUrl(selectedPerson.cover_thumbnail_url)}
+                      alt={selectedPerson.name}
+                      className="w-full h-full object-cover"
+                    />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-slate-400">
-                      <Users className="w-6 h-6" />
+                      <Users className="w-8 h-8" />
                     </div>
                   )}
                 </div>
 
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>{selectedPerson.name}</span>
+                {/* Name, Inline Rename, & Badges */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {editingId === selectedPerson.id ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSaveName(selectedPerson.id)}
+                          className="text-base sm:text-xl font-bold bg-white dark:bg-slate-800 border-2 border-indigo-500 rounded-xl px-2 py-0.5 focus:outline-none"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleSaveName(selectedPerson.id)}
+                          className="p-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+                          title="Save Name"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => {
+                          setEditingId(selectedPerson.id);
+                          setEditName(selectedPerson.name);
+                        }}
+                        className="group/name flex items-center gap-2 cursor-pointer"
+                        title="Click to rename"
+                      >
+                        <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                          {selectedPerson.name}
+                        </h1>
+                        <Edit2 className="w-4 h-4 text-slate-400 opacity-60 group-hover/name:opacity-100 group-hover/name:text-indigo-500 transition" />
+                      </div>
+                    )}
+
                     {selectedPerson.is_pet && (
-                      <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full">
-                        🐾 {selectedPerson.pet_type?.toUpperCase()}
+                      <span className="text-xs bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                        🐾 {selectedPerson.pet_type?.toUpperCase() || 'PET'}
                       </span>
                     )}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {personPhotos.length} photos with confirmed facial detections
-                  </p>
+
+                    {selectedPerson.is_hidden && (
+                      <span className="text-xs bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold px-2.5 py-0.5 rounded-full shadow-xs">
+                        Hidden
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Stats & Metadata summary */}
+                  <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                      <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
+                        {allPersonPhotos.length}
+                      </strong>{' '}
+                      photos
+                    </span>
+                    <span>•</span>
+                    <span>
+                      <strong>{personTimeline.length}</strong> time periods
+                    </span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-medium">
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>Full Life Timeline</span>
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Controls */}
+              {/* Right: Action Buttons (Kiosk, Slideshow, Category, Merge, Hide) */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Relationship Dropdown */}
+                {/* Relationship Selector Dropdown */}
                 <select
                   value={selectedPerson.relationship_type || ''}
                   onChange={(e) => handleUpdateRelationship(selectedPerson.id, e.target.value)}
-                  className="text-xs bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-slate-700 dark:text-slate-200 cursor-pointer focus:outline-none focus:border-indigo-500"
+                  className="text-xs font-semibold bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-700 dark:text-slate-200 cursor-pointer focus:outline-none focus:border-indigo-500 shadow-xs"
                 >
                   <option value="">No Category</option>
                   <option value="Family">👨‍👩‍👧 Family</option>
@@ -1164,41 +920,26 @@ export default function PeoplePage() {
                   <option value="Other">🏷️ Other</option>
                 </select>
 
-                {/* Hide / Unhide Person */}
-                <button
-                  onClick={() =>
-                    handleToggleHidePerson(selectedPerson.id, !selectedPerson.is_hidden)
-                  }
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-400 rounded-xl text-xs font-semibold transition"
-                  title={selectedPerson.is_hidden ? 'Unhide this person' : 'Hide from library'}
-                >
-                  {selectedPerson.is_hidden ? (
-                    <Eye className="w-3.5 h-3.5" />
-                  ) : (
-                    <EyeOff className="w-3.5 h-3.5" />
-                  )}
-                  <span>{selectedPerson.is_hidden ? 'Unhide' : 'Hide'}</span>
-                </button>
-
-                {/* Life Timeline */}
-                <Link
-                  href={`/?person_id=${selectedPerson.id}&person_name=${encodeURIComponent(selectedPerson.name)}`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs font-semibold transition shadow-xs"
-                  title={`View ${selectedPerson.name}'s life timeline with Year/Month/Day zoom & scrubber`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Life Timeline</span>
-                </Link>
-
-                {/* Kiosk Frame */}
+                {/* Ambient Kiosk Mode Frame launcher */}
                 <Link
                   href={`/kiosk?person_id=${selectedPerson.id}&person_name=${encodeURIComponent(selectedPerson.name)}`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-xl text-xs font-semibold transition shadow-xs"
-                  title={`Start ambient digital photo frame slideshow for ${selectedPerson.name}`}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-xl text-xs font-bold shadow-md shadow-amber-500/20 transition active:scale-95"
+                  title={`Launch fullscreen ambient digital frame slideshow for ${selectedPerson.name}`}
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Kiosk Frame</span>
+                  <Play className="w-3.5 h-3.5 fill-white text-white" />
+                  <span>Launch Kiosk</span>
                 </Link>
+
+                {/* Ambient Slideshow Modal launcher */}
+                <button
+                  onClick={() => setIsSlideshowOpen(true)}
+                  disabled={allPersonPhotos.length === 0}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 hover:text-indigo-600 rounded-xl text-xs font-semibold transition border border-slate-200 dark:border-slate-700 disabled:opacity-50"
+                  title="Play cinematic slideshow of this person's photos"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Slideshow</span>
+                </button>
 
                 {/* Merge Button */}
                 <button
@@ -1206,158 +947,805 @@ export default function PeoplePage() {
                     setMergeSourceId(selectedPerson.id);
                     setShowMergeModal(true);
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition border border-slate-200 dark:border-slate-700"
                   title="Merge this person into another identity"
                 >
                   <Merge className="w-3.5 h-3.5 text-purple-500" />
-                  <span>Merge Person</span>
+                  <span>Merge</span>
+                </button>
+
+                {/* Hide / Unhide Toggle */}
+                <button
+                  onClick={() => handleToggleHidePerson(selectedPerson.id, !selectedPerson.is_hidden)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 rounded-xl text-xs font-semibold transition border border-slate-200 dark:border-slate-700"
+                  title={selectedPerson.is_hidden ? 'Unhide this person in library' : 'Hide from library'}
+                >
+                  {selectedPerson.is_hidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span>{selectedPerson.is_hidden ? 'Unhide' : 'Hide'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Timeline Controls Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800 rounded-2xl p-3 shadow-xs">
+            {/* Left: ScaleSelector, GridDensity, Burst Collapse */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <ScaleSelector
+                scale={scale}
+                onChangeScale={setScale}
+                density={density}
+                onChangeDensity={setDensity}
+              />
+
+              {/* Burst Collapse Toggle */}
+              <button
+                onClick={() => setCollapseBursts((prev) => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition shadow-xs ${
+                  collapseBursts
+                    ? 'bg-indigo-50 dark:bg-indigo-950/60 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                }`}
+                title="Stack consecutive burst shots into a single best cover photo"
+              >
+                <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Bursts: {collapseBursts ? 'Collapsed' : 'Expanded'}</span>
+              </button>
+            </div>
+
+            {/* Right: Selection status & Select All */}
+            <div className="flex items-center gap-2">
+              {selectedPhotoIds.length > 0 ? (
+                <>
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    <strong className="text-indigo-600 dark:text-indigo-400">{selectedPhotoIds.length}</strong> selected
+                  </span>
+                  <button
+                    onClick={() => setSelectedPhotoIds([])}
+                    className="text-xs text-indigo-600 hover:underline font-semibold px-2 py-1"
+                  >
+                    Deselect All
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => setSelectedPhotoIds(allPersonPhotos.map((p) => p.id))}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl transition"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  <span>Select All ({allPersonPhotos.length})</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Timeline Groups */}
+          {loadingTimeline ? (
+            <div className="py-24 text-center text-slate-400 text-sm flex items-center justify-center gap-3">
+              <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
+              <span>Loading {selectedPerson.name}&apos;s life timeline...</span>
+            </div>
+          ) : personTimeline.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-16 text-center space-y-3">
+              <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto">
+                <Users className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-slate-800 dark:text-white text-base">No Photos Found</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                No photos were detected for {selectedPerson.name} in this timeline.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {personTimeline.map((group) => (
+                <DaySection
+                  key={group.key || group.date}
+                  group={group}
+                  apiUrl={API_URL}
+                  selectedIds={selectedPhotoIds}
+                  density={density}
+                  onSelect={(photo) => setSelectedPhoto(photo)}
+                  onToggleSelect={handleItemClick}
+                  onPointerDown={handlePointerDown}
+                  onToggleSelectGroup={toggleSelectGroup}
+                  onToggleFavorite={toggleFavorite}
+                  onDelete={deletePhoto}
+                  onOpenBurst={(bItem) => setInspectingBurstLead(bItem)}
+                  onBackupToDrive={handleBackupSinglePhoto}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Interactive Vertical Timeline Minimap Scrubber */}
+          {personTimeline.length > 0 && <TimelineScrubber groups={personTimeline} />}
+        </div>
+      ) : (
+        /* ========================================================
+           VIEW MODE B: ALL PEOPLE & PETS DIRECTORY STUDIO
+           ======================================================== */
+        <>
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-200/60 dark:border-indigo-900/60 rounded-3xl p-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-bold text-lg">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  <span>People & Pets Studio</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl">
+                  ArcFace 512-d biometric clustering, relationship categories, and big-screen life timelines.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleAutoCluster}
+                  disabled={isClustering || isFaceClusterActive}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                  title="Automatically cluster faces with ArcFace biometric embeddings"
+                >
+                  <Sparkles
+                    className={`w-3.5 h-3.5 ${
+                      isClustering || isFaceClusterActive ? 'animate-spin text-amber-300' : ''
+                    }`}
+                  />
+                  <span>
+                    {isClustering || isFaceClusterActive ? 'Clustering...' : 'Auto-Cluster Faces'}
+                  </span>
                 </button>
 
                 <button
-                  onClick={() => setSelectedPerson(null)}
-                  className="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 rounded-xl transition"
+                  onClick={handleScanFaces}
+                  disabled={isScanning || isFaceDetectActive}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                  title="Scan library photos for new faces"
                 >
-                  <X className="w-5 h-5" />
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 ${
+                      isScanning || isFaceDetectActive ? 'animate-spin text-indigo-500' : ''
+                    }`}
+                  />
+                  <span className="hidden sm:inline">
+                    {isFaceDetectActive ? 'Scanning Library...' : 'Scan Library'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setShowMergeModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition"
+                  title="Merge two duplicate person profiles"
+                >
+                  <Merge className="w-3.5 h-3.5 text-purple-500" />
+                  <span className="hidden sm:inline">Manual Merge</span>
                 </button>
               </div>
             </div>
 
-            {/* Selection Action Toolbar */}
-            {personPhotos.length > 0 && (
-              <div className="px-6 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      if (selectedPhotoIds.length === personPhotos.length) {
-                        setSelectedPhotoIds([]);
-                      } else {
-                        setSelectedPhotoIds(personPhotos.map((p) => p.id));
-                      }
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold transition"
-                  >
-                    {selectedPhotoIds.length === personPhotos.length ? (
-                      <CheckSquare className="w-4 h-4 text-indigo-600" />
-                    ) : (
-                      <Square className="w-4 h-4 text-slate-400" />
-                    )}
-                    <span>{selectedPhotoIds.length === personPhotos.length ? 'Deselect All' : `Select All (${personPhotos.length})`}</span>
-                  </button>
-
-                  {selectedPhotoIds.length > 0 && (
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">
-                      <strong className="text-indigo-600 dark:text-indigo-400">{selectedPhotoIds.length}</strong> photo{selectedPhotoIds.length !== 1 ? 's' : ''} selected
-                    </span>
-                  )}
+            {/* Real-Time Stats Chips */}
+            {stats && (
+              <div className="flex items-center gap-3 mt-4 pt-4 border-t border-slate-200/60 dark:border-slate-800 flex-wrap">
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-bold text-slate-900 dark:text-white">{stats.total_people}</span>
+                  <span>People Identified</span>
+                </div>
+                <span className="text-slate-300">•</span>
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-bold text-slate-900 dark:text-white">{stats.total_faces}</span>
+                  <span>Faces Detected</span>
+                </div>
+                <span className="text-slate-300">•</span>
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {stats.photos_with_faces}
+                  </span>
+                  <span>Photos with Faces</span>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowGooglePhotosModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold transition shadow-xs"
-                    title="Generate Google Photos search queries for these photos"
-                  >
-                    <Search className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Google Photos Query {selectedPhotoIds.length > 0 ? `(${selectedPhotoIds.length})` : ''}</span>
-                  </button>
+                {stats.total_pets !== undefined && stats.total_pets > 0 && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
+                      <span className="font-bold text-amber-600 dark:text-amber-400">
+                        {stats.total_pets}
+                      </span>
+                      <span>Pets (🐾 Dogs & Cats)</span>
+                    </div>
+                  </>
+                )}
 
-                  {selectedPhotoIds.length > 0 && (
+                {statusMessage && (
+                  <div className="ml-auto flex items-center gap-1.5 text-xs text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 animate-fade-in">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>{statusMessage}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* AI Merge Suggestions Banner */}
+          {mergeSuggestions.length > 0 && !showHidden && (
+            <div className="bg-gradient-to-r from-purple-950/70 via-indigo-950/50 to-slate-900 border border-purple-500/40 rounded-3xl p-5 shadow-xl space-y-3 animate-fadeIn">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                  <h3 className="font-bold text-sm text-white">
+                    AI Duplicate Face Suggestions ({mergeSuggestions.length})
+                  </h3>
+                </div>
+                <span className="text-[11px] text-slate-400">
+                  High-confidence biometric vector matches across people
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                {mergeSuggestions.map((s) => (
+                  <div
+                    key={`${s.source_person.id}-${s.target_person.id}`}
+                    className="flex-shrink-0 bg-slate-900/90 border border-slate-700/80 rounded-2xl p-3 flex items-center gap-3 shadow-md"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-purple-500/50 shadow-inner">
+                        <img
+                          src={buildMediaUrl(s.source_person.avatar_url)}
+                          alt={s.source_person.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-bold text-white max-w-[90px] truncate">
+                          {s.source_person.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400">{s.source_person.faces_count} faces</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-center px-1">
+                      <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded-full">
+                        {s.confidence_pct}% Match
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-purple-400 mt-0.5" />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-800 border-2 border-indigo-500/50 shadow-inner">
+                        <img
+                          src={buildMediaUrl(s.target_person.avatar_url)}
+                          alt={s.target_person.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-bold text-white max-w-[90px] truncate">
+                          {s.target_person.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400">{s.target_person.faces_count} faces</p>
+                      </div>
+                    </div>
+
                     <button
-                      type="button"
-                      onClick={() => handleBatchTrashPersonPhotos(selectedPhotoIds)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900 rounded-xl font-semibold transition"
-                      title="Move selected photos to trash"
+                      onClick={() => handleQuickMerge(s.source_person.id, s.target_person.id)}
+                      disabled={mergingId === `${s.source_person.id}-${s.target_person.id}`}
+                      className="ml-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md transition disabled:opacity-50"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Trash ({selectedPhotoIds.length})</span>
+                      {mergingId === `${s.source_person.id}-${s.target_person.id}` ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        'Merge'
+                      )}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Search, Filter Tabs & Relationship Pills */}
+          <div className="space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              {/* Tabs: People vs Untagged Faces */}
+              <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-2xl w-fit">
+                <button
+                  onClick={() => setActiveTab('people')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+                    activeTab === 'people'
+                      ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  Identified People & Pets ({people.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('unnamed')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                    activeTab === 'unnamed'
+                      ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                  }`}
+                >
+                  <span>Untagged Faces</span>
+                  {stats && stats.unassigned_faces > 0 && (
+                    <span className="bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                      {stats.unassigned_faces}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Search Bar for People Directory */}
+              {activeTab === 'people' && (
+                <div className="relative flex-1 max-w-xs">
+                  <Search className="w-3.5 h-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchNameQuery}
+                    onChange={(e) => setSearchNameQuery(e.target.value)}
+                    placeholder={`Search ${people.length} people by name...`}
+                    className="w-full text-xs pl-9 pr-8 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:border-indigo-500 shadow-xs"
+                  />
+                  {searchNameQuery && (
+                    <button
+                      onClick={() => setSearchNameQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
+              )}
+            </div>
+
+            {/* Filter Pills for People Tab */}
+            {activeTab === 'people' && (
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                {/* Relationship Filters */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  {RELATIONSHIP_FILTERS.map((rf) => (
+                    <button
+                      key={rf.value}
+                      onClick={() => setSelectedRelationship(rf.value)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
+                        selectedRelationship === rf.value
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      {rf.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Sub-Filters: People / Pets / Hidden */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setFilterType('all')}
+                    className={`px-2.5 py-1 text-[11px] rounded-lg font-semibold transition ${
+                      filterType === 'all'
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    All Types
+                  </button>
+                  <button
+                    onClick={() => setFilterType('people')}
+                    className={`px-2.5 py-1 text-[11px] rounded-lg font-semibold transition ${
+                      filterType === 'people'
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    People Only
+                  </button>
+                  <button
+                    onClick={() => setFilterType('pets')}
+                    className={`px-2.5 py-1 text-[11px] rounded-lg font-semibold transition ${
+                      filterType === 'pets'
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    🐾 Pets Only
+                  </button>
+                  <button
+                    onClick={() => setShowHidden(!showHidden)}
+                    className={`px-2.5 py-1 text-[11px] rounded-lg font-semibold flex items-center gap-1 transition ${
+                      showHidden
+                        ? 'bg-rose-600 text-white'
+                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {showHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showHidden ? 'Hidden Shown' : 'Hidden'}</span>
+                  </button>
+                </div>
               </div>
             )}
+          </div>
 
-            {/* Photos Grid with Set Cover Buttons */}
-            <div className="flex-1 overflow-y-auto p-6" onPointerDown={handlePointerDown}>
-              {loadingPhotos ? (
-                <div className="py-20 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+          {/* Tab 1: People & Pets Studio Grid */}
+          {activeTab === 'people' && (
+            <>
+              {loading ? (
+                <div className="py-24 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
-                  <span>Loading photos for {selectedPerson.name}...</span>
+                  <span>Loading identified people...</span>
                 </div>
-              ) : personPhotos.length === 0 ? (
-                <div className="py-20 text-center text-slate-400 text-xs">
-                  No photos found for this person.
+              ) : filteredPeople.length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-16 text-center space-y-4">
+                  <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+                    <Users className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800 dark:text-white text-base">
+                      {searchNameQuery ? `No people found matching "${searchNameQuery}"` : 'No People Identified Yet'}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1">
+                      {searchNameQuery
+                        ? 'Try clearing the search or checking spelling.'
+                        : 'Run ArcFace face clustering to automatically identify and group people in your photos.'}
+                    </p>
+                  </div>
+                  {!searchNameQuery && (
+                    <button
+                      onClick={handleAutoCluster}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition"
+                    >
+                      Auto-Cluster Faces Now
+                    </button>
+                  )}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {personPhotos.map((photo, index) => {
-                    const isSelected = selectedPhotoIds.includes(photo.id);
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  {filteredPeople.map((person) => {
+                    const avatarSrc = person.avatar_url
+                      ? buildMediaUrl(person.avatar_url)
+                      : person.cover_thumbnail_url
+                      ? buildMediaUrl(person.cover_thumbnail_url)
+                      : null;
+
                     return (
                       <div
-                        key={photo.id}
-                        data-media-id={photo.id}
-                        onPointerDown={(e) => handlePointerDown(e, photo.id)}
-                        onClick={(e) => handleItemClick(photo.id, e, personPhotos.map((p) => p.id))}
-                        onDoubleClick={(e) => handleItemDoubleClick(photo.id, e)}
-                        title="Click to select/deselect • Double-click to view full image • Click & drag to multi-select"
-                        className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
-                          isSelected
-                            ? 'border-indigo-600 ring-2 ring-indigo-500/40'
-                            : 'border-slate-200/60 dark:border-slate-800 hover:shadow-xl'
-                        }`}
+                        key={person.id}
+                        className="group bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-4 text-center space-y-3 shadow-sm hover:shadow-xl hover:border-indigo-400 dark:hover:border-indigo-600 transition-all duration-300 relative cursor-pointer"
+                        onClick={() => openPersonTimeline(person)}
                       >
-                        <img
-                          src={buildMediaUrl(photo.thumbnail_url)}
-                          alt={photo.filename}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110 select-none pointer-events-none"
-                          loading="lazy"
-                          draggable={false}
-                        />
+                        {/* Face Crop Avatar Circle */}
+                        <div className="relative w-24 h-24 mx-auto rounded-full overflow-hidden bg-slate-900 ring-4 ring-slate-100 dark:ring-slate-800 group-hover:ring-indigo-500/50 transition-all duration-300 group-hover:scale-105 shadow-md">
+                          {avatarSrc ? (
+                            <img
+                              src={avatarSrc}
+                              alt={person.name}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-400">
+                              <Users className="w-8 h-8" />
+                            </div>
+                          )}
 
-                        {/* Multi-Select Checkbox */}
-                        <div className="absolute top-2 left-2 z-10 transition">
-                          <div
-                            className={`w-6 h-6 rounded-lg flex items-center justify-center backdrop-blur-md shadow-md transition ${
-                              isSelected
-                                ? 'bg-indigo-600 text-white ring-2 ring-white/80'
-                                : 'bg-black/40 text-white/70 group-hover:bg-black/60 group-hover:text-white'
-                            }`}
-                          >
-                            {isSelected ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : <Square className="w-3.5 h-3.5" />}
+                          {/* Hover Indicator */}
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                            <Maximize2 className="w-5 h-5 text-white drop-shadow-md" />
                           </div>
                         </div>
 
-                        {/* Set Cover Hover Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSetCover(selectedPerson.id, photo.id);
-                          }}
-                          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-amber-600 text-white opacity-0 group-hover:opacity-100 transition shadow-md z-10"
-                          title="Set as profile cover"
-                        >
-                          <Star className="w-3 h-3 text-amber-300" />
-                        </button>
+                        {/* Name & Inline Rename */}
+                        <div onClick={(e) => e.stopPropagation()}>
+                          {editingId === person.id ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSaveName(person.id)}
+                                className="w-full text-xs font-bold text-center border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-800 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                autoFocus
+                              />
+                              <button
+                                onClick={() => handleSaveName(person.id)}
+                                className="p-1 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                                title="Save Name"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div
+                              onClick={() => {
+                                setEditingId(person.id);
+                                setEditName(person.name);
+                              }}
+                              className="group/name flex items-center justify-center gap-1.5 cursor-pointer"
+                              title="Click to rename"
+                            >
+                              <h4 className="font-bold text-xs text-slate-800 dark:text-white truncate max-w-[120px]">
+                                {person.name}
+                              </h4>
+                              <Edit2 className="w-3 h-3 text-slate-400 opacity-0 group-hover/name:opacity-100 transition" />
+                            </div>
+                          )}
 
-                        {/* Bottom Details Vignette */}
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2.5 pointer-events-none">
-                          <p className="text-white text-[11px] font-semibold truncate leading-tight">
-                            {photo.filename}
-                          </p>
-                          <p className="text-slate-300 text-[10px] font-mono mt-0.5">
-                            {new Date(photo.captured_at).toLocaleDateString()}
-                          </p>
+                          {/* Relationship Badge */}
+                          {person.relationship_type && (
+                            <div className="mt-1 flex justify-center">
+                              <span className="text-[9px] font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-200 dark:border-indigo-800">
+                                {person.relationship_type}
+                              </span>
+                            </div>
+                          )}
+
+                          {person.is_pet && (
+                            <div className="mt-1 flex justify-center">
+                              <span className="text-[10px] bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-xs">
+                                <span>🐾</span>
+                                <span>{person.pet_type?.toUpperCase() || 'PET'}</span>
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Photo Count */}
+                          <div className="flex items-center justify-center gap-2 mt-1">
+                            <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold group-hover:underline">
+                              {person.photo_count} {person.photo_count === 1 ? 'photo' : 'photos'}
+                            </span>
+                          </div>
+
+                          {/* Life Timeline & Kiosk Quick Links */}
+                          <div className="flex items-center justify-center gap-1.5 pt-2 mt-1 border-t border-slate-100 dark:border-slate-800">
+                            <button
+                              onClick={() => openPersonTimeline(person)}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition"
+                              title={`Open ${person.name}'s life timeline with scrubber & zoom`}
+                            >
+                              <Calendar className="w-3 h-3" />
+                              <span>Timeline</span>
+                            </button>
+                            <Link
+                              href={`/kiosk?person_id=${person.id}&person_name=${encodeURIComponent(person.name)}`}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 px-2 py-0.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/50 transition"
+                              title={`Start ambient digital photo frame slideshow for ${person.name}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>Kiosk</span>
+                            </Link>
+                          </div>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
+            </>
+          )}
+
+          {/* Tab 2: Untagged Faces Review Tray with Visual Face Search */}
+          {activeTab === 'unnamed' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Detected Faces Awaiting Label ({unnamedFaces.length})
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Click &quot;Search Person&quot; on any face to instantly find and group all matching photos across your library.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchUnnamedFaces}
+                  className="p-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 rounded-xl hover:bg-slate-50 transition"
+                  title="Refresh untagged faces"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+
+              {unnamedFaces.length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-12 text-center text-slate-400 text-xs">
+                  All detected faces are assigned to named people!
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  {unnamedFaces.map((face) => (
+                    <div
+                      key={face.id}
+                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 text-center space-y-2 shadow-sm hover:shadow-md transition"
+                    >
+                      <div
+                        onClick={() => openFaceInLightbox(face)}
+                        className="w-20 h-20 mx-auto rounded-2xl overflow-hidden bg-slate-900 border-2 border-slate-100 dark:border-slate-800 shadow-sm cursor-pointer hover:border-indigo-500 transition hover:scale-105 group/crop relative"
+                        title="Click to view full photo in full screen"
+                      >
+                        <img
+                          src={buildMediaUrl(face.crop_url)}
+                          alt={face.filename}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/crop:opacity-100 transition-opacity flex items-center justify-center text-white">
+                          <Maximize2 className="w-4 h-4" />
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-slate-400 truncate max-w-[120px] mx-auto">
+                        {face.filename}
+                      </p>
+
+                      {/* 1-Click Visual Search Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchModalFaceId(face.id);
+                          setIsSearchPersonOpen(true);
+                        }}
+                        className="w-full py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-[10px] font-bold shadow-xs flex items-center justify-center gap-1 transition"
+                        title="Search & group all photos of this person in library"
+                      >
+                        <Search className="w-3 h-3 text-amber-300" />
+                        <span>Search Person</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
+          )}
+        </>
+      )}
+
+      {/* ========================================================
+          MODALS & FLOATING CONTROLS
+          ======================================================== */}
+
+      {/* Floating 2D Drag Marquee Selection Box */}
+      {isDragSelecting && marqueeBox && (
+        <div
+          className={`fixed pointer-events-none z-50 rounded-lg transition-colors border-2 ${
+            dragMode === 'select'
+              ? 'border-indigo-500 bg-indigo-500/20 shadow-lg shadow-indigo-500/10'
+              : 'border-rose-500 bg-rose-500/20 shadow-lg shadow-rose-500/10'
+          }`}
+          style={{
+            left: `${marqueeBox.left}px`,
+            top: `${marqueeBox.top}px`,
+            width: `${marqueeBox.width}px`,
+            height: `${marqueeBox.height}px`,
+          }}
+        />
+      )}
+
+      {/* Floating Drag Status Pill */}
+      {isDragSelecting && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-2xl backdrop-blur-md border border-slate-700/80 flex items-center gap-2 pointer-events-none animate-fadeIn">
+          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-indigo-400' : 'bg-rose-400'}`} />
+          <span>
+            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
+          </span>
+          <span className="text-slate-400 font-mono">
+            {selectedPhotoIds.length} selected
+          </span>
         </div>
       )}
+
+      {/* Floating Bulk Action Bar */}
+      {selectedPerson && selectedPhotoIds.length > 0 && (
+        <BulkActionBar
+          selectedIds={selectedPhotoIds}
+          selectedPhotos={allPersonPhotos.filter((p) => selectedPhotoIds.includes(p.id))}
+          apiUrl={API_URL}
+          onClearSelection={() => setSelectedPhotoIds([])}
+          onBatchFavorite={handleBatchFavorite}
+          onBatchDelete={() => setShowBulkDeleteModal(true)}
+          onBatchCategoryUpdated={() => {
+            if (selectedPerson) fetchPersonTimeline(selectedPerson.id);
+            setSelectedPhotoIds([]);
+          }}
+          onAlbumAdded={() => setSelectedPhotoIds([])}
+          onBatchLocationUpdated={() => {
+            if (selectedPerson) fetchPersonTimeline(selectedPerson.id);
+            setSelectedPhotoIds([]);
+          }}
+          onBatchEnhanced={() => {
+            if (selectedPerson) fetchPersonTimeline(selectedPerson.id);
+            setSelectedPhotoIds([]);
+          }}
+          onBatchBackupToDrive={handleBackupBulkPhotos}
+          onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
+        />
+      )}
+
+      {/* Full-Screen Lightbox Modal with Next/Prev Arrow Navigation */}
+      <LightboxModal
+        photo={selectedPhoto}
+        apiUrl={API_URL}
+        onClose={() => setSelectedPhoto(null)}
+        onToggleFavorite={toggleFavorite}
+        onDelete={deletePhoto}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        onNavigatePrev={navigatePrev}
+        onNavigateNext={navigateNext}
+        onSelectPhoto={(photoOrId) => {
+          if (typeof photoOrId === 'number') {
+            const found = allPersonPhotos.find((p) => p.id === photoOrId);
+            if (found) setSelectedPhoto(found);
+          } else {
+            setSelectedPhoto(photoOrId);
+          }
+        }}
+        onBackupToDrive={handleBackupSinglePhoto}
+      />
+
+      {/* Ambient Cinematic Slideshow Modal */}
+      <AmbientSlideshowModal
+        photos={allPersonPhotos}
+        apiUrl={API_URL}
+        isOpen={isSlideshowOpen}
+        onClose={() => setIsSlideshowOpen(false)}
+      />
+
+      {/* Burst Inspector Modal */}
+      <BurstInspectorModal
+        leadItem={inspectingBurstLead}
+        apiUrl={API_URL}
+        isOpen={Boolean(inspectingBurstLead)}
+        onClose={() => setInspectingBurstLead(null)}
+        onResolved={() => {
+          if (selectedPerson) fetchPersonTimeline(selectedPerson.id);
+        }}
+      />
+
+      {/* Bulk Delete Modal */}
+      <BulkDeleteModal
+        isOpen={showBulkDeleteModal}
+        itemCount={selectedPhotoIds.length}
+        itemType="photos"
+        onClose={() => setShowBulkDeleteModal(false)}
+        onConfirm={executeBatchDelete}
+        onOpenGooglePhotosHelper={() => {
+          setShowBulkDeleteModal(false);
+          setShowGooglePhotosModal(true);
+        }}
+      />
+
+      {/* Google Photos Cloud Deletion / Search Export Modal */}
+      <GooglePhotosExportModal
+        isOpen={showGooglePhotosModal}
+        onClose={() => setShowGooglePhotosModal(false)}
+        items={
+          selectedPhotoIds.length > 0
+            ? allPersonPhotos
+                .filter((p) => selectedPhotoIds.includes(p.id))
+                .map((p) => ({
+                  id: p.id,
+                  filename: p.filename,
+                  file_size: p.file_size,
+                  captured_at: p.captured_at,
+                  thumbnail_url: p.thumbnail_url,
+                }))
+            : allPersonPhotos.map((p) => ({
+                id: p.id,
+                filename: p.filename,
+                file_size: p.file_size,
+                captured_at: p.captured_at,
+                thumbnail_url: p.thumbnail_url,
+              }))
+        }
+        title={`Google Photos Query: ${selectedPerson?.name || 'Person Photos'}`}
+        subtitle="Search and manage this person's photos in your Google Photos cloud account"
+      />
+
+      {/* Google Drive Outbound Backup Modal */}
+      <GoogleDriveBackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        mediaIds={backupModalMediaIds}
+        defaultFolderName={`MyMemoryPics / ${selectedPerson?.name || 'People'}`}
+      />
 
       {/* Merge Modal */}
       {showMergeModal && (
@@ -1459,87 +1847,6 @@ export default function PeoplePage() {
           fetchMergeSuggestions();
         }}
       />
-
-      {/* Integrated Lightbox Modal with Next/Prev navigation */}
-      <LightboxModal
-        photo={activeMediaItem}
-        apiUrl={API_URL}
-        onClose={() => {
-          setSelectedPhotoIndex(null);
-          setUnnamedPhotoMedia(null);
-        }}
-        onToggleFavorite={() => {}}
-        onDelete={() => {}}
-        hasPrev={selectedPhotoIndex !== null && selectedPhotoIndex > 0}
-        hasNext={selectedPhotoIndex !== null && selectedPhotoIndex < personPhotos.length - 1}
-        onNavigatePrev={() => {
-          if (selectedPhotoIndex !== null && selectedPhotoIndex > 0) {
-            setSelectedPhotoIndex(selectedPhotoIndex - 1);
-          }
-        }}
-        onNavigateNext={() => {
-          if (selectedPhotoIndex !== null && selectedPhotoIndex < personPhotos.length - 1) {
-            setSelectedPhotoIndex(selectedPhotoIndex + 1);
-          }
-        }}
-      />
-
-      {/* Google Photos Cloud Deletion / Search Export Modal */}
-      <GooglePhotosExportModal
-        isOpen={showGooglePhotosModal}
-        onClose={() => setShowGooglePhotosModal(false)}
-        items={
-          selectedPhotoIds.length > 0
-            ? personPhotos
-                .filter((p) => selectedPhotoIds.includes(p.id))
-                .map((p) => ({
-                  id: p.id,
-                  filename: p.filename,
-                  file_size: p.file_size,
-                  captured_at: p.captured_at,
-                  thumbnail_url: p.thumbnail_url,
-                }))
-            : personPhotos.map((p) => ({
-                id: p.id,
-                filename: p.filename,
-                file_size: p.file_size,
-                captured_at: p.captured_at,
-                thumbnail_url: p.thumbnail_url,
-              }))
-        }
-        title={`Google Photos Query: ${selectedPerson?.name || 'Person Photos'}`}
-        subtitle="Search and manage this person's photos in your Google Photos cloud account"
-      />
-
-      {/* Floating 2D Drag Marquee Selection Box */}
-      {isDragSelecting && marqueeBox && (
-        <div
-          className={`fixed pointer-events-none z-50 rounded-lg transition-colors border-2 ${
-            dragMode === 'select'
-              ? 'border-indigo-500 bg-indigo-500/20 shadow-lg shadow-indigo-500/10'
-              : 'border-rose-500 bg-rose-500/20 shadow-lg shadow-rose-500/10'
-          }`}
-          style={{
-            left: `${marqueeBox.left}px`,
-            top: `${marqueeBox.top}px`,
-            width: `${marqueeBox.width}px`,
-            height: `${marqueeBox.height}px`,
-          }}
-        />
-      )}
-
-      {/* Drag Status Pill */}
-      {isDragSelecting && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-2xl backdrop-blur-md border border-slate-700/80 flex items-center gap-2 pointer-events-none animate-fadeIn">
-          <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-indigo-400' : 'bg-rose-400'}`} />
-          <span>
-            {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
-          </span>
-          <span className="text-slate-400 font-mono">
-            {selectedPhotoIds.length} selected
-          </span>
-        </div>
-      )}
     </div>
   );
 }

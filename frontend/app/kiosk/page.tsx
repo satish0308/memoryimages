@@ -405,7 +405,7 @@ export default function KioskPage() {
         <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-xl border border-white/20 px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 sm:gap-4 text-white">
           {/* Back to App */}
           <Link
-            href={personId ? `/?person_id=${personId}&person_name=${encodeURIComponent(personName)}` : '/'}
+            href={personId ? `/people?person_id=${personId}` : '/'}
             className="p-2 hover:bg-white/15 rounded-full transition text-slate-300 hover:text-white"
             title={personId ? `Return to ${personName}'s Timeline` : 'Exit Kiosk Mode'}
           >

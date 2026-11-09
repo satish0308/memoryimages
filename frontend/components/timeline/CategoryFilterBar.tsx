@@ -1,15 +1,8 @@
 'use client';
 
 import React from 'react';
-import { RefreshCw, Users, Mountain, LayoutGrid, Sparkles } from 'lucide-react';
+import { RefreshCw, Users, Mountain, LayoutGrid } from 'lucide-react';
 import { getApiUrl } from '@/utils/apiUrl';
-
-export interface PersonQuickItem {
-  id: number;
-  name: string;
-  avatar_url?: string | null;
-  photo_count: number;
-}
 
 interface CategoryFilterBarProps {
   activeCategory: string;
@@ -19,10 +12,6 @@ interface CategoryFilterBarProps {
   peopleCounts?: { all: number; withPeople: number; withoutPeople: number };
   groupByPeople?: boolean;
   onToggleGroupByPeople?: () => void;
-  selectedPersonId?: number | null;
-  onSelectPerson?: (personId: number | null, personName?: string) => void;
-  peopleList?: PersonQuickItem[];
-  apiUrl?: string;
   onRefresh: () => void;
   loading: boolean;
 }
@@ -43,10 +32,6 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
   peopleCounts,
   groupByPeople = false,
   onToggleGroupByPeople,
-  selectedPersonId = null,
-  onSelectPerson,
-  peopleList = [],
-  apiUrl = getApiUrl(),
   onRefresh,
   loading,
 }) => {
@@ -112,7 +97,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
             <button
               onClick={() => onSelectPeopleFilter('all')}
               className={`px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                peopleFilter === 'all' && !selectedPersonId
+                peopleFilter === 'all'
                   ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900 shadow-sm'
                   : 'bg-slate-100 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
@@ -123,7 +108,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
             <button
               onClick={() => onSelectPeopleFilter('with_people')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                peopleFilter === 'with_people' || Boolean(selectedPersonId)
+                peopleFilter === 'with_people'
                   ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/20'
                   : 'bg-indigo-50/80 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
               }`}
@@ -136,7 +121,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
             <button
               onClick={() => onSelectPeopleFilter('without_people')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
-                peopleFilter === 'without_people' && !selectedPersonId
+                peopleFilter === 'without_people'
                   ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/20'
                   : 'bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
               }`}
@@ -146,60 +131,6 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
               {peopleCounts ? <span className="text-[10px] opacity-80">({peopleCounts.withoutPeople})</span> : null}
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Third Row: Individual Face / Person Life Timeline Filter Bar */}
-      {peopleList && peopleList.length > 0 && onSelectPerson && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1.5 scrollbar-none border-t border-slate-100 dark:border-slate-800/60">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 shrink-0 flex items-center gap-1">
-            <Sparkles className="w-3 h-3" />
-            <span>Face Timeline:</span>
-          </span>
-
-          <button
-            onClick={() => onSelectPerson(null)}
-            className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition ${
-              !selectedPersonId
-                ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
-          >
-            Everyone
-          </button>
-
-          {peopleList.map((person) => {
-            const isSelected = selectedPersonId === person.id;
-            return (
-              <button
-                key={person.id}
-                onClick={() => onSelectPerson(person.id, person.name)}
-                className={`flex items-center gap-1.5 pl-1 pr-2.5 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap transition shadow-xs ${
-                  isSelected
-                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-500/50 shadow-indigo-600/30 scale-[1.02]'
-                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
-                }`}
-                title={`View ${person.name}'s life timeline (${person.photo_count} photos)`}
-              >
-                <img
-                  src={`${apiUrl}/api/v1/people/${person.id}/avatar`}
-                  alt={person.name}
-                  className="w-5 h-5 rounded-full object-cover border border-white/50"
-                  loading="lazy"
-                />
-                <span>{person.name}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                    isSelected
-                      ? 'bg-indigo-700 text-indigo-100'
-                      : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  {person.photo_count}
-                </span>
-              </button>
-            );
-          })}
         </div>
       )}
     </div>
