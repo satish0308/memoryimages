@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export default function KioskPage() {
   const { token: authContextToken } = useAuth();
@@ -40,7 +41,7 @@ export default function KioskPage() {
   const [personName, setPersonName] = useState<string>('');
   const [peopleList, setPeopleList] = useState<{ id: number; name: string; avatar_url?: string | null; photo_count?: number }[]>([]);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const hudTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Helper to resolve token from context, URL parameter, or localStorage

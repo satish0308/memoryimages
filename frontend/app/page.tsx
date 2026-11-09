@@ -22,6 +22,7 @@ import { TimelineScrubber } from '@/components/timeline/TimelineScrubber';
 import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { useDragSelect } from '@/hooks/useDragSelect';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export default function PhotosPage() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -74,7 +75,7 @@ export default function PhotosPage() {
     setIsBackupModalOpen(true);
   };
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const fetchTimeline = async () => {
     try {

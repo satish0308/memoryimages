@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   Sparkles, 
   ArrowLeft, 
@@ -98,7 +99,7 @@ function SimilarPhotosContent() {
   const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const getAuthUrl = useCallback((urlPath: string) => {
     if (!urlPath) return '';

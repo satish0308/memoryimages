@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export interface StagedMediaFile {
   id: string;
@@ -104,7 +105,7 @@ function formatBytes(bytes: number): string {
 
 export const UploadProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { token } = useAuth();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   // Staging State
   const [stagedFiles, setStagedFiles] = useState<StagedMediaFile[]>([]);

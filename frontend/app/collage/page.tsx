@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   ArrowLeft, 
   X, 
@@ -41,7 +42,7 @@ const BG_PRESETS: ColorPreset[] = [
 function CollageStudioContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const [photos, setPhotos] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);

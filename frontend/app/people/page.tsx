@@ -33,6 +33,7 @@ import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportMod
 import { useDragSelect } from '@/hooks/useDragSelect';
 import { useAuth } from '@/context/AuthContext';
 import { useTaskQueue } from '@/context/TaskQueueContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface PersonItem {
   id: number;
@@ -155,7 +156,7 @@ export default function PeoplePage() {
   const [searchModalFaceId, setSearchModalFaceId] = useState<number | null>(null);
   const [isSearchPersonOpen, setIsSearchPersonOpen] = useState(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const getActiveToken = useCallback(() => {
     return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);

@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export interface User {
   id: number;
@@ -35,10 +36,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const router = useRouter();
+  const API_URL = getApiUrl();
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);

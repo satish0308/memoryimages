@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { 
   Sliders, 
@@ -220,7 +221,7 @@ export default function AppSettingsPage() {
   const [showGooglePhotosModal, setShowGooglePhotosModal] = useState(false);
   const [restoringPurgeId, setRestoringPurgeId] = useState<number | null>(null);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const fetchSettings = async () => {
     setLoading(true);

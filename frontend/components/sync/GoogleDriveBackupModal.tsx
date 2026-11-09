@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   Cloud, 
   X, 
@@ -38,7 +39,7 @@ export const GoogleDriveBackupModal: React.FC<GoogleDriveBackupModalProps> = ({
   defaultFolderName = 'MyMemoryPics / Backups',
   onBackupSuccess,
 }) => {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const [folderName, setFolderName] = useState(defaultFolderName);
   const [existingFolders, setExistingFolders] = useState<{ id: string; name: string }[]>([]);

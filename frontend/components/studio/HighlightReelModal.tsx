@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   X, 
   Play, 
@@ -38,7 +39,7 @@ export function HighlightReelModal({
   subtitle,
   items,
 }: HighlightReelModalProps) {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
 
   const [currentIndex, setCurrentIndex] = useState<number>(0);

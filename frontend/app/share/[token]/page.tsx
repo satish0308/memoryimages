@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   Sparkles, 
   Download, 
@@ -40,7 +41,7 @@ export default function GuestSharePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchSharedAlbum = async () => {

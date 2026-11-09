@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { RefreshCw, Users, Mountain, LayoutGrid, Sparkles } from 'lucide-react';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export interface PersonQuickItem {
   id: number;
@@ -45,7 +46,7 @@ export const CategoryFilterBar: React.FC<CategoryFilterBarProps> = ({
   selectedPersonId = null,
   onSelectPerson,
   peopleList = [],
-  apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+  apiUrl = getApiUrl(),
   onRefresh,
   loading,
 }) => {

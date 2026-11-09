@@ -17,6 +17,7 @@ import {
   KeyRound
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface AuthViewProps {
   initialTab?: 'login' | 'register';
@@ -37,7 +38,7 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
   const [passwordInput, setPasswordInput] = useState('password123');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   // Check URL parameters for returned Google OAuth tokens
   useEffect(() => {

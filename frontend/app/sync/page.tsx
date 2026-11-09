@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { getApiUrl } from '@/utils/apiUrl';
 import { 
   FolderSync, 
   HardDrive, 
@@ -51,8 +52,8 @@ export default function SyncPage() {
   const [uploadingS3, setUploadingS3] = useState(false);
   const s3InputRef = useRef<HTMLInputElement | null>(null);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-  const REDIRECT_URI = 'http://localhost:8000/api/v1/sync/google/callback';
+  const API_URL = getApiUrl();
+  const REDIRECT_URI = `${API_URL}/api/v1/sync/google/callback`;
 
   const getAuthHeaders = () => {
     const token = typeof window !== 'undefined' ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) : null;

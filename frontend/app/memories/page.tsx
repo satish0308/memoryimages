@@ -20,6 +20,7 @@ import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { HighlightReelModal } from '@/components/studio/HighlightReelModal';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface MemoryReel {
   id: string;
@@ -45,7 +46,7 @@ export default function MemoriesPage() {
     items: MediaItem[];
   } | null>(null);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {

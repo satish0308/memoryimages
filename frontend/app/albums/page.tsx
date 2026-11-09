@@ -38,6 +38,7 @@ import { GoogleDriveBackupModal } from '@/components/sync/GoogleDriveBackupModal
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
 import { useDragSelect } from '@/hooks/useDragSelect';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface AlbumItem {
   id: number;
@@ -241,7 +242,7 @@ export default function AlbumsPage() {
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const { token: authContextToken } = useAuth();
 
   const getActiveToken = useCallback(() => {

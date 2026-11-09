@@ -3,20 +3,25 @@ const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'http',
-        hostname: 'localhost',
-        port: '8000',
-        pathname: '/**',
+        hostname: '**',
       },
       {
-        protocol: 'http',
-        hostname: 'backend',
-        port: '8000',
-        pathname: '/**',
+        protocol: 'https',
+        hostname: '**',
       }
     ],
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.BACKEND_INTERNAL_URL || 'http://backend:8000'}/api/:path*`,
+      },
+    ];
   },
 };
 

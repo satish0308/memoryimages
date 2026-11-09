@@ -28,6 +28,7 @@ import {
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface GeoPhoto {
   id: number;
@@ -122,7 +123,7 @@ export default function MapPage() {
   const heatmapLayerGroupRef = useRef<any>(null);
   const fullContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const getActiveToken = useCallback(() => {
     return authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);

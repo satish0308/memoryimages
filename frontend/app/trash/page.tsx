@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/utils/apiUrl';
 import { useDragSelect } from '@/hooks/useDragSelect';
 import { LightboxModal } from '@/components/timeline/LightboxModal';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
@@ -69,7 +70,7 @@ type SortField = 'date' | 'size' | 'filename';
 
 export default function TrashGalleryPage() {
   const { token: authContextToken } = useAuth();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   // State
   const [data, setData] = useState<PurgeResponse | null>(null);

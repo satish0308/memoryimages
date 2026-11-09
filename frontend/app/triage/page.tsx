@@ -44,6 +44,7 @@ import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportMod
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { useAuth } from '@/context/AuthContext';
 import { useDragSelect } from '@/hooks/useDragSelect';
+import { getApiUrl } from '@/utils/apiUrl';
 
 interface TriageOverview {
   total_screenshots: number;
@@ -319,7 +320,7 @@ export default function TriagePage() {
   const [inspectingBillId, setInspectingBillId] = useState<number | null>(null);
   const [inspectingPhoto, setInspectingPhoto] = useState<MediaItem | null>(null);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
   const { token: authContextToken } = useAuth();
 
   const getActiveToken = useCallback(() => {

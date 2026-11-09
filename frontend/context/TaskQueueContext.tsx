@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export interface TaskItem {
   id: string;
@@ -50,7 +51,7 @@ export const TaskQueueProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const isWsConnectedRef = useRef(false);
   isWsConnectedRef.current = isWsConnected;
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = getApiUrl();
 
   const refreshTasks = useCallback(async () => {
     try {
