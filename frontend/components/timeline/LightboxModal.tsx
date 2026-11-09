@@ -81,6 +81,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
+  const [currentDisplaySrc, setCurrentDisplaySrc] = useState<string>('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
   const [showFaceBoxes, setShowFaceBoxes] = useState(false);
@@ -221,9 +222,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     }
   }, [photo?.id, photo?.matched_timestamp]);
 
-  // Fetch AI Aesthetics & Best Shot data
+  // Fetch AI Aesthetics & Best Shot data (lazy-loaded only when Info Sidebar is open)
   useEffect(() => {
-    if (!photo) {
+    if (!photo || !showSidebar) {
       setAestheticData(null);
       return;
     }
@@ -247,7 +248,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     };
     fetchAesthetics();
     return () => { isMounted = false; };
-  }, [photo?.id, apiUrl]);
+  }, [photo?.id, showSidebar, apiUrl]);
 
   // Video Studio Frame Grabber Handlers
   const handleCaptureFrame = () => {
@@ -366,7 +367,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setEnhanceParams(null);
     }
 
-    if (!photo.is_video) {
+    if (!photo.is_video && !photo.enhancement_data) {
       fetch(`${apiUrl}/api/v1/media/${photo.id}/enhance-params`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -409,7 +410,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     ? (enhanceParams?.css_filter || 'brightness(1.15) contrast(1.10) saturate(1.08)')
     : 'none';
 
-  // Reset zoom, pan, and high-res state whenever a new photo is opened
+  // Reset zoom, pan, and high-res state whenever a new photo is opened, and instantly display cached thumbnail
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -421,22 +422,73 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setLocLat(photo?.latitude != null ? photo.latitude.toString() : '');
     setLocLon(photo?.longitude != null ? photo.longitude.toString() : '');
 
-    if (photo?.id) {
-      // Progressively preload the uncompressed original image for pixel-perfect zoom
-      const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
-      const img = new window.Image();
-      img.src = `${apiUrl}/api/v1/media/${photo.id}/view${token ? `?token=${token}` : ''}`;
-      img.onload = () => setIsHighResLoaded(true);
-
-      // Fetch detected faces for this photo
-      fetchFaces(photo.id);
+    if (!photo?.id) {
+      setCurrentDisplaySrc('');
+      return;
     }
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+    const tokenParam = token ? `&token=${token}` : '';
+    const tokenQuery = token ? `?token=${token}` : '';
+
+    // Step 1: Instant 0ms display using low-res thumbnail already in browser memory cache!
+    const initialThumb = photo.thumbnail_url
+      ? (photo.thumbnail_url.startsWith('http')
+          ? photo.thumbnail_url
+          : `${apiUrl}${photo.thumbnail_url}${photo.thumbnail_url.includes('?') ? tokenParam : tokenQuery}`)
+      : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=256${tokenParam}`;
+    setCurrentDisplaySrc(initialThumb);
+
+    // Step 2: Background preload 1080p preview for full crisp quality
+    let isMounted = true;
+    if (!photo.is_video) {
+      const preview1080Url = `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
+      const img1080 = new window.Image();
+      img1080.src = preview1080Url;
+      img1080.onload = () => {
+        if (isMounted) {
+          setCurrentDisplaySrc(preview1080Url);
+        }
+      };
+    }
+
+    // Step 3: Fetch detected faces for this photo
+    fetchFaces(photo.id);
+
+    return () => {
+      isMounted = false;
+    };
   }, [photo?.id, apiUrl]);
 
-  // Load known people list once when modal opens (not on every photo transition)
+  // On-demand original raw download only when zooming deep (> 1.2x) to save network & memory
   useEffect(() => {
-    fetchKnownPeople();
-  }, [apiUrl]);
+    if (!photo?.id || photo.is_video || isHighResLoaded || zoom <= 1.2) return;
+
+    let isMounted = true;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+    const fullResUrl = `${apiUrl}/api/v1/media/${photo.id}/view${token ? `?token=${token}` : ''}`;
+    const fullImg = new window.Image();
+    fullImg.src = fullResUrl;
+    fullImg.onload = () => {
+      if (isMounted) {
+        setIsHighResLoaded(true);
+        setCurrentDisplaySrc(fullResUrl);
+      }
+    };
+
+    return () => {
+      isMounted = false;
+    };
+  }, [photo?.id, zoom, isHighResLoaded, apiUrl]);
+
+  // Load known people list on-demand only when face editing/tagging is activated
+  useEffect(() => {
+    if ((showSidebar && activeTab === 'faces') || isAddingFace || editingFaceId !== null) {
+      if (knownPeople.length === 0) {
+        fetchKnownPeople();
+      }
+    }
+  }, [showSidebar, activeTab, isAddingFace, editingFaceId, knownPeople.length, apiUrl]);
 
   const handleSaveLocation = async (customName?: string, customLat?: number, customLon?: number) => {
     if (!photo?.id) return;
@@ -683,9 +735,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const tokenQuery = token ? `?token=${token}` : '';
 
   const highResUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
-  const displayImageUrl = isHighResLoaded
+  const displayImageUrl = currentDisplaySrc || (isHighResLoaded
     ? highResUrl
-    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
+    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`);
   const videoUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
   const motionVideoUrl = `${apiUrl}/api/v1/media/${photo.id}/motion-video${tokenQuery}`;
 

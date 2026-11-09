@@ -30,6 +30,20 @@ from app.config import settings
 logger = logging.getLogger("memorypics.api.media")
 router = APIRouter()
 
+def invalidate_timeline_cache(user_id: Optional[int]):
+    if not user_id:
+        return
+    try:
+        from app.services.task_queue import get_redis_client
+        r = get_redis_client()
+        if r:
+            pattern = f"memorypics:cache:timeline:{user_id}:*"
+            keys = r.keys(pattern)
+            if keys:
+                r.delete(*keys)
+    except Exception as e:
+        logger.debug(f"Timeline cache invalidation error: {e}")
+
 def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None, is_burst_lead=False, burst_score=None, burst_type=None, has_faces=False, face_count=0):
     return {
         "id": item.id,
@@ -173,6 +187,18 @@ def get_timeline(
     if not current_user:
         return []
 
+    from app.services.task_queue import get_redis_client
+    r = get_redis_client()
+    cat_str = category.value if hasattr(category, "value") else (str(category) if category else "all")
+    cache_key = f"memorypics:cache:timeline:{current_user.id}:{scale}:{cat_str}:{has_people}:{collapse_bursts}:{person_id}"
+    if r:
+        try:
+            cached_data = r.get(cache_key)
+            if cached_data:
+                return Response(content=cached_data, media_type="application/json")
+        except Exception as e:
+            logger.debug(f"Timeline cache read error: {e}")
+
     from app.services.burst_engine import detect_burst_clusters
 
     query = db.query(Media).filter(
@@ -182,7 +208,7 @@ def get_timeline(
     ).options(defer(Media.extracted_text))
     if category:
         query = query.filter(Media.category == category)
-    if person_id:
+    if isinstance(person_id, int):
         person_media_ids = [
             r[0] for r in db.query(FaceDetection.media_id)
             .filter(FaceDetection.person_id == person_id)
@@ -192,18 +218,28 @@ def get_timeline(
         
     items = query.order_by(desc(Media.captured_at)).all()
 
-    # 1 fast indexed query to retrieve face detection counts for the returned media items
+    # Fast indexed query to retrieve face detection counts for the returned media items
     item_ids = [it.id for it in items]
     face_counts = {}
     if item_ids:
-        face_counts = dict(
-            db.query(
-                FaceDetection.media_id,
-                func.count(FaceDetection.id)
-            ).filter(
-                FaceDetection.media_id.in_(item_ids)
-            ).group_by(FaceDetection.media_id).all()
-        )
+        if not person_id and not category and len(item_ids) > 1000:
+            face_counts = dict(
+                db.query(
+                    FaceDetection.media_id,
+                    func.count(FaceDetection.id)
+                ).join(Media, FaceDetection.media_id == Media.id)
+                .filter(Media.user_id == current_user.id, Media.is_deleted == False)
+                .group_by(FaceDetection.media_id).all()
+            )
+        else:
+            face_counts = dict(
+                db.query(
+                    FaceDetection.media_id,
+                    func.count(FaceDetection.id)
+                ).filter(
+                    FaceDetection.media_id.in_(item_ids)
+                ).group_by(FaceDetection.media_id).all()
+            )
 
     if has_people is True:
         items = [it for it in items if it.id in face_counts]
@@ -263,12 +299,12 @@ def get_timeline(
         timeline_groups[group_key]["items"].append({
             "id": item.id,
             "filename": item.filename,
-            "category": item.category,
+            "category": item.category.value if hasattr(item.category, "value") else str(item.category),
             "has_faces": item.id in face_counts,
             "face_count": face_counts.get(item.id, 0),
             "width": item.width,
             "height": item.height,
-            "captured_at": item.captured_at,
+            "captured_at": item.captured_at.isoformat() if item.captured_at else None,
             "is_favorite": item.is_favorite,
             "is_blurry": item.is_blurry,
             "blurriness_score": item.blurriness_score,
@@ -307,7 +343,14 @@ def get_timeline(
             "is_best_shot": is_burst_lead or getattr(item, "is_best_shot", False)
         })
         
-    return list(timeline_groups.values())
+    result = list(timeline_groups.values())
+    json_str = json.dumps(result, default=str)
+    if r:
+        try:
+            r.set(cache_key, json_str, ex=600)
+        except Exception as e:
+            logger.debug(f"Timeline cache write error: {e}")
+    return Response(content=json_str, media_type="application/json")
 
 @router.get("/flashbacks")
 def get_flashbacks(
@@ -635,6 +678,7 @@ def revoke_single_media_share(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -1010,6 +1054,7 @@ def update_edit_recipe(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -1034,6 +1079,7 @@ def revert_photo_edits(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -1455,6 +1501,7 @@ def regenerate_all_thumbnails(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -1568,6 +1615,7 @@ def batch_enhance_media(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2028,6 +2076,7 @@ def toggle_favorite(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2050,6 +2099,7 @@ def toggle_archive(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2076,6 +2126,7 @@ def update_media_category(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2142,6 +2193,7 @@ def delete_media(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2173,6 +2225,7 @@ def batch_favorite(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2197,6 +2250,7 @@ def batch_category(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2258,6 +2312,7 @@ def batch_delete_media(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2433,6 +2488,7 @@ def batch_update_location(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 
@@ -2512,6 +2568,7 @@ def propagate_cluster_locations(
     try:
         from app.services.burst_engine import invalidate_burst_cache
         invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
 

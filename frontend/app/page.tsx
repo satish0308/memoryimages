@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { Search, X, FolderOpen, Sparkles, Play, SlidersHorizontal, Layers, Users, Mountain, Calendar } from 'lucide-react';
 
@@ -58,17 +58,17 @@ export default function PhotosPage() {
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [backupModalDefaultFolder, setBackupModalDefaultFolder] = useState<string>('MyMemoryPics / Backups');
 
-  const handleBackupSinglePhoto = (photo: MediaItem) => {
+  const handleBackupSinglePhoto = useCallback((photo: MediaItem) => {
     setBackupModalMediaIds([photo.id]);
     setBackupModalDefaultFolder('MyMemoryPics / Backups');
     setIsBackupModalOpen(true);
-  };
+  }, []);
 
-  const handleBackupBulkPhotos = (ids: number[]) => {
+  const handleBackupBulkPhotos = useCallback((ids: number[]) => {
     setBackupModalMediaIds(ids);
     setBackupModalDefaultFolder('MyMemoryPics / Backups');
     setIsBackupModalOpen(true);
-  };
+  }, []);
 
   const API_URL = getApiUrl();
 
@@ -160,24 +160,24 @@ export default function PhotosPage() {
   }, []);
 
   // Selection handlers
-  const toggleSelectPhoto = (id: number, e?: React.MouseEvent) => {
+  const toggleSelectPhoto = useCallback((id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const toggleSelectGroup = (groupIds: number[], selectAll: boolean) => {
+  const toggleSelectGroup = useCallback((groupIds: number[], selectAll: boolean) => {
     if (selectAll) {
       setSelectedIds((prev) => Array.from(new Set([...prev, ...groupIds])));
     } else {
       setSelectedIds((prev) => prev.filter((id) => !groupIds.includes(id)));
     }
-  };
+  }, []);
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedIds([]);
-  };
+  }, []);
 
   // Bulk Operations
   const handleBatchFavorite = async () => {
@@ -231,7 +231,7 @@ export default function PhotosPage() {
     }
   };
 
-  const toggleFavorite = async (id: number, e?: React.MouseEvent) => {
+  const toggleFavorite = useCallback(async (id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
       const res = await fetch(`${API_URL}/api/v1/media/${id}/favorite`, { method: 'PATCH' });
@@ -245,21 +245,17 @@ export default function PhotosPage() {
             ),
           }))
         );
-        if (selectedPhoto && selectedPhoto.id === id) {
-          setSelectedPhoto({ ...selectedPhoto, is_favorite: updated.is_favorite });
-        }
-        if (searchResults) {
-          setSearchResults((prev) =>
-            prev ? prev.map((p) => (p.id === id ? { ...p, is_favorite: updated.is_favorite } : p)) : null
-          );
-        }
+        setSelectedPhoto((prev) => (prev && prev.id === id ? { ...prev, is_favorite: updated.is_favorite } : prev));
+        setSearchResults((prev) =>
+          prev ? prev.map((p) => (p.id === id ? { ...p, is_favorite: updated.is_favorite } : p)) : null
+        );
       }
     } catch (err) {
       console.error('Failed to toggle favorite:', err);
     }
-  };
+  }, [API_URL]);
 
-  const deletePhoto = async (id: number, e?: React.MouseEvent) => {
+  const deletePhoto = useCallback(async (id: number, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!confirm('Are you sure you want to move this photo to trash? (Zero auto-deletion policy: stays safe until you confirm)')) return;
 
@@ -272,17 +268,13 @@ export default function PhotosPage() {
             items: group.items.filter((item) => item.id !== id),
           })).filter((group) => group.items.length > 0)
         );
-        if (selectedPhoto && selectedPhoto.id === id) {
-          setSelectedPhoto(null);
-        }
-        if (searchResults) {
-          setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
-        }
+        setSelectedPhoto((prev) => (prev && prev.id === id ? null : prev));
+        setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
       }
     } catch (err) {
       console.error('Failed to delete photo:', err);
     }
-  };
+  }, [API_URL]);
 
   // Dynamically collect available cameras from library photos
   const allPhotos = useMemo(() => {

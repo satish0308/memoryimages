@@ -125,28 +125,6 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   const tokenParam = token ? `${item.thumbnail_url.includes('?') ? '&' : '?'}token=${token}` : '';
   const thumbSrc = `${apiUrl}${item.thumbnail_url}${tokenParam}`;
 
-  const [displaySrc, setDisplaySrc] = useState<string>(thumbSrc);
-
-  useEffect(() => {
-    let isMounted = true;
-    setDisplaySrc(thumbSrc);
-
-    // Check IndexedDB client cache for instant 0ms render
-    getCachedThumbnailUrl(item.id, 256).then((cached) => {
-      if (isMounted && cached) {
-        setDisplaySrc(cached);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [item.id, thumbSrc]);
-
-  const handleImageLoaded = () => {
-    // Browser HTTP disk cache with max-age=31536000 handles instant loading with zero redundant network fetch
-  };
-
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!item.is_video || !videoRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -202,15 +180,15 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
         }`}
       >
         <img
-          src={displaySrc}
+          src={thumbSrc}
           alt={item.filename}
           style={{ filter: filterStyle }}
-          onLoad={handleImageLoaded}
+          loading="lazy"
+          decoding="async"
           draggable={false}
           className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 select-none pointer-events-none ${
             isSelected ? 'brightness-95' : ''
           }`}
-          loading="lazy"
         />
 
         {/* Video Scrubber Preview on Hover */}

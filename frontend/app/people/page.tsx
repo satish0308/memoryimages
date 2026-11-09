@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { 
   Users, 
@@ -786,6 +786,36 @@ export default function PeoplePage() {
     return people.filter((p) => p.name.toLowerCase().includes(q));
   }, [people, searchNameQuery]);
 
+  // Windowed progressive rendering to prevent DOM freeze with 3,500+ people
+  const [visiblePeopleCount, setVisiblePeopleCount] = useState(48);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setVisiblePeopleCount(48);
+  }, [searchNameQuery, filterType, selectedRelationship, showHidden]);
+
+  const displayedPeople = useMemo(() => {
+    return filteredPeople.slice(0, visiblePeopleCount);
+  }, [filteredPeople, visiblePeopleCount]);
+
+  useEffect(() => {
+    if (visiblePeopleCount >= filteredPeople.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisiblePeopleCount((prev) => Math.min(prev + 48, filteredPeople.length));
+        }
+      },
+      { rootMargin: '800px 0px 800px 0px' }
+    );
+    const el = loadMoreSentinelRef.current;
+    if (el) observer.observe(el);
+    return () => {
+      if (el) observer.unobserve(el);
+      observer.disconnect();
+    };
+  }, [visiblePeopleCount, filteredPeople.length]);
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-24">
       {/* ========================================================
@@ -1399,7 +1429,7 @@ export default function PeoplePage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                  {filteredPeople.map((person) => {
+                  {displayedPeople.map((person) => {
                     const avatarSrc = person.avatar_url
                       ? buildMediaUrl(person.avatar_url)
                       : person.cover_thumbnail_url
@@ -1420,6 +1450,7 @@ export default function PeoplePage() {
                               alt={person.name}
                               className="w-full h-full object-cover"
                               loading="lazy"
+                              decoding="async"
                             />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center text-slate-400">
@@ -1518,6 +1549,16 @@ export default function PeoplePage() {
                       </div>
                     );
                   })}
+
+                  {visiblePeopleCount < filteredPeople.length && (
+                    <div
+                      ref={loadMoreSentinelRef}
+                      className="col-span-full py-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
+                      <span>Loading more people ({visiblePeopleCount} of {filteredPeople.length})...</span>
+                    </div>
+                  )}
                 </div>
               )}
             </>
