@@ -1,9 +1,10 @@
 from fastapi import APIRouter
-from app.api import media, triage, people, sync, search, albums, auth, settings, backup, s3_storage, database, tasks, purge
+from app.api import media, triage, people, sync, search, albums, auth, settings, backup, s3_storage, database, tasks, purge, admin
 
 api_router = APIRouter()
 
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(admin.router, prefix="/admin", tags=["Admin & Multi-Tenancy"])
 api_router.include_router(settings.router, prefix="/settings", tags=["App Settings"])
 api_router.include_router(database.router, prefix="/system/database", tags=["Dual-Database & pgvector"])
 api_router.include_router(backup.router, prefix="/system/backups", tags=["System Backups & Disaster Recovery"])

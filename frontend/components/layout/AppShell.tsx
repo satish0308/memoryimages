@@ -27,7 +27,7 @@ import { UploadProgressDock } from '@/components/upload/UploadProgressDock';
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
 
   const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/') || pathname === '/kiosk';
   const isKioskRoute = pathname === '/kiosk';
@@ -258,6 +258,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Settings className={`w-4 h-4 ${pathname.startsWith('/settings') ? 'text-indigo-600' : 'text-slate-500'}`} />
               <span>App Settings</span>
             </Link>
+
+            {(user?.is_admin || user?.role === 'admin') && (
+              <Link
+                href="/admin"
+                className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                  pathname.startsWith('/admin')
+                    ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100 hover:text-indigo-600'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className={`w-4 h-4 ${pathname.startsWith('/admin') ? 'text-indigo-600' : 'text-slate-500'}`} />
+                  <span>Admin Portal</span>
+                </div>
+                <span className="bg-indigo-100 text-indigo-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  Ops
+                </span>
+              </Link>
+            )}
 
             <Link
               href="/kiosk"

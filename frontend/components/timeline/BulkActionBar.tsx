@@ -18,7 +18,8 @@ import {
   Layout,
   Film,
   Cloud,
-  Search
+  Search,
+  Clock
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
 import { HighlightReelModal } from '../studio/HighlightReelModal';
@@ -82,6 +83,45 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   } | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showHighlightReelModal, setShowHighlightReelModal] = useState(false);
+
+  // Batch Time Shifter State
+  const [showTimeShiftModal, setShowTimeShiftModal] = useState(false);
+  const [shiftHours, setShiftHours] = useState<number>(0);
+  const [shiftDays, setShiftDays] = useState<number>(0);
+  const [exactDatetime, setExactDatetime] = useState<string>('');
+  const [timeShiftMode, setTimeShiftMode] = useState<'relative' | 'exact'>('relative');
+
+  const handleBatchTimeShift = async () => {
+    try {
+      setLoadingAction('timeshift');
+      const payload: any = { media_ids: selectedIds };
+      if (timeShiftMode === 'relative') {
+        payload.shift_hours = shiftHours;
+        payload.shift_days = shiftDays;
+      } else if (exactDatetime) {
+        payload.target_datetime = new Date(exactDatetime).toISOString();
+      }
+
+      const res = await fetch(`${apiUrl}/api/v1/media/batch-time-shift`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setShowTimeShiftModal(false);
+        setShiftHours(0);
+        setShiftDays(0);
+        setExactDatetime('');
+        onClearSelection();
+        if (onAlbumAdded) onAlbumAdded();
+      }
+    } catch (e) {
+      console.error('Error shifting time:', e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
   useEffect(() => {
     // Only fetch albums once when selection begins rather than spamming on every photo click
@@ -705,6 +745,140 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <span>Auto-Link Outing Geotags</span>
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Time Shifter Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setShowTimeShiftModal(!showTimeShiftModal);
+              setShowLocationModal(false);
+              setShowCategoryMenu(false);
+              setShowAlbumMenu(false);
+            }}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
+            title="Adjust captured date or fix camera clock drift"
+          >
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Time Shift</span>
+            <ChevronUp className={`w-3 h-3 transition-transform ${showTimeShiftModal ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showTimeShiftModal && (
+            <div className="absolute bottom-full mb-2 left-0 w-80 bg-slate-800 border border-slate-700 rounded-xl p-3.5 shadow-2xl space-y-3 z-50">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase font-bold text-slate-400">
+                  Batch Time Shifter ({selectedIds.length} photos)
+                </p>
+                <button
+                  onClick={() => setShowTimeShiftModal(false)}
+                  className="text-slate-400 hover:text-white p-0.5"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Mode switch */}
+              <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setTimeShiftMode('relative')}
+                  className={`flex-1 py-1 rounded text-[11px] font-semibold transition ${
+                    timeShiftMode === 'relative' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Relative Shift (±)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimeShiftMode('exact')}
+                  className={`flex-1 py-1 rounded text-[11px] font-semibold transition ${
+                    timeShiftMode === 'exact' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Exact Date
+                </button>
+              </div>
+
+              {timeShiftMode === 'relative' ? (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-slate-400">Quick Clock Drift Presets:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShiftHours((h) => h + 1)}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-cyan-300 font-mono text-center"
+                    >
+                      +1 Hour
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShiftHours((h) => h - 1)}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-cyan-300 font-mono text-center"
+                    >
+                      -1 Hour
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShiftDays((d) => d + 1)}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-indigo-300 font-mono text-center"
+                    >
+                      +1 Day
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShiftDays((d) => d - 1)}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-indigo-300 font-mono text-center"
+                    >
+                      -1 Day
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Shift Hours</label>
+                      <input
+                        type="number"
+                        value={shiftHours}
+                        onChange={(e) => setShiftHours(parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Shift Days</label>
+                      <input
+                        type="number"
+                        value={shiftDays}
+                        onChange={(e) => setShiftDays(parseInt(e.target.value, 10) || 0)}
+                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] text-slate-400">Target Timestamp</label>
+                  <input
+                    type="datetime-local"
+                    value={exactDatetime}
+                    onChange={(e) => setExactDatetime(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded text-white"
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleBatchTimeShift}
+                disabled={loadingAction === 'timeshift' || (timeShiftMode === 'relative' && shiftHours === 0 && shiftDays === 0) || (timeShiftMode === 'exact' && !exactDatetime)}
+                className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold transition flex items-center justify-center gap-1.5"
+              >
+                {loadingAction === 'timeshift' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />}
+                <span>Apply Time Shift</span>
+              </button>
             </div>
           )}
         </div>

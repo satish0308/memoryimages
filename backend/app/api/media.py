@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status, Request
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session, defer
 from sqlalchemy import func, desc, extract, select
@@ -1250,14 +1250,77 @@ def get_thumbnail(
 
     raise HTTPException(status_code=404, detail="Thumbnail or image not found on storage")
 
+def send_range_file(file_path: str, range_header: Optional[str], media_type: str = "video/mp4") -> Response:
+    """Streams file content supporting RFC 7233 HTTP 206 Partial Content range requests for instant scrubbing."""
+    try:
+        file_size = os.path.getsize(file_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File inaccessible")
+
+    if not range_header or not range_header.startswith("bytes="):
+        return FileResponse(
+            file_path,
+            media_type=media_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+                "Content-Disposition": "inline",
+                "Cache-Control": "private, max-age=604800"
+            }
+        )
+
+    try:
+        range_str = range_header.replace("bytes=", "").strip()
+        parts = range_str.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if len(parts) > 1 and parts[1] else file_size - 1
+
+        if start >= file_size or end >= file_size or start > end:
+            return Response(
+                status_code=416,
+                headers={"Content-Range": f"bytes */{file_size}"}
+            )
+
+        chunk_size = (end - start) + 1
+
+        def file_chunk_generator():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = chunk_size
+                while remaining > 0:
+                    to_read = min(remaining, 262144)  # 256KB chunks
+                    data = f.read(to_read)
+                    if not data:
+                        break
+                    remaining -= len(data)
+                    yield data
+
+        return StreamingResponse(
+            file_chunk_generator(),
+            status_code=206,
+            media_type=media_type,
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(chunk_size),
+                "Content-Disposition": "inline",
+                "Cache-Control": "private, max-age=604800"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error serving range request for {file_path}: {e}")
+        return FileResponse(file_path, media_type=media_type)
+
 @router.get("/{media_id}/motion-video")
 def get_motion_video(
     media_id: int,
+    request: Request,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Streams the micro-video clip for Google Motion Photos, Samsung Motion Photos, or paired Apple Live Photos.
+    Supports HTTP 206 Partial Content range requests for smooth looping.
     """
     if not current_user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -1268,13 +1331,15 @@ def get_motion_video(
     if media.user_id and media.user_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    range_header = request.headers.get("range")
+
     # 1. Local file extraction or paired video (.mov, .mp4)
     if media.original_path and os.path.isfile(media.original_path):
         base, _ = os.path.splitext(media.original_path)
         for ext in [".mov", ".MOV", ".mp4", ".MP4"]:
             paired = base + ext
             if os.path.isfile(paired):
-                return FileResponse(paired, media_type="video/mp4", headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=86400"})
+                return send_range_file(paired, range_header=range_header, media_type="video/mp4")
 
         try:
             with open(media.original_path, "rb") as f:
@@ -1425,10 +1490,14 @@ def get_keyframe_thumbnail(
 @router.get("/{media_id}/view")
 def view_original(
     media_id: int,
+    request: Request,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Streams full uncompressed original photo directly for pixel-perfect zoom inspection."""
+    """
+    Streams full uncompressed original photo or video.
+    Supports HTTP 206 Partial Content range requests for instant seeking in 4K/60fps videos.
+    """
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -1462,13 +1531,11 @@ def view_original(
             raise HTTPException(status_code=502, detail=f"S3 stream error: {e}")
 
     if media.original_path and os.path.isfile(media.original_path):
-        return FileResponse(
+        range_header = request.headers.get("range")
+        return send_range_file(
             media.original_path,
-            media_type=media.mime_type or "image/jpeg",
-            headers={
-                "Content-Disposition": "inline",
-                "Cache-Control": "private, max-age=604800"
-            }
+            range_header=range_header,
+            media_type=media.mime_type or "image/jpeg"
         )
 
     raise HTTPException(status_code=404, detail="Original image not found")
@@ -2498,6 +2565,85 @@ def batch_update_location(
         "latitude": req.latitude,
         "longitude": req.longitude,
         "location_name": loc_name
+    }
+
+class BatchTimeShiftRequest(BaseModel):
+    media_ids: List[int]
+    hours: float = 0.0
+    shift_hours: Optional[float] = None
+    days: int = 0
+    shift_days: Optional[int] = None
+    exact_date: Optional[str] = None
+    target_datetime: Optional[str] = None
+
+@router.post("/batch-time-shift")
+def batch_time_shift(
+    req: BatchTimeShiftRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Adjusts capture timestamps for selected media items.
+    Supports delta shifting (e.g., +2.5 hours to fix camera clock mismatch)
+    or setting an exact base date.
+    """
+    if not req.media_ids:
+        raise HTTPException(status_code=400, detail="No media_ids provided")
+
+    items = db.query(Media).filter(
+        Media.id.in_(req.media_ids),
+        Media.user_id == current_user.id
+    ).all()
+
+    if not items:
+        return {"status": "skipped", "updated_count": 0}
+
+    effective_hours = req.shift_hours if req.shift_hours is not None else req.hours
+    effective_days = req.shift_days if req.shift_days is not None else req.days
+    exact_str = req.target_datetime or req.exact_date
+
+    delta = timedelta(days=effective_days, hours=effective_hours)
+    target_exact = None
+    if exact_str:
+        try:
+            target_exact = datetime.fromisoformat(exact_str.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            try:
+                target_exact = datetime.strptime(exact_str[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+
+    updated_count = 0
+    for item in items:
+        if target_exact is not None:
+            item.captured_at = target_exact
+        elif item.captured_at:
+            item.captured_at = item.captured_at + delta
+        else:
+            item.captured_at = datetime.utcnow() + delta
+        updated_count += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "updated_count": updated_count,
+        "delta_hours": effective_hours,
+        "delta_days": effective_days
+    }
+
+    try:
+        from app.services.burst_engine import invalidate_burst_cache
+        invalidate_burst_cache(current_user.id)
+        invalidate_timeline_cache(current_user.id)
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "updated_count": updated_count,
+        "delta_hours": req.hours,
+        "delta_days": req.days
     }
 
 class PropagateLocationsRequest(BaseModel):

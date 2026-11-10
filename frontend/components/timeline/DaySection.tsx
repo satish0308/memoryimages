@@ -111,6 +111,17 @@ const DaySectionComponent: React.FC<DaySectionProps> = ({
   const rowHeight = density === 'compact' ? 120 : density === 'large' ? 260 : 180;
   const estimatedHeight = Math.max(160, rowsCount * rowHeight);
 
+  // Row virtualization / chunking to maintain 60fps scrolling even on huge month/year groups
+  const CHUNK_SIZE = 36;
+  const chunks = useMemo(() => {
+    if (group.items.length <= CHUNK_SIZE) return [group.items];
+    const res: MediaItem[][] = [];
+    for (let i = 0; i < group.items.length; i += CHUNK_SIZE) {
+      res.push(group.items.slice(i, i + CHUNK_SIZE));
+    }
+    return res;
+  }, [group.items]);
+
   return (
     <section
       ref={sectionRef}
@@ -157,24 +168,39 @@ const DaySectionComponent: React.FC<DaySectionProps> = ({
         </button>
       </div>
 
-      {/* Grid of Photos: Only rendered when near the viewport */}
+      {/* Grid of Photos: Rendered row chunks with contentVisibility containment */}
       {isVisible ? (
-        <div className={`grid ${getGridCols()}`}>
-          {group.items.map((item) => (
-            <PhotoCard
-              key={item.id}
-              item={item}
-              apiUrl={apiUrl}
-              isSelected={selectedSet.has(item.id)}
-              onSelect={onSelect}
-              onToggleSelect={onToggleSelect}
-              onPointerDown={onPointerDown}
-              onToggleFavorite={onToggleFavorite}
-              onDelete={onDelete}
-              onOpenBurst={onOpenBurst}
-              onBackupToDrive={onBackupToDrive}
-            />
-          ))}
+        <div className="space-y-3">
+          {chunks.map((chunk, chunkIdx) => {
+            const chunkRows = Math.ceil(chunk.length / colsCount);
+            const chunkHeight = chunkRows * rowHeight;
+            return (
+              <div
+                key={chunkIdx}
+                className={`grid ${getGridCols()}`}
+                style={{
+                  contentVisibility: 'auto',
+                  containIntrinsicSize: `0 ${chunkHeight}px`,
+                }}
+              >
+                {chunk.map((item) => (
+                  <PhotoCard
+                    key={item.id}
+                    item={item}
+                    apiUrl={apiUrl}
+                    isSelected={selectedSet.has(item.id)}
+                    onSelect={onSelect}
+                    onToggleSelect={onToggleSelect}
+                    onPointerDown={onPointerDown}
+                    onToggleFavorite={onToggleFavorite}
+                    onDelete={onDelete}
+                    onOpenBurst={onOpenBurst}
+                    onBackupToDrive={onBackupToDrive}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div

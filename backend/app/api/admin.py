@@ -1,0 +1,321 @@
+import os
+import shutil
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
+import secrets
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+from sqlalchemy import func, desc, and_
+
+from app.database import get_db
+from app.models.user import User, InviteToken
+from app.models.media import Media
+from app.models.album import Album
+from app.models.person import Person, FaceDetection
+from app.api.auth import get_current_user
+
+router = APIRouter()
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Enforces that the authenticated user has administrative privileges."""
+    if not current_user.is_admin and current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
+    return current_user
+
+class UpdateUserRequest(BaseModel):
+    role: Optional[str] = None
+    storage_quota_bytes: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class CreateInviteRequest(BaseModel):
+    role: Optional[str] = "member"
+    quota_bytes: Optional[int] = 0  # 0 = unlimited
+    expires_in_days: Optional[int] = 7
+
+@router.get("/users")
+def list_users(
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Lists all registered users along with their live storage consumption and quotas."""
+    users = db.query(User).order_by(User.id.asc()).all()
+    results = []
+
+    for u in users:
+        # Fast SQL aggregation for photo count and total bytes used
+        stats = db.query(
+            func.count(Media.id).label("photo_count"),
+            func.coalesce(func.sum(Media.file_size), 0).label("total_bytes")
+        ).filter(
+            Media.user_id == u.id,
+            Media.is_deleted == False
+        ).first()
+
+        photo_count = stats.photo_count if stats else 0
+        total_bytes = int(stats.total_bytes) if stats else 0
+
+        quota = u.storage_quota_bytes or 0
+        usage_pct = round((total_bytes / quota) * 100, 1) if quota > 0 else 0.0
+
+        results.append({
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "full_name": u.full_name,
+            "is_active": u.is_active,
+            "is_admin": u.is_admin,
+            "role": u.role or ("admin" if u.is_admin else "member"),
+            "storage_quota_bytes": quota,
+            "used_storage_bytes": total_bytes,
+            "used_storage_mb": round(total_bytes / (1024 * 1024), 2),
+            "usage_percent": usage_pct,
+            "photo_count": photo_count,
+            "created_at": u.created_at.isoformat() if u.created_at else None
+        })
+
+    return results
+
+@router.patch("/users/{user_id}")
+def update_user_properties(
+    user_id: int,
+    req: UpdateUserRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Updates user role, storage quota, or account active state."""
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prevent admin from deactivating or demoting themselves
+    if target_user.id == admin_user.id:
+        if req.is_active is False:
+            raise HTTPException(status_code=400, detail="Cannot deactivate your own admin account")
+        if req.role and req.role != "admin":
+            raise HTTPException(status_code=400, detail="Cannot demote your own admin account")
+
+    if req.role is not None:
+        if req.role not in ["admin", "member", "viewer"]:
+            raise HTTPException(status_code=400, detail="Invalid role. Must be 'admin', 'member', or 'viewer'")
+        target_user.role = req.role
+        target_user.is_admin = (req.role == "admin")
+
+    if req.storage_quota_bytes is not None:
+        if req.storage_quota_bytes < 0:
+            raise HTTPException(status_code=400, detail="Quota cannot be negative")
+        target_user.storage_quota_bytes = req.storage_quota_bytes
+
+    if req.is_active is not None:
+        target_user.is_active = req.is_active
+
+    db.commit()
+    db.refresh(target_user)
+
+    return {
+        "status": "success",
+        "id": target_user.id,
+        "username": target_user.username,
+        "role": target_user.role,
+        "storage_quota_bytes": target_user.storage_quota_bytes,
+        "is_active": target_user.is_active
+    }
+
+@router.post("/invites")
+def create_invite_token(
+    req: CreateInviteRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Generates a secure invite token for onboarding family members or friends."""
+    code = f"invite_{secrets.token_urlsafe(16)}"
+    expires_at = datetime.utcnow() + timedelta(days=req.expires_in_days) if req.expires_in_days else None
+
+    token = InviteToken(
+        code=code,
+        role=req.role or "member",
+        quota_bytes=req.quota_bytes or 0,
+        created_by_user_id=admin_user.id,
+        expires_at=expires_at
+    )
+    db.add(token)
+    db.commit()
+    db.refresh(token)
+
+    return {
+        "id": token.id,
+        "code": token.code,
+        "invite_url": f"/register?invite={token.code}",
+        "role": token.role,
+        "quota_bytes": token.quota_bytes,
+        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+        "created_at": token.created_at.isoformat() if token.created_at else None
+    }
+
+@router.get("/invites")
+def list_invite_tokens(
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Lists all active and historical invite links."""
+    tokens = db.query(InviteToken).order_by(desc(InviteToken.created_at)).all()
+    return [{
+        "id": t.id,
+        "code": t.code,
+        "invite_url": f"/register?invite={t.code}",
+        "role": t.role,
+        "quota_bytes": t.quota_bytes,
+        "is_used": t.is_used,
+        "used_by_user_id": t.used_by_user_id,
+        "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+        "is_expired": bool(t.expires_at and t.expires_at < datetime.utcnow()),
+        "created_at": t.created_at.isoformat() if t.created_at else None
+    } for t in tokens]
+
+@router.delete("/invites/{token_id}")
+def revoke_invite_token(
+    token_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Revokes an unused invite token."""
+    token = db.query(InviteToken).filter(InviteToken.id == token_id).first()
+    if not token:
+        raise HTTPException(status_code=404, detail="Invite token not found")
+    db.delete(token)
+    db.commit()
+    return {"status": "success", "revoked_id": token_id}
+
+@router.get("/metrics")
+def get_system_metrics(
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Returns real-time system, host, database, and background queue metrics."""
+    # 1. Database table counts
+    media_count = db.query(func.count(Media.id)).scalar() or 0
+    active_media_count = db.query(func.count(Media.id)).filter(Media.is_deleted == False).scalar() or 0
+    trash_media_count = db.query(func.count(Media.id)).filter(Media.is_deleted == True).scalar() or 0
+    users_count = db.query(func.count(User.id)).scalar() or 0
+    albums_count = db.query(func.count(Album.id)).scalar() or 0
+    people_count = db.query(func.count(Person.id)).scalar() or 0
+    faces_count = db.query(func.count(FaceDetection.id)).scalar() or 0
+
+    total_storage_bytes = db.query(func.coalesce(func.sum(Media.file_size), 0)).filter(Media.is_deleted == False).scalar() or 0
+
+    # 2. Host disk & memory metrics (pure standard library)
+    disk = shutil.disk_usage("/")
+    disk_total_gb = round(disk.total / (1024 ** 3), 2)
+    disk_free_gb = round(disk.free / (1024 ** 3), 2)
+    disk_used_percent = round((disk.used / disk.total) * 100, 1) if disk.total > 0 else 0.0
+
+    mem_total_gb = 0.0
+    mem_used_gb = 0.0
+    mem_percent = 0.0
+    try:
+        if os.path.exists("/proc/meminfo"):
+            with open("/proc/meminfo", "r") as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        meminfo[parts[0].strip()] = parts[1].strip()
+                total_kb = float(meminfo.get("MemTotal", "0 kB").split()[0])
+                avail_kb = float(meminfo.get("MemAvailable", meminfo.get("MemFree", "0 kB")).split()[0])
+                used_kb = max(0.0, total_kb - avail_kb)
+                mem_total_gb = round(total_kb / (1024 * 1024), 2)
+                mem_used_gb = round(used_kb / (1024 * 1024), 2)
+                mem_percent = round((used_kb / total_kb) * 100, 1) if total_kb > 0 else 0.0
+    except Exception:
+        pass
+
+    cpu_cores = os.cpu_count() or 1
+    cpu_percent = 0.0
+    try:
+        load1, _, _ = os.getloadavg()
+        cpu_percent = round(min(100.0, (load1 / cpu_cores) * 100), 1)
+    except Exception:
+        pass
+
+    # 3. Redis Task Queue Status
+    pending_tasks = 0
+    try:
+        from app.services.task_queue import get_task_queue
+        q = get_task_queue()
+        if hasattr(q, "redis_client") and q.redis_client:
+            pending_tasks = q.redis_client.llen("task_queue") or 0
+    except Exception:
+        pass
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": {
+            "total_media": media_count,
+            "active_media": active_media_count,
+            "trash_media": trash_media_count,
+            "total_users": users_count,
+            "total_albums": albums_count,
+            "total_people": people_count,
+            "total_faces": faces_count,
+            "total_storage_bytes": int(total_storage_bytes),
+            "total_storage_gb": round(total_storage_bytes / (1024 ** 3), 2)
+        },
+        "host": {
+            "cpu_cores": cpu_cores,
+            "cpu_usage_percent": cpu_percent,
+            "memory_total_gb": mem_total_gb,
+            "memory_used_gb": mem_used_gb,
+            "memory_usage_percent": mem_percent,
+            "disk_total_gb": disk_total_gb,
+            "disk_free_gb": disk_free_gb,
+            "disk_used_percent": disk_used_percent
+        },
+        "worker": {
+            "pending_queue_tasks": pending_tasks
+        }
+    }
+
+@router.post("/trash/purge-expired")
+def purge_expired_trash(
+    days: int = Query(30, ge=1, le=365, description="Retention window in days"),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Enforces the 30-Day Trash Retention Lifecycle.
+    Safely purges items that have been in Trash for more than the specified retention window.
+    Original master files are safely unlinked or moved according to Zero Auto-Deletion rules.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    expired = db.query(Media).filter(
+        Media.is_deleted == True,
+        Media.marked_for_deletion_at != None,
+        Media.marked_for_deletion_at <= cutoff
+    ).all()
+
+    purged_count = 0
+    reclaimed_bytes = 0
+
+    for m in expired:
+        reclaimed_bytes += m.file_size or 0
+        # Delete local thumbnails cache
+        for t_path in [m.thumbnail_256_path, m.thumbnail_1080_path]:
+            if t_path and os.path.isfile(t_path):
+                try:
+                    os.remove(t_path)
+                except Exception:
+                    pass
+        db.delete(m)
+        purged_count += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "purged_count": purged_count,
+        "reclaimed_bytes": reclaimed_bytes,
+        "reclaimed_mb": round(reclaimed_bytes / (1024 * 1024), 2),
+        "retention_days": days
+    }

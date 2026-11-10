@@ -11,6 +11,8 @@ export interface User {
   full_name: string | null;
   is_admin: boolean;
   is_active: boolean;
+  role?: string;
+  storage_quota_bytes?: number;
 }
 
 export interface UserSummary {
@@ -28,7 +30,7 @@ interface AuthContextType {
   isLoading: boolean;
   allUsers: UserSummary[];
   login: (usernameOrEmail: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register: (username: string, email: string, password: string, fullName?: string) => Promise<{ success: boolean; error?: string }>;
+  register: (username: string, email: string, password: string, fullName?: string, inviteCode?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
   fetchAllUsers: () => Promise<void>;
@@ -155,7 +157,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const register = async (username: string, email: string, password: string, fullName?: string) => {
+  const register = async (username: string, email: string, password: string, fullName?: string, inviteCode?: string) => {
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/register`, {
         method: 'POST',
@@ -165,6 +167,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           email: email.trim(),
           password,
           full_name: fullName?.trim() || null,
+          invite_code: inviteCode?.trim() || null,
         }),
       });
 

@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 from pydantic import BaseModel, EmailStr
 from fastapi import APIRouter, Depends, HTTPException, status, Header, Query, Cookie
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database import get_db
-from app.models.user import User
+from app.models.user import User, InviteToken
 from app.services.auth_service import (
     get_password_hash,
     verify_password,
@@ -24,6 +25,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     full_name: Optional[str] = None
+    invite_code: Optional[str] = None
 
 class LoginRequest(BaseModel):
     username_or_email: str
@@ -42,6 +44,8 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     is_admin: bool
     is_active: bool
+    role: Optional[str] = "member"
+    storage_quota_bytes: Optional[int] = 0
 
 class AuthResponse(BaseModel):
     access_token: str
@@ -154,6 +158,21 @@ def register_user(req: RegisterRequest, db: Session = Depends(get_db)):
 
     # If first registered user, grant admin status
     is_first_user = db.query(User).count() == 0
+    assigned_role = "admin" if is_first_user else "member"
+    assigned_quota = 0
+    valid_invite = None
+
+    if req.invite_code:
+        valid_invite = db.query(InviteToken).filter(
+            InviteToken.code == req.invite_code.strip(),
+            InviteToken.is_used == False
+        ).first()
+        if not valid_invite:
+            raise HTTPException(status_code=400, detail="Invalid or already used invite token")
+        if valid_invite.expires_at and valid_invite.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="Invite token has expired")
+        assigned_role = valid_invite.role or "member"
+        assigned_quota = valid_invite.quota_bytes or 0
 
     user = User(
         username=username,
@@ -161,9 +180,17 @@ def register_user(req: RegisterRequest, db: Session = Depends(get_db)):
         hashed_password=get_password_hash(req.password),
         full_name=req.full_name.strip() if req.full_name else username,
         is_active=True,
-        is_admin=is_first_user
+        is_admin=(assigned_role == "admin" or is_first_user),
+        role=assigned_role,
+        storage_quota_bytes=assigned_quota
     )
     db.add(user)
+    db.flush()
+
+    if valid_invite:
+        valid_invite.is_used = True
+        valid_invite.used_by_user_id = user.id
+
     db.commit()
     db.refresh(user)
 
@@ -177,7 +204,9 @@ def register_user(req: RegisterRequest, db: Session = Depends(get_db)):
             "email": user.email,
             "full_name": user.full_name,
             "is_admin": user.is_admin,
-            "is_active": user.is_active
+            "is_active": user.is_active,
+            "role": user.role,
+            "storage_quota_bytes": user.storage_quota_bytes or 0
         }
     }
 
@@ -212,7 +241,9 @@ def login_user(req: LoginRequest, db: Session = Depends(get_db)):
             "email": user.email,
             "full_name": user.full_name,
             "is_admin": user.is_admin,
-            "is_active": user.is_active
+            "is_active": user.is_active,
+            "role": user.role or ("admin" if user.is_admin else "member"),
+            "storage_quota_bytes": user.storage_quota_bytes or 0
         }
     }
 
@@ -225,7 +256,9 @@ def get_current_user_profile(user: User = Depends(get_current_user)):
         "email": user.email,
         "full_name": user.full_name,
         "is_admin": user.is_admin,
-        "is_active": user.is_active
+        "is_active": user.is_active,
+        "role": user.role or ("admin" if user.is_admin else "member"),
+        "storage_quota_bytes": user.storage_quota_bytes or 0
     }
 
 @router.patch("/me", response_model=UserResponse)
@@ -261,7 +294,9 @@ def update_profile(
         "email": user.email,
         "full_name": user.full_name,
         "is_admin": user.is_admin,
-        "is_active": user.is_active
+        "is_active": user.is_active,
+        "role": user.role or ("admin" if user.is_admin else "member"),
+        "storage_quota_bytes": user.storage_quota_bytes or 0
     }
 
 @router.get("/users")

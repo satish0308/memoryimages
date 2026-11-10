@@ -26,16 +26,28 @@ interface AuthViewProps {
 function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login, isAuthenticated } = useAuth();
+  const { login, register, isAuthenticated } = useAuth();
 
   const [connectingGoogle, setConnectingGoogle] = useState(false);
   const [googleSuccess, setGoogleSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Auth Mode: 'login' or 'register'
+  const inviteParam = searchParams.get('invite');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>(initialTab === 'register' || !!inviteParam ? 'register' : 'login');
+
   // Sign In Mode: 'password' (default for instant access) or 'google'
   const [authMethod, setAuthMethod] = useState<'password' | 'google'>('password');
   const [usernameInput, setUsernameInput] = useState('admin');
   const [passwordInput, setPasswordInput] = useState('password123');
+
+  // Register Fields
+  const [regUsername, setRegUsername] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regFullName, setRegFullName] = useState('');
+  const [regInviteCode, setRegInviteCode] = useState(inviteParam || '');
+
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const API_URL = getApiUrl();
@@ -118,6 +130,30 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
       router.push('/');
     } else {
       setError(result.error || 'Sign-in failed. Please verify your credentials.');
+    }
+  };
+
+  // Register Account & Redeem Family Invite
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regUsername.trim() || !regEmail.trim() || !regPassword) {
+      setError('Please provide a username, email, and password.');
+      return;
+    }
+    setError(null);
+    setIsSubmitting(true);
+    const result = await register(
+      regUsername.trim(),
+      regEmail.trim(),
+      regPassword,
+      regFullName.trim() || undefined,
+      regInviteCode.trim() || undefined
+    );
+    setIsSubmitting(false);
+    if (result.success) {
+      router.push('/');
+    } else {
+      setError(result.error || 'Registration failed. Please check your details.');
     }
   };
 
@@ -206,45 +242,77 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
                 <Sparkles className="w-7 h-7 text-amber-300" />
               </div>
               <h2 className="text-2xl font-bold text-white tracking-tight">
-                Sign In to MyMemoryPics
+                {authMode === 'login' ? 'Sign In to MyMemoryPics' : 'Create Your Account'}
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Choose your preferred sign-in method
+                {authMode === 'login'
+                  ? 'Access your synchronized private photo intelligence'
+                  : 'Join your family photo cloud with instant AI organization'}
               </p>
             </div>
 
-            {/* Method Switcher Tabs */}
+            {/* Mode Switcher: Login vs Register */}
             <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 mb-5">
               <button
                 type="button"
-                onClick={() => { setAuthMethod('password'); setError(null); }}
+                onClick={() => { setAuthMode('login'); setError(null); }}
                 className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
-                  authMethod === 'password'
+                  authMode === 'login'
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <KeyRound className="w-3.5 h-3.5" />
-                <span>Password Login</span>
+                <span>Sign In</span>
               </button>
               <button
                 type="button"
-                onClick={() => { setAuthMethod('google'); setError(null); }}
+                onClick={() => { setAuthMode('register'); setError(null); }}
                 className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
-                  authMethod === 'google'
+                  authMode === 'register'
                     ? 'bg-indigo-600 text-white shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
-                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.25 21.36 7.33 24 12 24z"/>
-                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.98 0 12s.46 3.84 1.26 5.42l4.02-3.15z"/>
-                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
-                </svg>
-                <span>Google SSO</span>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Register / Invite</span>
               </button>
             </div>
+
+            {/* If Login Mode, show Sub-Method Tabs */}
+            {authMode === 'login' && (
+              <div className="flex bg-slate-950/60 p-1 rounded-xl border border-slate-800/80 mb-5">
+                <button
+                  type="button"
+                  onClick={() => { setAuthMethod('password'); setError(null); }}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                    authMethod === 'password'
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>Password</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAuthMethod('google'); setError(null); }}
+                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                    authMethod === 'google'
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.25 21.36 7.33 24 12 24z"/>
+                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.98 0 12s.46 3.84 1.26 5.42l4.02-3.15z"/>
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                  </svg>
+                  <span>Google SSO</span>
+                </button>
+              </div>
+            )}
 
             {/* Error Notification Banner */}
             {error && (
@@ -263,7 +331,7 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
             )}
 
             {/* TAB 1: Password Sign In Form */}
-            {authMethod === 'password' && (
+            {authMode === 'login' && authMethod === 'password' && (
               <form onSubmit={handlePasswordSubmit} className="space-y-4">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
@@ -316,7 +384,7 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
             )}
 
             {/* TAB 2: Google SSO */}
-            {authMethod === 'google' && (
+            {authMode === 'login' && authMethod === 'google' && (
               <div className="space-y-4">
                 <button
                   type="button"
@@ -351,26 +419,105 @@ function AuthViewContent({ initialTab = 'login' }: AuthViewProps) {
                   <p className="text-[11px] text-amber-300/80 leading-relaxed">
                     The Google OAuth Client ID in <code className="bg-black/40 px-1 py-0.5 rounded text-amber-200">.env</code> was deleted in Google Cloud Console. To log in immediately, switch to the <strong>Password Login</strong> tab above.
                   </p>
-                  <div className="pt-1 border-t border-amber-800/30 flex items-center justify-between text-[11px]">
-                    <a
-                      href="https://accounts.google.com/AccountChooser"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-amber-300 hover:text-white underline"
-                    >
-                      Switch default Google account ↗
-                    </a>
-                    <a
-                      href="https://console.cloud.google.com/apis/credentials"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-amber-300 hover:text-white underline"
-                    >
-                      Google Cloud Console ↗
-                    </a>
-                  </div>
                 </div>
               </div>
+            )}
+
+            {/* TAB 3: Register Account & Redeem Family Invite */}
+            {authMode === 'register' && (
+              <form onSubmit={handleRegisterSubmit} className="space-y-3.5">
+                {regInviteCode && (
+                  <div className="p-3 bg-indigo-950/60 border border-indigo-700/60 rounded-2xl text-xs text-indigo-300 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-300 flex-shrink-0" />
+                    <span>Family Invite Token Applied: <code className="font-mono text-white font-bold">{regInviteCode}</code></span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Username
+                  </label>
+                  <input
+                    type="text"
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="Choose a username"
+                    className="w-full px-4 py-2 bg-slate-950 border border-slate-700/80 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full px-4 py-2 bg-slate-950 border border-slate-700/80 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Full Name (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={regFullName}
+                    onChange={(e) => setRegFullName(e.target.value)}
+                    placeholder="e.g. Satish Hiremath"
+                    className="w-full px-4 py-2 bg-slate-950 border border-slate-700/80 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="w-full px-4 py-2 bg-slate-950 border border-slate-700/80 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                {!regInviteCode && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Family Invite Token (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={regInviteCode}
+                      onChange={(e) => setRegInviteCode(e.target.value)}
+                      placeholder="invite_..."
+                      className="w-full px-4 py-2 bg-slate-950 border border-slate-700/80 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-2xl font-bold text-xs shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Creating Account...</span>
+                    </>
+                  ) : (
+                    <span>Create Account & Join</span>
+                  )}
+                </button>
+              </form>
             )}
 
           </div>

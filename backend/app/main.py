@@ -132,6 +132,16 @@ def check_and_upgrade_schema(db_engine):
                 if "landmarks_str" not in columns:
                     conn.execute(text("ALTER TABLE face_detections ADD COLUMN landmarks_str VARCHAR(255)"))
                 conn.commit()
+
+        if "users" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("users")]
+            with db_engine.connect() as conn:
+                if "storage_quota_bytes" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN storage_quota_bytes BIGINT DEFAULT 0"))
+                if "role" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR(32) DEFAULT 'member'"))
+                    conn.execute(text("UPDATE users SET role = 'admin' WHERE is_admin = TRUE"))
+                conn.commit()
     except Exception as e:
         print(f"Schema upgrade notice: {e}")
 
