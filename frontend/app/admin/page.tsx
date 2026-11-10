@@ -20,7 +20,11 @@ import {
   Layers,
   CheckCircle2,
   Lock,
-  ChevronRight
+  ChevronRight,
+  Flame,
+  ExternalLink,
+  Terminal,
+  BarChart2
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/utils/apiUrl';
@@ -87,7 +91,7 @@ export default function AdminPortalPage() {
   const { user } = useAuth();
   const API_URL = getApiUrl();
 
-  const [activeTab, setActiveTab] = useState<'metrics' | 'users' | 'invites' | 'trash'>('metrics');
+  const [activeTab, setActiveTab] = useState<'metrics' | 'prometheus' | 'users' | 'invites' | 'trash'>('metrics');
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [invites, setInvites] = useState<InviteTokenItem[]>([]);
@@ -95,6 +99,13 @@ export default function AdminPortalPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [copiedInviteId, setCopiedInviteId] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Prometheus state
+  const [rawPrometheusText, setRawPrometheusText] = useState<string>('');
+  const [loadingPrometheus, setLoadingPrometheus] = useState<boolean>(false);
+  const [autoRefreshPrometheus, setAutoRefreshPrometheus] = useState<boolean>(false);
+  const [copiedPromUrl, setCopiedPromUrl] = useState<boolean>(false);
+  const [promSearchFilter, setPromSearchFilter] = useState<string>('');
 
   // Invite creation form state
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
@@ -128,6 +139,35 @@ export default function AdminPortalPage() {
   useEffect(() => {
     fetchAllAdminData();
   }, [API_URL]);
+
+  const fetchPrometheusMetrics = async () => {
+    try {
+      setLoadingPrometheus(true);
+      const res = await fetch(`${API_URL}/metrics`);
+      if (res.ok) {
+        const text = await res.text();
+        setRawPrometheusText(text);
+      }
+    } catch (e) {
+      console.error('Failed to fetch Prometheus metrics:', e);
+    } finally {
+      setLoadingPrometheus(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'prometheus') {
+      fetchPrometheusMetrics();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!autoRefreshPrometheus || activeTab !== 'prometheus') return;
+    const interval = setInterval(() => {
+      fetchPrometheusMetrics();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [autoRefreshPrometheus, activeTab]);
 
   const handleUpdateUser = async (userId: number, updates: { role?: string; storage_quota_bytes?: number; is_active?: boolean }) => {
     setActionLoading(`user-${userId}`);
@@ -301,6 +341,18 @@ export default function AdminPortalPage() {
         </button>
 
         <button
+          onClick={() => setActiveTab('prometheus')}
+          className={`pb-3 flex items-center gap-2 transition ${
+            activeTab === 'prometheus'
+              ? 'border-b-2 border-orange-500 text-orange-600'
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Flame className="w-4 h-4 text-orange-500" />
+          <span>Prometheus UI & Telemetry</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('users')}
           className={`pb-3 flex items-center gap-2 transition ${
             activeTab === 'users'
@@ -336,6 +388,65 @@ export default function AdminPortalPage() {
           <span>30-Day Trash Lifecycle</span>
         </button>
       </div>
+
+      {/* Prometheus Operational Hero Navigation Banner (Always accessible on Metrics & Prometheus tabs) */}
+      {(activeTab === 'metrics' || activeTab === 'prometheus') && (
+        <div className="bg-gradient-to-r from-orange-950/80 via-slate-900 to-amber-950/80 border border-orange-500/30 rounded-3xl p-5 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-orange-600/20 border border-orange-500/40 flex items-center justify-center text-orange-400 shadow-md">
+              <Flame className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white">Prometheus Server & Telemetry</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Target: Healthy (Port 9090)
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Real-time metrics exposition on port 9090. Scraped every 15s by Prometheus container.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <a
+              href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090` : 'http://localhost:9090'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-orange-600/30 transition transform hover:-translate-y-0.5 active:translate-y-0"
+              title="Click to navigate to Prometheus Web UI"
+            >
+              <Flame className="w-4 h-4 fill-white" />
+              <span>Open Prometheus Web UI</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+
+            <a
+              href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090/targets` : 'http://localhost:9090/targets'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition"
+              title="Click to view scrape targets health"
+            >
+              <span>Targets</span>
+              <ExternalLink className="w-3 h-3 text-slate-400" />
+            </a>
+
+            <button
+              onClick={() => setActiveTab('prometheus')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition border ${
+                activeTab === 'prometheus'
+                  ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5 text-orange-400" />
+              <span>Inspect /metrics</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: Real-time Host & Database Telemetry */}
       {activeTab === 'metrics' && metrics && (
@@ -464,6 +575,128 @@ export default function AdminPortalPage() {
                   <span>Zero Auto-Deletion Protection Active</span>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: Prometheus Server, Targets & Scrape Inspector */}
+      {activeTab === 'prometheus' && (
+        <div className="space-y-6">
+          {/* Quick PromQL Expression Launchers */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <BarChart2 className="w-4 h-4 text-orange-500" />
+                <span>1-Click PromQL Query Launchers (Click to navigate & graph in Prometheus)</span>
+              </h4>
+              <span className="text-[11px] text-slate-400">Target Scrape Interval: 15s</span>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs">
+              {[
+                { label: 'Active Photos & Media', expr: 'memorypics_media_total{status="active"}' },
+                { label: 'Total Media Storage Bytes', expr: 'memorypics_storage_bytes' },
+                { label: 'Detected Faces Total', expr: 'memorypics_faces_total' },
+                { label: 'Host CPU %', expr: 'memorypics_host_cpu_percent' },
+                { label: 'Host RAM Used (Bytes)', expr: 'memorypics_host_memory_bytes{type="used"}' },
+                { label: 'Pending Worker Tasks', expr: 'memorypics_queue_pending_tasks' },
+                { label: 'Named People Count', expr: 'memorypics_people_total' },
+              ].map((q) => (
+                <a
+                  key={q.expr}
+                  href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:9090/graph?g0.expr=${encodeURIComponent(q.expr)}&g0.tab=0`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-orange-50 border border-slate-200 hover:border-orange-300 text-slate-700 hover:text-orange-700 rounded-xl transition group font-mono text-[11px]"
+                  title={`Click to navigate to Prometheus graph for ${q.expr}`}
+                >
+                  <span className="font-sans font-semibold text-slate-800 group-hover:text-orange-900">{q.label}:</span>
+                  <code className="text-orange-600 group-hover:text-orange-800">{q.expr}</code>
+                  <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-orange-500" />
+                </a>
+              ))}
+            </div>
+          </div>
+
+          {/* Live /metrics Raw Stream Inspector */}
+          <div className="bg-slate-950 text-slate-200 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+            <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/60">
+              <div className="flex items-center gap-3">
+                <Terminal className="w-4 h-4 text-orange-400" />
+                <span className="text-xs font-mono font-bold text-white">GET /metrics</span>
+                <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">
+                  text/plain; version=0.0.4
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Filter metric names..."
+                  value={promSearchFilter}
+                  onChange={(e) => setPromSearchFilter(e.target.value)}
+                  className="bg-slate-800 border border-slate-700 text-white text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:border-orange-500 font-mono"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setAutoRefreshPrometheus(!autoRefreshPrometheus)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                    autoRefreshPrometheus
+                      ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                  }`}
+                >
+                  <RefreshCw className={`w-3 h-3 ${autoRefreshPrometheus ? 'animate-spin text-emerald-400' : ''}`} />
+                  <span>{autoRefreshPrometheus ? 'Auto (5s)' : 'Manual'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={fetchPrometheusMetrics}
+                  disabled={loadingPrometheus}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition border border-slate-700"
+                >
+                  Refresh
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(rawPrometheusText);
+                    setCopiedPromUrl(true);
+                    setTimeout(() => setCopiedPromUrl(false), 2000);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow transition"
+                >
+                  {copiedPromUrl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedPromUrl ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 max-h-[460px] overflow-y-auto font-mono text-xs text-slate-300 space-y-1 bg-black/40">
+              {loadingPrometheus && !rawPrometheusText ? (
+                <div className="py-12 text-center text-slate-500">Loading Prometheus metrics...</div>
+              ) : (
+                rawPrometheusText
+                  .split('\n')
+                  .filter((line) => !promSearchFilter || line.toLowerCase().includes(promSearchFilter.toLowerCase()))
+                  .map((line, idx) => {
+                    const isComment = line.startsWith('#');
+                    return (
+                      <div
+                        key={idx}
+                        className={`py-0.5 px-1 rounded hover:bg-slate-800/40 ${
+                          isComment ? 'text-slate-500 italic' : 'text-emerald-400 font-semibold'
+                        }`}
+                      >
+                        {line}
+                      </div>
+                    );
+                  })
+              )}
             </div>
           </div>
         </div>

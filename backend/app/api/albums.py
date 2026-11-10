@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import desc, func, or_
+from sqlalchemy import desc, func, or_, and_, not_, extract
 
 from app.database import get_db
 from app.models.user import User
@@ -36,7 +36,7 @@ class ShareAlbumRequest(BaseModel):
     allow_guest_uploads: bool = False
 
 def resolve_dynamic_album_photos(album: Album, db: Session, user_id: int) -> List[Media]:
-    """Resolves live photos matching the dynamic smart album's saved query rules."""
+    """Resolves live photos matching the dynamic smart album's multi-condition boolean rules (AND / OR / NOT)."""
     if not album.rules:
         return []
     try:
@@ -50,11 +50,14 @@ def resolve_dynamic_album_photos(album: Album, db: Session, user_id: int) -> Lis
         Media.is_archived == False
     )
 
+    boolean_mode = str(rules.get("boolean_mode") or "AND").upper()
+    clauses = []
+
     # 1. Search query (semantic or keyword)
     search_text = rules.get("query") or rules.get("search_text")
     if search_text:
         term = f"%{search_text}%"
-        query = query.filter(
+        clauses.append(
             or_(
                 Media.filename.ilike(term),
                 Media.location_name.ilike(term),
@@ -65,32 +68,81 @@ def resolve_dynamic_album_photos(album: Album, db: Session, user_id: int) -> Lis
     # 2. Person filter (Face detection linking)
     person_ids = rules.get("person_ids")
     if person_ids:
-        for pid in person_ids:
-            face_subquery = db.query(FaceDetection.media_id).filter(FaceDetection.person_id == pid).subquery()
-            query = query.filter(Media.id.in_(face_subquery))
+        face_subquery = db.query(FaceDetection.media_id).filter(FaceDetection.person_id.in_(person_ids)).subquery()
+        clauses.append(Media.id.in_(face_subquery))
+
+    # Exclude Person (NOT)
+    exclude_person_ids = rules.get("exclude_person_ids")
+    if exclude_person_ids:
+        face_subquery = db.query(FaceDetection.media_id).filter(FaceDetection.person_id.in_(exclude_person_ids)).subquery()
+        clauses.append(~Media.id.in_(face_subquery))
 
     # 3. Category filter
     category = rules.get("category")
     if category:
-        query = query.filter(Media.category == category)
+        clauses.append(Media.category == category)
 
     # 4. Favorite only
     if rules.get("is_favorite") is True:
-        query = query.filter(Media.is_favorite == True)
+        clauses.append(Media.is_favorite == True)
 
     # 5. Rating filter
     if rules.get("min_rating"):
-        query = query.filter(Media.rating >= rules["min_rating"])
+        clauses.append(Media.rating >= rules["min_rating"])
 
-    # 6. Date Range
+    # 6. Date Range / Year
     if rules.get("start_date"):
-        query = query.filter(Media.captured_at >= rules["start_date"])
+        clauses.append(Media.captured_at >= rules["start_date"])
     if rules.get("end_date"):
-        query = query.filter(Media.captured_at <= rules["end_date"])
+        clauses.append(Media.captured_at <= rules["end_date"])
+    if rules.get("year"):
+        try:
+            clauses.append(extract("year", Media.captured_at) == int(rules["year"]))
+        except Exception:
+            pass
 
     # 7. City / Location
     if rules.get("city"):
-        query = query.filter(Media.location_name.ilike(f"%{rules['city']}%"))
+        clauses.append(Media.location_name.ilike(f"%{rules['city']}%"))
+
+    # 8. Compound dynamic boolean condition rows
+    conditions = rules.get("conditions") or []
+    for cond in conditions:
+        field = cond.get("field")
+        val = cond.get("value")
+        negate = bool(cond.get("negate", False))
+        if not field or val is None or val == "":
+            continue
+
+        c_clause = None
+        if field == "location":
+            c_clause = Media.location_name.ilike(f"%{val}%")
+        elif field == "category":
+            c_clause = Media.category == val
+        elif field == "favorite":
+            c_clause = Media.is_favorite == True
+        elif field == "year":
+            try:
+                c_clause = extract("year", Media.captured_at) == int(val)
+            except Exception:
+                pass
+        elif field == "person_id":
+            try:
+                face_sub = db.query(FaceDetection.media_id).filter(FaceDetection.person_id == int(val)).subquery()
+                c_clause = Media.id.in_(face_sub)
+            except Exception:
+                pass
+
+        if c_clause is not None:
+            if negate:
+                c_clause = not_(c_clause)
+            clauses.append(c_clause)
+
+    if clauses:
+        if boolean_mode == "OR":
+            query = query.filter(or_(*clauses))
+        else:
+            query = query.filter(and_(*clauses))
 
     return query.order_by(desc(Media.captured_at)).limit(500).all()
 
