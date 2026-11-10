@@ -299,7 +299,7 @@ def get_all_extracts_cache() -> Dict[str, datetime]:
                             st = os.stat(cand)
                             dt = datetime.fromtimestamp(st.st_mtime)
                             if folder_year and dt.year != folder_year:
-                                dt = datetime(folder_year, dt.month if dt.year < 2025 else 1, dt.day if dt.year < 2025 else 1, 12, 0, 0)
+                                dt = datetime(folder_year, dt.month if dt.year <= datetime.now().year + 1 else 1, dt.day if dt.year <= datetime.now().year + 1 else 1, 12, 0, 0)
                             cache[f] = dt
                         except Exception:
                             pass
@@ -334,6 +334,7 @@ def infer_captured_date(file_path: str, filename: Optional[str] = None) -> Optio
     # Clean stripped name by removing upload server prefix (e.g. 20261105_161855_04_d392_)
     stripped = re.sub(r'^\d{8}_\d{6}_[0-9a-fA-F_]+_', '', fname)
 
+    max_year = datetime.now().year + 1
     # 2. Filename date patterns
     # WhatsApp (IMG-YYYYMMDD-WA*), Pixel/Android (IMG_YYYYMMDD_*, VID_YYYYMMDD_*), Windows (WIN_YYYYMMDD_*), Screenshots
     m = re.search(r'(?:IMG|VID|PXL|WP|PHOTO|WIN|Screenshot)[-_]?(20\d{2})(\d{2})(\d{2})[-_]?(\d{2})?(\d{2})?(\d{2})?', stripped, re.I)
@@ -344,7 +345,7 @@ def infer_captured_date(file_path: str, filename: Optional[str] = None) -> Optio
             hh = int(g[3]) if g[3] else 12
             mm = int(g[4]) if g[4] else 0
             ss = int(g[5]) if g[5] else 0
-            if 1995 <= y <= 2025 and 1 <= mon <= 12 and 1 <= d <= 31:
+            if 1995 <= y <= max_year and 1 <= mon <= 12 and 1 <= d <= 31:
                 return datetime(y, mon, d, min(23, max(0, hh)), min(59, max(0, mm)), min(59, max(0, ss)))
         except Exception:
             pass
@@ -362,14 +363,14 @@ def infer_captured_date(file_path: str, filename: Optional[str] = None) -> Optio
         cache = get_all_extracts_cache()
         if stripped in cache:
             cand_dt = cache[stripped]
-            if cand_dt.year < 2025:
+            if cand_dt.year <= max_year:
                 return cand_dt
 
     # 4. Parent directory patterns
     ym = re.search(r'/(20\d{2})(?:-\d+)?(?:/|$)', file_path)
     if ym:
         y = int(ym.group(1))
-        if 1995 <= y <= 2025:
+        if 1995 <= y <= max_year:
             return datetime(y, 1, 1, 12, 0, 0)
 
     m = re.search(r'captures-(20\d{2})(\d{2})(\d{2})', file_path)
@@ -459,7 +460,8 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
         img = open_image_for_thumbnail(file_path)
         try:
             exif = extract_exif(img, file_path=file_path)
-            if exif["captured_at"] and exif["captured_at"].year <= 2025:
+            max_year = datetime.now().year + 1
+            if exif["captured_at"] and exif["captured_at"].year <= max_year:
                 captured_at = exif["captured_at"]
             else:
                 # Fall back to multi-tier date inference if EXIF date is missing
