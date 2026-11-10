@@ -270,6 +270,129 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Mobile Touch Gestures: Swipe-Down to Dismiss, Swipe-Left/Right, and Double-Tap Zoom
+  const [pullDownY, setPullDownY] = useState(0);
+  const [isPullingDown, setIsPullingDown] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTapTimeRef = useRef<number>(0);
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // 2-finger pinch to zoom
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinchStartDistRef.current = dist;
+      pinchStartZoomRef.current = zoom;
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      const now = Date.now();
+
+      // Double-tap to zoom
+      if (now - lastTapTimeRef.current < 300) {
+        if (zoom > 1) {
+          handleResetZoom();
+        } else {
+          setZoom(2.5);
+          if (containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const tapX = t.clientX - rect.left - rect.width / 2;
+            const tapY = t.clientY - rect.top - rect.height / 2;
+            setPan({ x: -tapX * 1.5, y: -tapY * 1.5 });
+          }
+        }
+        lastTapTimeRef.current = 0;
+        touchStartRef.current = null;
+        return;
+      }
+      lastTapTimeRef.current = now;
+
+      touchStartRef.current = { x: t.clientX, y: t.clientY, time: now };
+      if (zoom > 1) {
+        dragStart.current = { x: t.clientX - pan.x, y: t.clientY - pan.y };
+        setIsDragging(true);
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    // 2-finger pinch
+    if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const factor = dist / pinchStartDistRef.current;
+      const newZoom = Math.min(4, Math.max(1, pinchStartZoomRef.current * factor));
+      setZoom(newZoom);
+      if (newZoom === 1) setPan({ x: 0, y: 0 });
+      return;
+    }
+
+    if (e.touches.length === 1 && touchStartRef.current) {
+      const t = e.touches[0];
+      const deltaX = t.clientX - touchStartRef.current.x;
+      const deltaY = t.clientY - touchStartRef.current.y;
+
+      // When zoomed in, pan smoothly
+      if (zoom > 1) {
+        setPan({
+          x: t.clientX - dragStart.current.x,
+          y: t.clientY - dragStart.current.y,
+        });
+        return;
+      }
+
+      // When zoom is 1x and pulling downward (vertical swipe-down to dismiss)
+      if (deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2) {
+        setIsPullingDown(true);
+        setPullDownY(deltaY);
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    pinchStartDistRef.current = null;
+    setIsDragging(false);
+
+    if (isPullingDown) {
+      if (pullDownY > 90) {
+        // Trigger dismiss
+        onClose();
+      }
+      setPullDownY(0);
+      setIsPullingDown(false);
+      touchStartRef.current = null;
+      return;
+    }
+
+    if (touchStartRef.current && zoom === 1) {
+      const touchEnd = e.changedTouches[0];
+      if (touchEnd) {
+        const deltaX = touchEnd.clientX - touchStartRef.current.x;
+        const deltaY = touchEnd.clientY - touchStartRef.current.y;
+        const timeElapsed = Date.now() - touchStartRef.current.time;
+
+        // Quick horizontal swipe to browse photos (distance > 50px, time < 450ms)
+        if (Math.abs(deltaX) > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && timeElapsed < 450) {
+          if (deltaX < -50 && hasNext && onNavigateNext) {
+            onNavigateNext();
+          } else if (deltaX > 50 && hasPrev && onNavigatePrev) {
+            onNavigatePrev();
+          }
+        }
+      }
+    }
+
+    touchStartRef.current = null;
+  };
+
   // Sync video seek timestamp
   useEffect(() => {
     if (photo?.matched_timestamp && videoRef.current) {
@@ -820,15 +943,25 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 z-[99999] bg-black/95 flex items-center justify-center p-2 md:p-6 backdrop-blur-md animate-fadeIn"
+      className="fixed inset-0 z-[99999] bg-black/95 flex items-center justify-center p-0 md:p-6 backdrop-blur-md animate-fadeIn"
+      style={{
+        backgroundColor: `rgba(0, 0, 0, ${Math.max(0.15, 0.95 - (pullDownY / 400))})`,
+        transition: isPullingDown ? 'none' : 'background-color 200ms ease-out',
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
       onMouseUp={handleMouseUp}
     >
-      <div className={`relative max-h-[95vh] w-full h-full flex flex-col md:flex-row bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800 transition-all duration-300 ${
-        showSidebar ? 'max-w-7xl' : 'max-w-[98vw]'
-      }`}>
+      <div 
+        className={`relative max-h-[100dvh] md:max-h-[95vh] w-full h-full flex flex-col md:flex-row bg-slate-900 rounded-none md:rounded-2xl overflow-hidden shadow-2xl border-0 md:border border-slate-800 transition-all duration-300 ${
+          showSidebar ? 'max-w-7xl' : 'max-w-[98vw]'
+        }`}
+        style={{
+          transform: pullDownY > 0 ? `translateY(${pullDownY}px) scale(${Math.max(0.75, 1 - pullDownY / 800)})` : undefined,
+          transition: isPullingDown ? 'none' : 'transform 200ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
         
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
@@ -876,6 +1009,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           style={{ cursor: isAddingFace ? 'crosshair' : zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
         >
           {/* AI Enhancement Studio Floating Control Dock */}

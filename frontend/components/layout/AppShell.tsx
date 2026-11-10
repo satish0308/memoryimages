@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { MainContentWrapper } from '@/components/layout/MainContentWrapper';
 import { GlobalDropzoneOverlay } from '@/components/upload/GlobalDropzoneOverlay';
 import { UploadStagingModal } from '@/components/upload/UploadStagingModal';
@@ -105,9 +106,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Authenticated: Render Full Application with Navigation Sidebar & Header
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 text-slate-900 antialiased">
-      {/* Left Application Sidebar */}
-      <aside className="w-64 border-r border-slate-200 bg-white flex flex-col justify-between p-4 flex-shrink-0">
+    <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-50 text-slate-900 antialiased">
+      {/* Left Application Sidebar (Hidden on Mobile, Visible on Desktop) */}
+      <aside className="hidden md:flex w-64 border-r border-slate-200 bg-white flex-col justify-between p-4 flex-shrink-0">
         <div>
           {/* Logo & Brand */}
           <Link href="/" className="flex items-center gap-2 px-2 py-4 mb-4 group cursor-pointer">
@@ -322,6 +323,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <GlobalDropzoneOverlay />
       <UploadStagingModal />
       <UploadProgressDock />
+
+      {/* Native Mobile Bottom Navigation Dock (Visible on Mobile only) */}
+      <MobileBottomNav />
     </div>
   );
 }

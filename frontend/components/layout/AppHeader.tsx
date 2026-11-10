@@ -36,9 +36,19 @@ export const AppHeader: React.FC = () => {
 
   return (
     <>
-      <header className="h-16 border-b border-slate-200 bg-white px-6 flex items-center justify-between gap-4 flex-shrink-0 z-30">
+      <header className="h-16 border-b border-slate-200 bg-white px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-4 flex-shrink-0 z-30">
+        {/* Mobile Brand Title (Only shown when desktop sidebar is hidden) */}
+        <div className="flex items-center gap-2 md:hidden flex-shrink-0">
+          <div className="bg-gradient-to-tr from-indigo-500 to-purple-600 p-1.5 rounded-xl text-white shadow-xs">
+            <Sparkles className="w-4 h-4 text-amber-300" />
+          </div>
+          <span className="font-bold text-base leading-tight bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
+            MyMemoryPics
+          </span>
+        </div>
+
         {/* Search Input Placeholder / Global Search */}
-        <div className="flex-1 max-w-xl relative">
+        <div className="flex-1 max-w-xl relative hidden sm:block">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
@@ -48,21 +58,21 @@ export const AppHeader: React.FC = () => {
         </div>
 
         {/* Right Controls: Background Tasks, Upload & User Account Switcher */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {/* Background Task Queue Trigger Button */}
           {runningTask ? (
             <button
               onClick={openDrawer}
-              className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 rounded-xl shadow-xs transition hover:scale-[1.02]"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 hover:from-indigo-100 hover:to-purple-100 border border-indigo-200 rounded-xl shadow-xs transition hover:scale-[1.02]"
               title={`Active Task: ${runningTask.name} (${runningTask.progress}%)`}
             >
               <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin flex-shrink-0" />
-              <div className="text-left hidden sm:flex items-center gap-1.5">
+              <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {runningTask.progress}%
+              </span>
+              <div className="text-left hidden lg:flex items-center gap-1.5">
                 <span className="text-[11px] font-bold text-indigo-700 truncate max-w-[130px]">
                   {runningTask.name}
-                </span>
-                <span className="bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-mono font-bold">
-                  {runningTask.progress}%
                 </span>
               </div>
             </button>
@@ -82,7 +92,7 @@ export const AppHeader: React.FC = () => {
             <div className="flex items-center rounded-xl overflow-hidden shadow-xs border border-indigo-500/20">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className={`flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold cursor-pointer transition ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold cursor-pointer transition ${
                   isUploading ? 'opacity-90' : ''
                 }`}
                 title="Select media files to upload"
@@ -92,12 +102,12 @@ export const AppHeader: React.FC = () => {
                 ) : (
                   <Upload className="w-3.5 h-3.5" />
                 )}
-                <span>{isUploading ? `Uploading (${overallProgress}%)` : 'Upload Media'}</span>
+                <span className="hidden sm:inline">{isUploading ? `Uploading (${overallProgress}%)` : 'Upload Media'}</span>
               </button>
 
               <button
                 onClick={() => setShowUploadDropdown((prev) => !prev)}
-                className="px-2 py-2 bg-indigo-700 hover:bg-indigo-800 text-white border-l border-indigo-500/30 transition flex items-center justify-center"
+                className="px-1.5 sm:px-2 py-2 bg-indigo-700 hover:bg-indigo-800 text-white border-l border-indigo-500/30 transition flex items-center justify-center"
                 title="Upload Options (Files or Folder)"
               >
                 <ChevronDown className="w-3.5 h-3.5" />

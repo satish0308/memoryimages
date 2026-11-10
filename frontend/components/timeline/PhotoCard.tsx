@@ -105,6 +105,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [scrubProgress, setScrubProgress] = useState<number | null>(null);
   const [scrubTimeLabel, setScrubTimeLabel] = useState<string>('');
+  const isTouchRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   let filterStyle: string | undefined = undefined;
@@ -158,10 +159,17 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
       <div
         data-media-id={item.id}
         onPointerDown={(e) => {
+          isTouchRef.current = e.pointerType === 'touch';
           if (onPointerDown) onPointerDown(e, item.id);
         }}
         onClick={(e) => {
-          if (onToggleSelect) onToggleSelect(item.id, e);
+          if (isTouchRef.current) {
+            // Touch devices: single tap immediately opens the photo
+            onSelect(item);
+          } else {
+            // Desktop mouse: single click toggles selection
+            if (onToggleSelect) onToggleSelect(item.id, e);
+          }
         }}
         onDoubleClick={(e) => {
           e.stopPropagation();
