@@ -143,7 +143,7 @@ export default function PeoplePage() {
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [scale, setScale] = useState<TimelineScale>('day');
   const [density, setDensity] = useState<GridDensity>('normal');
-  const [collapseBursts, setCollapseBursts] = useState(true);
+  const [collapseBursts, setCollapseBursts] = useState(false);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
   const [expressionFilter, setExpressionFilter] = useState<'all' | 'smiling' | 'neutral'>('all');
   const [chronologicalOrder, setChronologicalOrder] = useState<'desc' | 'asc'>('desc');
@@ -1124,9 +1124,14 @@ export default function PeoplePage() {
                   <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
                     <span className="font-semibold text-slate-700 dark:text-slate-300">
                       <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
-                        {allPersonPhotos.length}
+                        {collapseBursts && selectedPerson.photo_count && selectedPerson.photo_count > allPersonPhotos.length
+                          ? `${allPersonPhotos.length} of ${selectedPerson.photo_count}`
+                          : allPersonPhotos.length}
                       </strong>{' '}
                       photos
+                      {collapseBursts && selectedPerson.photo_count && selectedPerson.photo_count > allPersonPhotos.length && (
+                        <span className="text-indigo-500 dark:text-indigo-400 font-normal ml-1">(bursts stacked)</span>
+                      )}
                     </span>
                     <span>•</span>
                     <span>

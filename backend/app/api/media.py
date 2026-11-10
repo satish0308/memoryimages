@@ -306,12 +306,44 @@ def get_timeline(
     burst_lead_map = {}
     if collapse_bursts:
         clusters = detect_burst_clusters(db, category=category, user_id=current_user.id)
-        for c in clusters:
-            best_id = c["best_shot_id"]
-            burst_lead_map[best_id] = c
-            for it in c["items"]:
-                if it["id"] != best_id:
-                    subordinate_burst_ids.add(it["id"])
+        if isinstance(person_id, int):
+            person_media_ids_set = set(person_media_ids)
+            for c in clusters:
+                c_person_items = [it for it in c["items"] if it["id"] in person_media_ids_set]
+                if not c_person_items:
+                    continue
+                # If the cluster's best shot belongs to this person
+                if c["best_shot_id"] in person_media_ids_set:
+                    lead_id = c["best_shot_id"]
+                    burst_lead_map[lead_id] = {
+                        **c,
+                        "items": c_person_items,
+                        "count": len(c_person_items)
+                    }
+                    for it in c_person_items:
+                        if it["id"] != lead_id:
+                            subordinate_burst_ids.add(it["id"])
+                else:
+                    # Global best shot does NOT contain this person.
+                    # Elect the best shot AMONG this person's photos in the cluster as the lead.
+                    lead_id = c_person_items[0]["id"]
+                    if len(c_person_items) > 1:
+                        burst_lead_map[lead_id] = {
+                            **c,
+                            "best_shot_id": lead_id,
+                            "items": c_person_items,
+                            "count": len(c_person_items)
+                        }
+                        for it in c_person_items[1:]:
+                            subordinate_burst_ids.add(it["id"])
+                    # If len == 1, neither subordinate nor lead: it stays a visible standalone photo
+        else:
+            for c in clusters:
+                best_id = c["best_shot_id"]
+                burst_lead_map[best_id] = c
+                for it in c["items"]:
+                    if it["id"] != best_id:
+                        subordinate_burst_ids.add(it["id"])
     
     # Group based on requested scale
     timeline_groups = {}

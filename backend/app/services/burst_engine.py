@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import logging
 from datetime import datetime, timedelta
@@ -21,6 +22,14 @@ def phash_distance(h1: Optional[str], h2: Optional[str]) -> int:
         return bin(val1 ^ val2).count('1')
     except Exception:
         return 99
+
+def is_burst_or_dup_name(f1: Optional[str], f2: Optional[str]) -> bool:
+    """Checks whether two filenames follow burst sequencing or duplicate export naming patterns."""
+    if not f1 or not f2:
+        return False
+    base1 = re.sub(r'[\s_]*\(\d+\)|_BURST\d*|\.preview', '', f1, flags=re.I)
+    base2 = re.sub(r'[\s_]*\(\d+\)|_BURST\d*|\.preview', '', f2, flags=re.I)
+    return base1.strip().lower() == base2.strip().lower()
 
 def calculate_photo_quality(media: Media) -> Dict[str, Any]:
     """
@@ -179,10 +188,14 @@ def detect_burst_clusters(
         if m1.captured_at and m2.captured_at:
             delta = (m2.captured_at - m1.captured_at).total_seconds()
             if 0 <= delta <= max_time_gap_seconds:
-                # Same camera, near pHash, or rapid interval <= 2.5s
                 dist = phash_distance(m1.perceptual_hash, m2.perceptual_hash)
-                same_cam = (m1.camera_model and m1.camera_model == m2.camera_model)
-                if delta <= 2.5 or dist <= 12 or same_cam:
+                same_name = is_burst_or_dup_name(m1.filename, m2.filename)
+                same_cam = bool(m1.camera_model and m1.camera_model == m2.camera_model)
+                # Two rapid consecutive shots belong to a burst if they are visually similar (dist <= 12),
+                # share an explicit camera burst filename sequence pattern,
+                # or lack pHashes (dist == 99) but share the same camera in ultra-rapid succession (delta <= 0.8s).
+                # Visually distinct shots (dist > 12) are NEVER chained as a burst.
+                if dist <= 12 or same_name or (dist == 99 and same_cam and delta <= 0.8):
                     adj[m1.id].add(m2.id)
                     adj[m2.id].add(m1.id)
 
@@ -377,8 +390,9 @@ def get_burst_for_media(db: Session, media_id: int, user_id: Optional[int] = Non
             if m1.captured_at and m2.captured_at:
                 delta = abs((m2.captured_at - m1.captured_at).total_seconds())
                 dist = phash_distance(m1.perceptual_hash, m2.perceptual_hash)
-                same_cam = (m1.camera_model and m1.camera_model == m2.camera_model)
-                if delta <= 2.5 or (delta <= 4.0 and (dist <= 12 or same_cam)):
+                same_name = is_burst_or_dup_name(m1.filename, m2.filename)
+                same_cam = bool(m1.camera_model and m1.camera_model == m2.camera_model)
+                if delta <= 4.0 and (dist <= 12 or same_name or (dist == 99 and same_cam and delta <= 0.8)):
                     adj[m1.id].add(m2.id)
                     adj[m2.id].add(m1.id)
             # pHash duplicate check
