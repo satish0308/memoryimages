@@ -29,6 +29,24 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/utils/apiUrl';
 
+// Format bytes into human-friendly KB / MB / GB / TB
+function formatBytes(bytes: number, decimals = 2): string {
+  if (!bytes || bytes === 0) return '0 MB';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+interface MonitoringServiceItem {
+  name: string;
+  service: string;
+  status: 'running' | 'stopped';
+  running: boolean;
+  port: number;
+}
+
 interface SystemMetrics {
   status: string;
   timestamp: string;
@@ -101,11 +119,19 @@ export default function AdminPortalPage() {
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Prometheus state
+  const [promViewMode, setPromViewMode] = useState<'visual' | 'grafana' | 'raw'>('visual');
   const [rawPrometheusText, setRawPrometheusText] = useState<string>('');
   const [loadingPrometheus, setLoadingPrometheus] = useState<boolean>(false);
   const [autoRefreshPrometheus, setAutoRefreshPrometheus] = useState<boolean>(false);
   const [copiedPromUrl, setCopiedPromUrl] = useState<boolean>(false);
   const [promSearchFilter, setPromSearchFilter] = useState<string>('');
+
+  // Monitoring on-demand container state (Prometheus & Grafana)
+  const [monitoringServices, setMonitoringServices] = useState<{
+    prometheus?: MonitoringServiceItem;
+    grafana?: MonitoringServiceItem;
+  } | null>(null);
+  const [togglingService, setTogglingService] = useState<string | null>(null);
 
   // Invite creation form state
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
@@ -128,11 +154,35 @@ export default function AdminPortalPage() {
       if (metricsRes.ok) setMetrics(await metricsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
       if (invitesRes.ok) setInvites(await invitesRes.json());
+
+      try {
+        const monRes = await fetch(`${API_URL}/api/v1/admin/monitoring/services`);
+        if (monRes.ok) setMonitoringServices(await monRes.json());
+      } catch (e) {
+        // monitoring service endpoint optional
+      }
     } catch (err: any) {
       console.error('Failed to load admin data:', err);
       setStatusMessage({ type: 'error', text: 'Failed to connect to admin API' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleService = async (serviceName: 'prometheus' | 'grafana', action: 'start' | 'stop') => {
+    setTogglingService(serviceName);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/admin/monitoring/services/${serviceName}/${action}`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const monRes = await fetch(`${API_URL}/api/v1/admin/monitoring/services`);
+        if (monRes.ok) setMonitoringServices(await monRes.json());
+      }
+    } catch (e) {
+      console.error('Failed to toggle monitoring container:', e);
+    } finally {
+      setTogglingService(null);
     }
   };
 
@@ -410,40 +460,92 @@ export default function AdminPortalPage() {
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
-            <a
-              href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090` : 'http://localhost:9090'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-orange-600/30 transition transform hover:-translate-y-0.5 active:translate-y-0"
-              title="Click to navigate to Prometheus Web UI"
-            >
-              <Flame className="w-4 h-4 fill-white" />
-              <span>Open Prometheus Web UI</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+            {/* Grafana On-Demand Lifecycle Control */}
+            <div className="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-inner">
+              <span className={`w-2 h-2 rounded-full ${monitoringServices?.grafana?.running !== false ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className="text-[11px] font-bold text-slate-200">Grafana</span>
+              {monitoringServices?.grafana?.running !== false ? (
+                <>
+                  <a
+                    href={typeof window !== 'undefined' ? `http://${window.location.hostname}:3001/d/memorypics-overview/mymemorypics-production-observability` : 'http://localhost:3001'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 px-2 py-0.5 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-[10px] font-bold shadow transition"
+                    title="Open Grafana full dashboard"
+                  >
+                    <span>Port 3001</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleService('grafana', 'stop')}
+                    disabled={togglingService === 'grafana'}
+                    className="px-2 py-0.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-500/50 text-rose-300 rounded-lg text-[10px] font-bold transition"
+                    title="Stop Grafana to reclaim host RAM & CPU"
+                  >
+                    {togglingService === 'grafana' ? '...' : 'Stop (Save RAM)'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleToggleService('grafana', 'start')}
+                  disabled={togglingService === 'grafana'}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow transition"
+                  title="Launch Grafana container on demand"
+                >
+                  {togglingService === 'grafana' ? 'Starting...' : 'Start (0 MB RAM)'}
+                </button>
+              )}
+            </div>
 
-            <a
-              href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090/targets` : 'http://localhost:9090/targets'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition"
-              title="Click to view scrape targets health"
-            >
-              <span>Targets</span>
-              <ExternalLink className="w-3 h-3 text-slate-400" />
-            </a>
-
-            <button
-              onClick={() => setActiveTab('prometheus')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition border ${
-                activeTab === 'prometheus'
-                  ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-              }`}
-            >
-              <Terminal className="w-3.5 h-3.5 text-orange-400" />
-              <span>Inspect /metrics</span>
-            </button>
+            {/* Prometheus On-Demand Lifecycle Control */}
+            <div className="flex items-center gap-1.5 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-inner">
+              <span className={`w-2 h-2 rounded-full ${monitoringServices?.prometheus?.running !== false ? 'bg-orange-400 animate-pulse' : 'bg-slate-500'}`} />
+              <span className="text-[11px] font-bold text-slate-200">Prometheus</span>
+              {monitoringServices?.prometheus?.running !== false ? (
+                <>
+                  <a
+                    href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090` : 'http://localhost:9090'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 px-2 py-0.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-[10px] font-bold shadow transition"
+                    title="Open Prometheus UI"
+                  >
+                    <span>Port 9090</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                  <a
+                    href={typeof window !== 'undefined' ? `http://${window.location.hostname}:9090/targets` : 'http://localhost:9090/targets'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-semibold transition"
+                    title="View scrape targets"
+                  >
+                    <span>Targets</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleService('prometheus', 'stop')}
+                    disabled={togglingService === 'prometheus'}
+                    className="px-2 py-0.5 bg-rose-950/70 hover:bg-rose-900 border border-rose-500/50 text-rose-300 rounded-lg text-[10px] font-bold transition"
+                    title="Stop Prometheus to reclaim host RAM & CPU"
+                  >
+                    {togglingService === 'prometheus' ? '...' : 'Stop (Save RAM)'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleToggleService('prometheus', 'start')}
+                  disabled={togglingService === 'prometheus'}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow transition"
+                  title="Launch Prometheus container on demand"
+                >
+                  {togglingService === 'prometheus' ? 'Starting...' : 'Start (0 MB RAM)'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -580,125 +682,366 @@ export default function AdminPortalPage() {
         </div>
       )}
 
-      {/* TAB: Prometheus Server, Targets & Scrape Inspector */}
+      {/* TAB: Prometheus & Grafana Observability Dashboard */}
       {activeTab === 'prometheus' && (
         <div className="space-y-6">
-          {/* Quick PromQL Expression Launchers */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <BarChart2 className="w-4 h-4 text-orange-500" />
-                <span>1-Click PromQL Query Launchers (Click to navigate & graph in Prometheus)</span>
-              </h4>
-              <span className="text-[11px] text-slate-400">Target Scrape Interval: 15s</span>
+          {/* Sub-View Switcher Bar */}
+          <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setPromViewMode('visual')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                  promViewMode === 'visual'
+                    ? 'bg-white text-orange-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5 text-orange-500" />
+                <span>Visual Dashboard</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPromViewMode('grafana')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                  promViewMode === 'grafana'
+                    ? 'bg-white text-orange-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <BarChart2 className="w-3.5 h-3.5 text-amber-500" />
+                <span>Embedded Grafana Live</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPromViewMode('raw')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                  promViewMode === 'raw'
+                    ? 'bg-white text-orange-600 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5 text-slate-700" />
+                <span>Raw /metrics</span>
+              </button>
             </div>
 
-            <div className="flex flex-wrap gap-2 text-xs">
-              {[
-                { label: 'Active Photos & Media', expr: 'memorypics_media_total{status="active"}' },
-                { label: 'Total Media Storage Bytes', expr: 'memorypics_storage_bytes' },
-                { label: 'Detected Faces Total', expr: 'memorypics_faces_total' },
-                { label: 'Host CPU %', expr: 'memorypics_host_cpu_percent' },
-                { label: 'Host RAM Used (Bytes)', expr: 'memorypics_host_memory_bytes{type="used"}' },
-                { label: 'Pending Worker Tasks', expr: 'memorypics_queue_pending_tasks' },
-                { label: 'Named People Count', expr: 'memorypics_people_total' },
-              ].map((q) => (
-                <a
-                  key={q.expr}
-                  href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:9090/graph?g0.expr=${encodeURIComponent(q.expr)}&g0.tab=0`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-orange-50 border border-slate-200 hover:border-orange-300 text-slate-700 hover:text-orange-700 rounded-xl transition group font-mono text-[11px]"
-                  title={`Click to navigate to Prometheus graph for ${q.expr}`}
-                >
-                  <span className="font-sans font-semibold text-slate-800 group-hover:text-orange-900">{q.label}:</span>
-                  <code className="text-orange-600 group-hover:text-orange-800">{q.expr}</code>
-                  <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-orange-500" />
-                </a>
-              ))}
+            <div className="flex items-center gap-2 pr-2">
+              <span className="text-[11px] text-slate-500 font-medium">Scrape Rate: 15s</span>
+              <button
+                type="button"
+                onClick={fetchAllAdminData}
+                disabled={loading}
+                className="flex items-center gap-1 px-3 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition"
+              >
+                <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin text-orange-600' : ''}`} />
+                <span>Sync</span>
+              </button>
             </div>
           </div>
 
-          {/* Live /metrics Raw Stream Inspector */}
-          <div className="bg-slate-950 text-slate-200 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
-            <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/60">
-              <div className="flex items-center gap-3">
-                <Terminal className="w-4 h-4 text-orange-400" />
-                <span className="text-xs font-mono font-bold text-white">GET /metrics</span>
-                <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">
-                  text/plain; version=0.0.4
-                </span>
+          {/* VIEW 1: Native Visual Telemetry Dashboard */}
+          {promViewMode === 'visual' && metrics && (
+            <div className="space-y-6">
+              {/* Primary Metric Stat Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Active Media */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Active Library Media</span>
+                    <Layers className="w-4 h-4 text-blue-600" />
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 font-mono">
+                    {metrics.database.active_media.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-blue-600 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Indexed & fully searchable</span>
+                  </div>
+                </div>
+
+                {/* 30-Day Trash Soft Deletion */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Soft-Deleted Trash</span>
+                    <Trash2 className="w-4 h-4 text-rose-600" />
+                  </div>
+                  <div className="text-3xl font-black text-rose-600 font-mono">
+                    {metrics.database.trash_media.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-rose-500 font-medium">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Configured for 30-day auto-purge</span>
+                  </div>
+                </div>
+
+                {/* Storage Consumed */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Total Disk Storage</span>
+                    <HardDrive className="w-4 h-4 text-purple-600" />
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 font-mono">
+                    {metrics.database.total_storage_gb} GB
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Host: {(metrics.host.disk_total_gb - metrics.host.disk_free_gb).toFixed(1)} / {metrics.host.disk_total_gb} GB ({metrics.host.disk_used_percent}% used)
+                  </p>
+                </div>
+
+                {/* Background Queue */}
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="text-xs font-semibold uppercase tracking-wider">Worker Queue Backlog</span>
+                    <Activity className="w-4 h-4 text-emerald-600" />
+                  </div>
+                  <div className="text-3xl font-black text-slate-900 font-mono">
+                    {metrics.worker.pending_queue_tasks}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 font-semibold">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Worker process idle & responsive</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Filter metric names..."
-                  value={promSearchFilter}
-                  onChange={(e) => setPromSearchFilter(e.target.value)}
-                  className="bg-slate-800 border border-slate-700 text-white text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:border-orange-500 font-mono"
+              {/* Resource Utilization Gauges */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                {/* Host CPU Utilization */}
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-orange-500" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Host CPU Utilization</h4>
+                    </div>
+                    <span className="text-xs font-bold font-mono text-slate-800">{metrics.host.cpu_usage_percent}%</span>
+                  </div>
+
+                  <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        metrics.host.cpu_usage_percent > 85
+                          ? 'bg-rose-500'
+                          : metrics.host.cpu_usage_percent > 60
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(2, metrics.host.cpu_usage_percent))}%` }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center text-[11px] text-slate-400">
+                    <span>{metrics.host.cpu_cores} Logical Cores</span>
+                    <span>Load Status: {metrics.host.cpu_usage_percent < 50 ? 'Optimal' : metrics.host.cpu_usage_percent < 80 ? 'Moderate' : 'Heavy'}</span>
+                  </div>
+                </div>
+
+                {/* Host RAM Utilization */}
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-4 h-4 text-indigo-500" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">Host Memory (RAM)</h4>
+                    </div>
+                    <span className="text-xs font-bold font-mono text-slate-800">{metrics.host.memory_usage_percent}%</span>
+                  </div>
+
+                  <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-500"
+                      style={{ width: `${Math.min(100, Math.max(2, metrics.host.memory_usage_percent))}%` }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center text-[11px] text-slate-400">
+                    <span>{metrics.host.memory_used_gb} GB used</span>
+                    <span>{metrics.host.memory_total_gb} GB total</span>
+                  </div>
+                </div>
+
+                {/* AI & Vision Entities */}
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-emerald-500" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">AI Entities & People</h4>
+                    </div>
+                    <span className="text-xs font-bold font-mono text-emerald-600">{metrics.database.total_people} People</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-center pt-1">
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      <div className="text-lg font-bold font-mono text-slate-800">{metrics.database.total_faces.toLocaleString()}</div>
+                      <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Detected Faces</div>
+                    </div>
+                    <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      <div className="text-lg font-bold font-mono text-slate-800">{metrics.database.total_albums.toLocaleString()}</div>
+                      <div className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Active Albums</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick PromQL Expression Launchers */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                    <BarChart2 className="w-4 h-4 text-orange-500" />
+                    <span>Direct PromQL Expression Launchers (Click to graph in Prometheus)</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400">Target Scrape Interval: 15s</span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {[
+                    { label: 'Active Photos & Media', expr: 'memorypics_media_total{status="active"}' },
+                    { label: 'Total Media Storage Bytes', expr: 'memorypics_storage_bytes' },
+                    { label: 'Detected Faces Total', expr: 'memorypics_faces_total' },
+                    { label: 'Host CPU %', expr: 'memorypics_host_cpu_percent' },
+                    { label: 'Host RAM Used (Bytes)', expr: 'memorypics_host_memory_bytes{type="used"}' },
+                    { label: 'Pending Worker Tasks', expr: 'memorypics_queue_pending_tasks' },
+                    { label: 'Named People Count', expr: 'memorypics_people_total' },
+                  ].map((q) => (
+                    <a
+                      key={q.expr}
+                      href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:9090/graph?g0.expr=${encodeURIComponent(q.expr)}&g0.tab=0`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-orange-50 border border-slate-200 hover:border-orange-300 text-slate-700 hover:text-orange-700 rounded-xl transition group font-mono text-[11px]"
+                      title={`Click to navigate to Prometheus graph for ${q.expr}`}
+                    >
+                      <span className="font-sans font-semibold text-slate-800 group-hover:text-orange-900">{q.label}:</span>
+                      <code className="text-orange-600 group-hover:text-orange-800">{q.expr}</code>
+                      <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-orange-500" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW 2: Embedded Interactive Grafana Observability Dashboard */}
+          {promViewMode === 'grafana' && (
+            <div className="space-y-3">
+              <div className="bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-orange-600/30 border border-orange-500/50 flex items-center justify-center text-orange-400">
+                    <BarChart2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">MyMemoryPics Production Observability (Grafana)</h4>
+                    <p className="text-[10px] text-slate-400">Interactive live multi-panel dashboard with time-series zoom and gauge panels.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:3001/d/memorypics-overview/mymemorypics-production-observability`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-bold shadow transition"
+                  >
+                    <span>Open in Full Window</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Responsive Embedded Iframe */}
+              <div className="w-full h-[760px] rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950">
+                <iframe
+                  src={`http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:3001/d/memorypics-overview/mymemorypics-production-observability?theme=dark&kiosk=tv`}
+                  className="w-full h-full border-0"
+                  title="MyMemoryPics Grafana Observability Dashboard"
                 />
-
-                <button
-                  type="button"
-                  onClick={() => setAutoRefreshPrometheus(!autoRefreshPrometheus)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
-                    autoRefreshPrometheus
-                      ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <RefreshCw className={`w-3 h-3 ${autoRefreshPrometheus ? 'animate-spin text-emerald-400' : ''}`} />
-                  <span>{autoRefreshPrometheus ? 'Auto (5s)' : 'Manual'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={fetchPrometheusMetrics}
-                  disabled={loadingPrometheus}
-                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition border border-slate-700"
-                >
-                  Refresh
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(rawPrometheusText);
-                    setCopiedPromUrl(true);
-                    setTimeout(() => setCopiedPromUrl(false), 2000);
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow transition"
-                >
-                  {copiedPromUrl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedPromUrl ? 'Copied' : 'Copy'}</span>
-                </button>
               </div>
             </div>
+          )}
 
-            <div className="p-4 max-h-[460px] overflow-y-auto font-mono text-xs text-slate-300 space-y-1 bg-black/40">
-              {loadingPrometheus && !rawPrometheusText ? (
-                <div className="py-12 text-center text-slate-500">Loading Prometheus metrics...</div>
-              ) : (
-                rawPrometheusText
-                  .split('\n')
-                  .filter((line) => !promSearchFilter || line.toLowerCase().includes(promSearchFilter.toLowerCase()))
-                  .map((line, idx) => {
-                    const isComment = line.startsWith('#');
-                    return (
-                      <div
-                        key={idx}
-                        className={`py-0.5 px-1 rounded hover:bg-slate-800/40 ${
-                          isComment ? 'text-slate-500 italic' : 'text-emerald-400 font-semibold'
-                        }`}
-                      >
-                        {line}
-                      </div>
-                    );
-                  })
-              )}
+          {/* VIEW 3: Live /metrics Raw Stream Inspector */}
+          {promViewMode === 'raw' && (
+            <div className="bg-slate-950 text-slate-200 rounded-2xl border border-slate-800 shadow-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-900/60">
+                <div className="flex items-center gap-3">
+                  <Terminal className="w-4 h-4 text-orange-400" />
+                  <span className="text-xs font-mono font-bold text-white">GET /metrics</span>
+                  <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">
+                    text/plain; version=0.0.4
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Filter metric names..."
+                    value={promSearchFilter}
+                    onChange={(e) => setPromSearchFilter(e.target.value)}
+                    className="bg-slate-800 border border-slate-700 text-white text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:border-orange-500 font-mono"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setAutoRefreshPrometheus(!autoRefreshPrometheus)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                      autoRefreshPrometheus
+                        ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500'
+                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                    }`}
+                  >
+                    <RefreshCw className={`w-3 h-3 ${autoRefreshPrometheus ? 'animate-spin text-emerald-400' : ''}`} />
+                    <span>{autoRefreshPrometheus ? 'Auto (5s)' : 'Manual'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={fetchPrometheusMetrics}
+                    disabled={loadingPrometheus}
+                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition border border-slate-700"
+                  >
+                    Refresh
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(rawPrometheusText);
+                      setCopiedPromUrl(true);
+                      setTimeout(() => setCopiedPromUrl(false), 2000);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-semibold shadow transition"
+                  >
+                    {copiedPromUrl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedPromUrl ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-4 max-h-[460px] overflow-y-auto font-mono text-xs text-slate-300 space-y-1 bg-black/40">
+                {loadingPrometheus && !rawPrometheusText ? (
+                  <div className="py-12 text-center text-slate-500">Loading Prometheus metrics...</div>
+                ) : (
+                  rawPrometheusText
+                    .split('\n')
+                    .filter((line) => !promSearchFilter || line.toLowerCase().includes(promSearchFilter.toLowerCase()))
+                    .map((line, idx) => {
+                      const isComment = line.startsWith('#');
+                      return (
+                        <div
+                          key={idx}
+                          className={`py-0.5 px-1 rounded hover:bg-slate-800/40 ${
+                            isComment ? 'text-slate-500 italic' : 'text-emerald-400 font-semibold'
+                          }`}
+                        >
+                          {line}
+                        </div>
+                      );
+                    })
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -728,8 +1071,8 @@ export default function AdminPortalPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {users.map((u) => {
-                  const quotaGb = u.storage_quota_bytes > 0 ? (u.storage_quota_bytes / (1024 ** 3)).toFixed(0) : 'Unlimited';
-                  const usedGb = (u.used_storage_bytes / (1024 ** 3)).toFixed(2);
+                  const quotaStr = u.storage_quota_bytes > 0 ? formatBytes(u.storage_quota_bytes) : 'Unlimited';
+                  const usedStr = formatBytes(u.used_storage_bytes);
                   const isCurrentAdmin = u.id === user?.id;
 
                   return (
@@ -755,7 +1098,7 @@ export default function AdminPortalPage() {
                       <td className="px-5 py-4">
                         <div className="space-y-1 w-44">
                           <div className="flex justify-between text-[11px]">
-                            <span className="font-semibold text-slate-800 font-mono">{usedGb} GB</span>
+                            <span className="font-semibold text-slate-800 font-mono">{usedStr}</span>
                             <span className="text-slate-400">({u.photo_count} photos)</span>
                           </div>
                           {u.storage_quota_bytes > 0 && (

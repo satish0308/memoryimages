@@ -281,6 +281,61 @@ export default function PeoplePage() {
     fetchMergeSuggestions();
   }, [fetchPeople, fetchMergeSuggestions]);
 
+  const pollReclusterTask = useCallback(async (taskId: string) => {
+    setIsReclusteringUnnamed(true);
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/tasks/${taskId}`);
+        if (!res.ok) {
+          clearInterval(interval);
+          setIsReclusteringUnnamed(false);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          return;
+        }
+        const task = await res.json();
+        if (task.status === 'completed') {
+          clearInterval(interval);
+          setIsReclusteringUnnamed(false);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          fetchPeople();
+          fetchMergeSuggestions();
+          setStatusMessage('Unnamed groups successfully re-clustered!');
+          setTimeout(() => setStatusMessage(null), 4000);
+        } else if (task.status === 'failed') {
+          clearInterval(interval);
+          setIsReclusteringUnnamed(false);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          setStatusMessage(task.error || 'Re-clustering failed.');
+        } else {
+          setIsReclusteringUnnamed(true);
+          setStatusMessage(task.message || `Re-clustering unnamed groups (${task.progress || 0}%)...`);
+        }
+      } catch (e) {
+        // network retry
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [API_URL, fetchPeople, fetchMergeSuggestions]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storedTaskId = localStorage.getItem('memorypics_recluster_task_id');
+    if (storedTaskId) {
+      pollReclusterTask(storedTaskId);
+    } else {
+      fetch(`${API_URL}/api/v1/tasks/active`)
+        .then((res) => res.json())
+        .then((data) => {
+          const activeRecluster = (data.active || []).find((t: any) => t.type === 'face_recluster_unnamed');
+          if (activeRecluster) {
+            localStorage.setItem('memorypics_recluster_task_id', activeRecluster.id);
+            pollReclusterTask(activeRecluster.id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [API_URL, pollReclusterTask]);
+
   useEffect(() => {
     if (activeTab === 'unnamed') {
       fetchUnnamedFaces();
@@ -782,29 +837,35 @@ export default function PeoplePage() {
     }
   };
 
-  // Re-cluster all unnamed groups with current similarity setting
+  // Re-cluster all unnamed groups with current similarity setting (resilient to page refresh)
   const handleReclusterUnnamed = async () => {
     try {
       setIsReclusteringUnnamed(true);
-      setStatusMessage('Re-clustering all unnamed groups with current similarity strictness...');
+      setStatusMessage('Initiating re-clustering of unnamed groups...');
       const token = getActiveToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed`, { method: 'POST', headers });
-      if (res.ok) {
+      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed?background=true`, { method: 'POST', headers });
+      const data = await res.json();
+      if (res.ok && data.task_id) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('memorypics_recluster_task_id', data.task_id);
+        }
+        pollReclusterTask(data.task_id);
+      } else if (res.ok) {
         fetchPeople();
         fetchMergeSuggestions();
         setStatusMessage('Unnamed groups successfully re-clustered!');
         setTimeout(() => setStatusMessage(null), 3500);
+        setIsReclusteringUnnamed(false);
       } else {
-        const err = await res.json().catch(() => ({ detail: 'Re-clustering failed.' }));
-        setStatusMessage(err.detail || 'Re-clustering failed.');
+        setStatusMessage(data.detail || 'Re-clustering failed.');
+        setIsReclusteringUnnamed(false);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setStatusMessage('Re-clustering failed.');
-    } finally {
+      setStatusMessage(e?.message || 'Re-clustering failed.');
       setIsReclusteringUnnamed(false);
     }
   };

@@ -257,6 +257,33 @@ def run_face_clustering(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         return res
 
 
+def run_face_recluster_unnamed(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Disbands temporary unnamed person groups and re-clusters unassigned faces with updated strictness."""
+    from app.services.face_engine import recluster_unnamed_people
+
+    TaskQueue.update_task(
+        task_id,
+        progress=20,
+        message="Disbanding temporary unnamed groups (preserving named people)..."
+    )
+
+    user_id = payload.get("user_id") if payload else None
+    with SessionLocal() as db:
+        TaskQueue.update_task(
+            task_id,
+            progress=50,
+            message="Re-evaluating faces with adjusted similarity strictness..."
+        )
+        res = recluster_unnamed_people(db, user_id=user_id)
+        TaskQueue.update_task(
+            task_id,
+            progress=100,
+            message=f"Re-clustering complete: {res.get('created_people', 0)} groups formed, {res.get('assigned_faces', 0)} faces assigned.",
+            result=res
+        )
+        return res
+
+
 def run_database_backup(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Runs automated zero-downtime database backup and exports to S3 if configured."""
     from app.services.backup_service import create_wal_backup
@@ -529,6 +556,7 @@ DISPATCH_TABLE = {
     "clip_index_all": run_clip_indexing,
     "face_detect_all": run_face_detection,
     "face_cluster_all": run_face_clustering,
+    "face_recluster_unnamed": run_face_recluster_unnamed,
     "db_backup_create": run_database_backup,
     "media_scan": run_media_scan,
     "s3_sync_library": run_s3_sync,

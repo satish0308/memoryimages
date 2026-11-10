@@ -1,5 +1,9 @@
 import os
 import shutil
+import socket
+import http.client
+import json
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
@@ -15,7 +19,66 @@ from app.models.album import Album
 from app.models.person import Person, FaceDetection
 from app.api.auth import get_current_user
 
+logger = logging.getLogger("memorypics.admin")
+
 router = APIRouter()
+
+class DockerUnixSocketClient:
+    SOCKET_PATH = "/var/run/docker.sock"
+
+    @classmethod
+    def _request(cls, method: str, path: str) -> Optional[Dict[str, Any]]:
+        if not os.path.exists(cls.SOCKET_PATH):
+            return None
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(4.0)
+            s.connect(cls.SOCKET_PATH)
+
+            class UnixConn(http.client.HTTPConnection):
+                def __init__(self):
+                    super().__init__("localhost")
+                def connect(self):
+                    self.sock = s
+
+            conn = UnixConn()
+            conn.connect()
+            conn.request(method, path, headers={"Host": "localhost"})
+            res = conn.getresponse()
+            raw = res.read().decode("utf-8")
+            conn.close()
+            if raw:
+                try:
+                    return json.loads(raw)
+                except Exception:
+                    return {"raw": raw, "status_code": res.status}
+            return {"status_code": res.status}
+        except Exception as e:
+            logger.warning(f"Docker socket error {method} {path}: {e}")
+            return None
+
+    @classmethod
+    def get_container_info(cls, container_name: str) -> Dict[str, Any]:
+        info = cls._request("GET", f"/containers/{container_name}/json")
+        if not info or not isinstance(info, dict) or "State" not in info:
+            return {"status": "stopped", "running": False, "exists": bool(info)}
+        state = info.get("State", {})
+        return {
+            "status": "running" if state.get("Running") else "stopped",
+            "running": bool(state.get("Running")),
+            "started_at": state.get("StartedAt"),
+            "exists": True
+        }
+
+    @classmethod
+    def start_container(cls, container_name: str) -> bool:
+        res = cls._request("POST", f"/containers/{container_name}/start")
+        return bool(res and res.get("status_code") in (204, 304, 200))
+
+    @classmethod
+    def stop_container(cls, container_name: str) -> bool:
+        res = cls._request("POST", f"/containers/{container_name}/stop")
+        return bool(res and res.get("status_code") in (204, 304, 200))
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     """Enforces that the authenticated user has administrative privileges."""
@@ -375,6 +438,12 @@ def generate_prometheus_metrics() -> str:
         "# HELP memorypics_storage_bytes Total storage consumed by active media",
         "# TYPE memorypics_storage_bytes gauge",
         f'memorypics_storage_bytes {total_storage_bytes}',
+        "# HELP memorypics_storage_megabytes Total storage consumed by active media in megabytes",
+        "# TYPE memorypics_storage_megabytes gauge",
+        f'memorypics_storage_megabytes {round(total_storage_bytes / (1024 * 1024), 2)}',
+        "# HELP memorypics_storage_gigabytes Total storage consumed by active media in gigabytes",
+        "# TYPE memorypics_storage_gigabytes gauge",
+        f'memorypics_storage_gigabytes {round(total_storage_bytes / (1024 * 1024 * 1024), 2)}',
         "# HELP memorypics_faces_total Total number of detected faces",
         "# TYPE memorypics_faces_total gauge",
         f'memorypics_faces_total {faces_count}',
@@ -397,9 +466,66 @@ def generate_prometheus_metrics() -> str:
         "# TYPE memorypics_host_memory_bytes gauge",
         f'memorypics_host_memory_bytes{{type="total"}} {mem_total}',
         f'memorypics_host_memory_bytes{{type="used"}} {mem_used}',
+        "# HELP memorypics_host_memory_gigabytes Host memory in gigabytes",
+        "# TYPE memorypics_host_memory_gigabytes gauge",
+        f'memorypics_host_memory_gigabytes{{type="total"}} {round(mem_total / (1024 * 1024 * 1024), 2)}',
+        f'memorypics_host_memory_gigabytes{{type="used"}} {round(mem_used / (1024 * 1024 * 1024), 2)}',
         "# HELP memorypics_host_disk_bytes Host root mount capacity in bytes",
         "# TYPE memorypics_host_disk_bytes gauge",
         f'memorypics_host_disk_bytes{{type="total"}} {disk.total}',
         f'memorypics_host_disk_bytes{{type="free"}} {disk.free}',
+        "# HELP memorypics_host_disk_gigabytes Host root mount capacity in gigabytes",
+        "# TYPE memorypics_host_disk_gigabytes gauge",
+        f'memorypics_host_disk_gigabytes{{type="total"}} {round(disk.total / (1024 * 1024 * 1024), 2)}',
+        f'memorypics_host_disk_gigabytes{{type="free"}} {round(disk.free / (1024 * 1024 * 1024), 2)}',
     ]
     return "\n".join(lines) + "\n"
+
+@router.get("/monitoring/services")
+def get_monitoring_services(admin_user: User = Depends(require_admin)):
+    """Returns the live Docker container run status of Prometheus and Grafana."""
+    prom = DockerUnixSocketClient.get_container_info("memorypics-prometheus")
+    graf = DockerUnixSocketClient.get_container_info("memorypics-grafana")
+    return {
+        "prometheus": {
+            "name": "memorypics-prometheus",
+            "service": "prometheus",
+            "status": prom["status"],
+            "running": prom["running"],
+            "port": 9090,
+        },
+        "grafana": {
+            "name": "memorypics-grafana",
+            "service": "grafana",
+            "status": graf["status"],
+            "running": graf["running"],
+            "port": 3001,
+        }
+    }
+
+@router.post("/monitoring/services/{service_name}/{action}")
+def control_monitoring_service(
+    service_name: str,
+    action: str,
+    admin_user: User = Depends(require_admin)
+):
+    """Starts or stops the Prometheus or Grafana container on demand to save memory."""
+    if service_name not in ("prometheus", "grafana"):
+        raise HTTPException(status_code=400, detail="Invalid service. Must be 'prometheus' or 'grafana'.")
+    if action not in ("start", "stop"):
+        raise HTTPException(status_code=400, detail="Invalid action. Must be 'start' or 'stop'.")
+
+    container_name = f"memorypics-{service_name}"
+    if action == "start":
+        ok = DockerUnixSocketClient.start_container(container_name)
+    else:
+        ok = DockerUnixSocketClient.stop_container(container_name)
+
+    info = DockerUnixSocketClient.get_container_info(container_name)
+    return {
+        "service": service_name,
+        "action": action,
+        "success": ok,
+        "status": info["status"],
+        "running": info["running"]
+    }

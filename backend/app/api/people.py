@@ -276,6 +276,7 @@ def trigger_auto_cluster(
 
 @router.post("/recluster-unnamed")
 def recluster_unnamed_groups(
+    background: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -283,7 +284,15 @@ def recluster_unnamed_groups(
     Disbands all unnamed person clusters ('Person 1', 'Person 2', ...) and re-runs
     face clustering on all unassigned faces with the currently configured similarity threshold.
     All user-named people ('Satish', 'Mom', etc.) are 100% PRESERVED.
+    Supports asynchronous execution with live task queue tracking across page refreshes.
     """
+    if background:
+        task = TaskQueue.enqueue(
+            task_type="face_recluster_unnamed",
+            payload={"user_id": current_user.id},
+            name="Re-Cluster Unnamed Groups (Strictness)"
+        )
+        return {"status": "queued", "task_id": task["id"], "task": task}
     res = recluster_unnamed_people(db, user_id=current_user.id)
     return res
 

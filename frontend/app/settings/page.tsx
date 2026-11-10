@@ -196,6 +196,7 @@ export default function AppSettingsPage() {
   const [duplicateDistanceThreshold, setDuplicateDistanceThreshold] = useState<number>(6);
   const [screenshotExpiryDays, setScreenshotExpiryDays] = useState<number>(30);
   const [reclusteringUnnamed, setReclusteringUnnamed] = useState(false);
+  const [reclusterProgressMsg, setReclusterProgressMsg] = useState<string | null>(null);
 
   // Approval modal state
   const [showApprovalModal, setShowApprovalModal] = useState(false);
@@ -409,28 +410,99 @@ export default function AppSettingsPage() {
     }
   };
 
+  const pollReclusterTask = useCallback(async (taskId: string) => {
+    setReclusteringUnnamed(true);
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/v1/tasks/${taskId}`);
+        if (!res.ok) {
+          clearInterval(interval);
+          setReclusteringUnnamed(false);
+          setReclusterProgressMsg(null);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          return;
+        }
+        const task = await res.json();
+        if (task.status === 'completed') {
+          clearInterval(interval);
+          setReclusteringUnnamed(false);
+          setReclusterProgressMsg(null);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          const result = task.result || {};
+          setMessage({
+            type: 'success',
+            text: `Unnamed groups re-clustered successfully! (${result.created_people || 0} groups formed, ${result.assigned_faces || 0} faces assigned)`,
+          });
+          setTimeout(() => setMessage(null), 6000);
+        } else if (task.status === 'failed') {
+          clearInterval(interval);
+          setReclusteringUnnamed(false);
+          setReclusterProgressMsg(null);
+          if (typeof window !== 'undefined') localStorage.removeItem('memorypics_recluster_task_id');
+          setMessage({ type: 'error', text: task.error || 'Re-clustering task failed.' });
+        } else {
+          // pending or running
+          setReclusteringUnnamed(true);
+          setReclusterProgressMsg(task.message || `Re-clustering (${task.progress || 0}%)...`);
+        }
+      } catch (e) {
+        // network error, continue polling
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [API_URL]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storedTaskId = localStorage.getItem('memorypics_recluster_task_id');
+    if (storedTaskId) {
+      pollReclusterTask(storedTaskId);
+    } else {
+      fetch(`${API_URL}/api/v1/tasks/active`)
+        .then((res) => res.json())
+        .then((data) => {
+          const activeRecluster = (data.active || []).find((t: any) => t.type === 'face_recluster_unnamed');
+          if (activeRecluster) {
+            localStorage.setItem('memorypics_recluster_task_id', activeRecluster.id);
+            pollReclusterTask(activeRecluster.id);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [API_URL, pollReclusterTask]);
+
   const handleReclusterUnnamedInSettings = async () => {
     try {
       setReclusteringUnnamed(true);
-      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed`, {
+      setReclusterProgressMsg('Initiating re-clustering...');
+      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed?background=true`, {
         method: 'POST',
         headers: getAuthHeaders(),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const data = await res.json();
+      if (res.ok && data.task_id) {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('memorypics_recluster_task_id', data.task_id);
+        }
+        pollReclusterTask(data.task_id);
+      } else if (res.ok) {
         setMessage({
           type: 'success',
           text: `Unnamed groups re-clustered successfully! (${data.created_people || 0} groups formed, ${data.assigned_faces || 0} faces assigned)`,
         });
         setTimeout(() => setMessage(null), 5000);
+        setReclusteringUnnamed(false);
+        setReclusterProgressMsg(null);
       } else {
         const err = await res.json().catch(() => ({ detail: 'Re-clustering failed.' }));
         setMessage({ type: 'error', text: err.detail || 'Re-clustering failed.' });
+        setReclusteringUnnamed(false);
+        setReclusterProgressMsg(null);
       }
     } catch (e: any) {
       setMessage({ type: 'error', text: e?.message || 'Re-clustering failed.' });
-    } finally {
       setReclusteringUnnamed(false);
+      setReclusterProgressMsg(null);
     }
   };
 
@@ -1347,6 +1419,12 @@ export default function AppSettingsPage() {
             <p className="text-[11px] text-slate-600">
               Disbands temporary unnamed groups (e.g. &quot;Person 1&quot;, &quot;Person 9&quot;) and re-evaluates all unassigned faces using your new strictness threshold. All user-named people (e.g. &quot;Satish&quot;, &quot;Mom&quot;) and their tagged photos are 100% preserved.
             </p>
+            {reclusterProgressMsg && (
+              <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-indigo-700 animate-pulse">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                <span>{reclusterProgressMsg}</span>
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -1355,7 +1433,7 @@ export default function AppSettingsPage() {
             className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${reclusteringUnnamed ? 'animate-spin' : ''}`} />
-            <span>{reclusteringUnnamed ? 'Re-Clustering...' : 'Re-Cluster Unnamed Groups'}</span>
+            <span>{reclusteringUnnamed ? (reclusterProgressMsg || 'Re-Clustering...') : 'Re-Cluster Unnamed Groups'}</span>
           </button>
         </div>
       </div>
