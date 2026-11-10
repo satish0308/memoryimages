@@ -20,6 +20,7 @@ from app.models.media import Media, MediaEmbedding, VideoKeyframe
 from app.models.person import Person, FaceDetection
 from app.models.album import Album, album_media
 from app.models.sync import SyncSource
+from app.models.setting import AppSetting
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,10 @@ def get_database_status() -> Dict[str, Any]:
     Returns comprehensive telemetry about the current active database (SQLite or PostgreSQL),
     table counts, pgvector availability, and HNSW vector index status.
     """
+    from app.database import engine, SessionLocal, get_db_dialect, check_pgvector_active
     dialect = get_db_dialect()
-    from app.database import engine, SessionLocal
+    curr_is_postgres = (dialect == "postgresql")
+    curr_is_sqlite = (dialect == "sqlite")
     
     table_counts = {}
     db = SessionLocal()
@@ -50,7 +53,7 @@ def get_database_status() -> Dict[str, Any]:
 
     # Check HNSW index status if in postgres
     hnsw_index_exists = False
-    if is_postgres:
+    if curr_is_postgres:
         try:
             with engine.connect() as conn:
                 res = conn.execute(text("""
@@ -76,10 +79,10 @@ def get_database_status() -> Dict[str, Any]:
     return {
         "active_dialect": dialect,
         "active_database_url": masked_url,
-        "is_sqlite": is_sqlite,
-        "is_postgres": is_postgres,
+        "is_sqlite": curr_is_sqlite,
+        "is_postgres": curr_is_postgres,
         "table_counts": table_counts,
-        "pgvector_active": check_pgvector_active() if is_postgres else False,
+        "pgvector_active": check_pgvector_active() if curr_is_postgres else False,
         "hnsw_index_active": hnsw_index_exists,
         "postgres_target_available": pg_status.get("available", False),
         "postgres_details": pg_status,
@@ -195,6 +198,13 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
     }
 
     try:
+        if tgt_is_postgres:
+            try:
+                tgt_db.execute(text("SET session_replication_role = 'replica';"))
+                tgt_db.commit()
+            except Exception as e:
+                logger.warning(f"Could not set replica role: {e}")
+
         # 1. Users
         existing_user_ids = set(r[0] for r in tgt_db.query(User.id).all())
         new_users = [clone_record(u) for u in src_db.query(User).all() if u.id not in existing_user_ids]
@@ -214,6 +224,17 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
             tgt_db.add_all(new_sync)
             stats["sync_sources"] = len(new_sync)
             tgt_db.commit()
+
+        # 2b. App Settings
+        try:
+            existing_setting_keys = set(r[0] for r in tgt_db.query(AppSetting.key).all())
+            new_settings = [clone_record(s) for s in src_db.query(AppSetting).all() if s.key not in existing_setting_keys]
+            if new_settings:
+                tgt_db.add_all(new_settings)
+                tgt_db.commit()
+                stats["app_settings"] = len(new_settings)
+        except Exception as e:
+            logger.warning(f"Could not copy app settings: {e}")
 
         # 3. Media (bulk chunks of 1000, must precede People and FaceDetection)
         existing_media_ids = set(r[0] for r in tgt_db.query(Media.id).all())
@@ -263,6 +284,8 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
                 cloned_a = clone_record(a)
                 if cloned_a.user_id and cloned_a.user_id not in valid_user_ids:
                     cloned_a.user_id = None
+                if cloned_a.cover_media_id and cloned_a.cover_media_id not in valid_media_ids:
+                    cloned_a.cover_media_id = None
                 new_albums.append(cloned_a)
         if new_albums:
             tgt_db.add_all(new_albums)
@@ -372,13 +395,23 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
                 tgt_db.commit()
         except Exception as e:
             logger.warning(f"Could not migrate video keyframes: {e}")
-        except Exception as e:
-            logger.warning(f"Could not migrate video keyframes: {e}")
 
-        # If target is PostgreSQL, ensure HNSW index is built
+        # If target is PostgreSQL, ensure HNSW index is built and serial sequences are updated
         hnsw_res = None
         if tgt_is_postgres:
             hnsw_res = ensure_pgvector_hnsw_index(tgt_engine)
+
+            seq_tables = [
+                'users', 'sync_sources', 'media', 'people', 'albums',
+                'face_detections', 'media_embeddings', 'video_keyframes'
+            ]
+            with tgt_engine.connect() as conn:
+                for tbl in seq_tables:
+                    try:
+                        conn.execute(text(f"SELECT setval(pg_get_serial_sequence('{tbl}', 'id'), coalesce((SELECT max(id) FROM {tbl}), 1));"))
+                        conn.commit()
+                    except Exception as seq_err:
+                        logger.debug(f"Sequence reset for {tbl}: {seq_err}")
 
         elapsed = round(time.time() - start_time, 2)
         logger.info(f"Database migration finished successfully in {elapsed}s: {stats}")
@@ -401,5 +434,11 @@ def migrate_database(source_url: Optional[str] = None, target_url: Optional[str]
             "partial_stats": stats
         }
     finally:
+        if tgt_is_postgres:
+            try:
+                tgt_db.execute(text("SET session_replication_role = 'origin';"))
+                tgt_db.commit()
+            except Exception:
+                pass
         src_db.close()
         tgt_db.close()

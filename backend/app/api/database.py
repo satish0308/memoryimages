@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 
-from app.config import settings
+from app.config import settings, set_persisted_engine, find_env_file
 from app.models.user import User
 from app.api.auth import get_current_user
 from app.services.database_service import (
@@ -12,7 +12,8 @@ from app.services.database_service import (
     ensure_pgvector_hnsw_index,
     migrate_database
 )
-from app.database import check_postgres_availability
+from app.database import check_postgres_availability, rebind_engine, SessionLocal
+from app.services.settings_service import sync_local_settings_to_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -82,8 +83,10 @@ def switch_engine_config(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Updates the DATABASE_URL in the runtime environment / .env file.
-    Returns status and instructions for container reload.
+    Updates the active database engine to PostgreSQL or SQLite.
+    Persists the choice across container restarts in /data/db/active_engine.json
+    and directly updates the mounted .env file.
+    Rebinds the database connection dynamically without restart required.
     """
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin authorization required")
@@ -93,12 +96,13 @@ def switch_engine_config(
 
     new_url = settings.POSTGRES_URL if target == "postgresql" else "sqlite:////data/db/memorypics.db"
 
-    env_path = "/app/.env"
-    if not os.path.exists(env_path):
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    # 1. Persist engine selection to /data/db/active_engine.json (survives all docker restarts)
+    set_persisted_engine(target)
 
+    # 2. Update .env file if available
     updated_file = False
-    if os.path.exists(env_path):
+    env_path = find_env_file()
+    if env_path and os.path.exists(env_path):
         try:
             with open(env_path, "r") as f:
                 content = f.read()
@@ -121,10 +125,25 @@ def switch_engine_config(
         except Exception as e:
             logger.warning(f"Could not rewrite .env file: {e}")
 
+    # 3. Dynamically rebind engine for the running backend process
+    try:
+        rebind_engine(new_url)
+    except Exception as rebind_err:
+        logger.error(f"Error during runtime engine rebind: {rebind_err}")
+
+    # 4. Sync persistent settings into the new active database
+    try:
+        with SessionLocal() as db:
+            sync_local_settings_to_db(db)
+    except Exception as sync_err:
+        logger.warning(f"Error syncing local settings to new DB: {sync_err}")
+
     return {
         "success": True,
+        "active_engine": target,
         "new_target": target,
         "new_database_url": new_url.split("@")[-1] if "@" in new_url else new_url,
         "env_file_updated": updated_file,
-        "message": f"Database engine configured to {target}. Restart container to take effect."
+        "persisted_locally": True,
+        "message": f"Database engine switched to {target.upper()}! Settings and active engine persisted."
     }

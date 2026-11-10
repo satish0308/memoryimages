@@ -192,6 +192,7 @@ export default function AppSettingsPage() {
   const [loadingDbStatus, setLoadingDbStatus] = useState(false);
   const [migratingDb, setMigratingDb] = useState(false);
   const [creatingHnsw, setCreatingHnsw] = useState(false);
+  const [switchingEngine, setSwitchingEngine] = useState(false);
   const [migrationResult, setMigrationResult] = useState<any>(null);
   const [showMigrateModal, setShowMigrateModal] = useState(false);
 
@@ -742,6 +743,39 @@ export default function AppSettingsPage() {
     }
   };
 
+  const handleSwitchEngine = async (target: 'postgresql' | 'sqlite') => {
+    if (dbStatus?.active_dialect === target) return;
+    const targetLabel = target === 'postgresql' ? 'PostgreSQL 16 (pgvector + HNSW)' : 'SQLite (Local WAL File)';
+    if (!confirm(`Switch active database engine to ${targetLabel}?\n\nYour application settings and library data are 100% preserved in persistent local storage.`)) {
+      return;
+    }
+
+    setSwitchingEngine(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/system/database/switch-engine`, {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ target })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({
+          type: 'success',
+          text: `Active database engine switched to ${target.toUpperCase()}! Choice persisted locally across all Docker restarts.`
+        });
+        setTimeout(() => setMessage(null), 6000);
+        await fetchDbStatus();
+        await fetchSettings();
+      } else {
+        setMessage({ type: 'error', text: data.detail || 'Failed to switch database engine.' });
+      }
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Network error switching database engine.' });
+    } finally {
+      setSwitchingEngine(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -1076,6 +1110,54 @@ export default function AppSettingsPage() {
               title="Refresh database telemetry"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loadingDbStatus ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Database Engine Switcher (Persistent Local Storage) */}
+        <div className="bg-gradient-to-r from-slate-50 to-indigo-50/40 border border-slate-200/80 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-4 h-4 text-violet-600" />
+              <h4 className="text-xs font-bold text-slate-800">
+                Active Database Engine Switcher
+              </h4>
+              <span className="text-[10px] bg-slate-200/80 text-slate-700 px-2 py-0.5 rounded-md font-mono">
+                Persisted in /data/db/active_engine.json
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1 max-w-2xl">
+              Easily toggle between high-performance <strong>PostgreSQL 16</strong> (pgvector + sub-10ms HNSW index, recommended for 20k+ photos) and local <strong>SQLite</strong> (single-file offline backup). Choice is stored in persistent local storage and automatically survives all Docker container restarts.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => handleSwitchEngine('postgresql')}
+              disabled={switchingEngine || dbStatus?.active_dialect === 'postgresql'}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition ${
+                dbStatus?.active_dialect === 'postgresql'
+                  ? 'bg-emerald-600 text-white ring-2 ring-emerald-400/40 cursor-default'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              } disabled:opacity-75`}
+              title="Switch to PostgreSQL with pgvector HNSW acceleration"
+            >
+              <CheckCircle2 className={`w-3.5 h-3.5 ${dbStatus?.active_dialect === 'postgresql' ? 'text-white' : 'text-slate-400'}`} />
+              <span>{switchingEngine ? 'Switching...' : `PostgreSQL ${dbStatus?.active_dialect === 'postgresql' ? '(Active)' : ''}`}</span>
+            </button>
+
+            <button
+              onClick={() => handleSwitchEngine('sqlite')}
+              disabled={switchingEngine || dbStatus?.active_dialect === 'sqlite'}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition ${
+                dbStatus?.active_dialect === 'sqlite'
+                  ? 'bg-indigo-600 text-white ring-2 ring-indigo-400/40 cursor-default'
+                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+              } disabled:opacity-75`}
+              title="Switch to local SQLite database mode"
+            >
+              <CheckCircle2 className={`w-3.5 h-3.5 ${dbStatus?.active_dialect === 'sqlite' ? 'text-white' : 'text-slate-400'}`} />
+              <span>{switchingEngine ? 'Switching...' : `SQLite ${dbStatus?.active_dialect === 'sqlite' ? '(Active)' : ''}`}</span>
             </button>
           </div>
         </div>

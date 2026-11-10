@@ -616,6 +616,17 @@ def main():
             redis_retry_delay = 2
 
         try:
+            # Check if active database engine has been switched via settings or .env
+            try:
+                from app.config import get_persisted_engine
+                from app.database import get_db_dialect, rebind_engine
+                persisted = get_persisted_engine()
+                if persisted and persisted != get_db_dialect():
+                    logger.info(f"Worker detected database engine switch to '{persisted}'. Rebinding connection...")
+                    rebind_engine()
+            except Exception as e_engine:
+                logger.debug(f"Worker engine check notice: {e_engine}")
+
             # Persistent blocking pop from task queue (2s timeout to check _should_exit)
             item = r.blpop(TASK_QUEUE_KEY, timeout=2)
             if item:

@@ -1,11 +1,16 @@
 import os
 import json
 import shutil
+import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models.setting import AppSetting
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+LOCAL_SETTINGS_PATH = "/data/db/app_settings.json"
 
 # Default system settings
 DEFAULT_SETTINGS = {
@@ -34,15 +39,86 @@ DEFAULT_SETTINGS = {
 # In-memory fast cache
 _SETTINGS_CACHE: Dict[str, str] = {}
 
+def _load_local_settings() -> Dict[str, str]:
+    """Reads settings from persistent local JSON file."""
+    if os.path.exists(LOCAL_SETTINGS_PATH):
+        try:
+            with open(LOCAL_SETTINGS_PATH, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to read local settings from {LOCAL_SETTINGS_PATH}: {e}")
+    return {}
+
+def _save_local_settings(settings_dict: Dict[str, str]):
+    """Persists settings to /data/db/app_settings.json."""
+    try:
+        os.makedirs(os.path.dirname(LOCAL_SETTINGS_PATH), exist_ok=True)
+        existing = _load_local_settings()
+        existing.update(settings_dict)
+        with open(LOCAL_SETTINGS_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save local settings to {LOCAL_SETTINGS_PATH}: {e}")
+
+def sync_local_settings_to_db(db: Session):
+    """
+    Ensures all locally stored settings from /data/db/app_settings.json
+    are reflected in the active database.
+    Also exports current database settings to /data/db/app_settings.json if missing.
+    """
+    local = _load_local_settings()
+    if not local:
+        current_in_db = {}
+        try:
+            rows = db.query(AppSetting).all()
+            for r in rows:
+                current_in_db[r.key] = r.value
+            if current_in_db:
+                _save_local_settings(current_in_db)
+        except Exception as e:
+            logger.warning(f"Could not export DB settings to local file: {e}")
+        return
+
+    try:
+        for k, v in local.items():
+            s = db.query(AppSetting).filter(AppSetting.key == k).first()
+            if not s:
+                desc = DEFAULT_SETTINGS.get(k, {}).get("description")
+                db.add(AppSetting(key=k, value=str(v), description=desc))
+            else:
+                s.value = str(v)
+            _SETTINGS_CACHE[k] = str(v)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Error syncing local settings to DB: {e}")
+
 def get_setting(db: Session, key: str, default: Optional[str] = None) -> str:
-    """Retrieves a configuration value from DB or cache, falling back to defaults."""
+    """Retrieves a configuration value from DB, local file, or cache, falling back to defaults."""
     if key in _SETTINGS_CACHE:
         return _SETTINGS_CACHE[key]
 
-    setting = db.query(AppSetting).filter(AppSetting.key == key).first()
-    if setting:
-        _SETTINGS_CACHE[key] = setting.value
-        return setting.value
+    try:
+        setting = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if setting:
+            _SETTINGS_CACHE[key] = setting.value
+            return setting.value
+    except Exception as e:
+        logger.warning(f"Could not query AppSetting from database: {e}")
+
+    # Fallback to persistent local file on disk (/data/db/app_settings.json)
+    local_settings = _load_local_settings()
+    if key in local_settings:
+        val = local_settings[key]
+        _SETTINGS_CACHE[key] = val
+        try:
+            desc = DEFAULT_SETTINGS.get(key, {}).get("description")
+            new_s = AppSetting(key=key, value=str(val), description=desc)
+            db.add(new_s)
+            db.commit()
+        except Exception:
+            db.rollback()
+        return val
 
     # Fallback to default
     if key in DEFAULT_SETTINGS:
@@ -53,7 +129,7 @@ def get_setting(db: Session, key: str, default: Optional[str] = None) -> str:
     return default or ""
 
 def set_setting(db: Session, key: str, value: str, description: Optional[str] = None) -> AppSetting:
-    """Persists a configuration value to the database and updates cache."""
+    """Persists a configuration value to the database, local file, and updates cache."""
     setting = db.query(AppSetting).filter(AppSetting.key == key).first()
     if not setting:
         desc = description or DEFAULT_SETTINGS.get(key, {}).get("description")
@@ -67,6 +143,9 @@ def set_setting(db: Session, key: str, value: str, description: Optional[str] = 
     db.commit()
     db.refresh(setting)
     _SETTINGS_CACHE[key] = setting.value
+    
+    # Mirror to local disk file so settings survive all restarts and engine switches
+    _save_local_settings({key: str(value)})
     return setting
 
 def is_local_storage_approved(db: Session) -> bool:

@@ -137,9 +137,19 @@ def check_and_upgrade_schema(db_engine):
 
 @app.on_event("startup")
 def on_startup():
-    """Initializes SQLite/PostgreSQL schema upon container startup and launches background directory watcher."""
+    """Initializes SQLite/PostgreSQL schema upon container startup, restores persistent settings, and launches background directory watcher."""
     Base.metadata.create_all(bind=engine)
     check_and_upgrade_schema(engine)
+
+    # Sync persistent settings from /data/db/app_settings.json into active database
+    try:
+        from app.database import SessionLocal
+        from app.services.settings_service import sync_local_settings_to_db
+        with SessionLocal() as db:
+            sync_local_settings_to_db(db)
+    except Exception as e:
+        print(f"Startup settings sync warning: {e}")
+
     try:
         start_watcher()
     except Exception as e:

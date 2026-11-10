@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from app.config import settings
+from app.config import settings, resolve_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,67 @@ if is_postgres:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+def rebind_engine(new_url: Optional[str] = None) -> str:
+    """
+    Dynamically rebinds SQLAlchemy engine and SessionLocal to a new database URL.
+    Enables zero-downtime hot switching between SQLite and PostgreSQL at runtime.
+    """
+    global engine, SessionLocal, is_sqlite, is_postgres
+    target_url = new_url or resolve_database_url()
+    settings.refresh_database_url(target_url)
+
+    is_sqlite = target_url.startswith("sqlite")
+    is_postgres = target_url.startswith("postgresql")
+
+    if is_sqlite:
+        db_path = target_url.replace("sqlite:////", "/")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+    c_args = {}
+    e_kwargs = {"pool_pre_ping": True}
+
+    if is_sqlite:
+        from sqlalchemy.pool import NullPool
+        c_args = {"check_same_thread": False, "timeout": 30}
+        e_kwargs.update({"poolclass": NullPool})
+    elif is_postgres:
+        e_kwargs.update({"pool_size": 20, "max_overflow": 40})
+
+    try:
+        engine.dispose()
+    except Exception as e:
+        logger.warning(f"Error disposing old engine: {e}")
+
+    new_engine = create_engine(
+        normalize_db_url(target_url),
+        connect_args=c_args,
+        **e_kwargs
+    )
+
+    if is_sqlite:
+        @event.listens_for(new_engine, "connect")
+        def set_rebound_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.close()
+
+    if is_postgres:
+        try:
+            with new_engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Unable to auto-enable pgvector on rebind: {e}")
+
+    engine = new_engine
+    SessionLocal.configure(bind=engine)
+    logger.info(f"Database engine successfully rebound to {get_db_dialect()} ({target_url.split('@')[-1]})")
+    return target_url
 
 def get_db():
     db = SessionLocal()
