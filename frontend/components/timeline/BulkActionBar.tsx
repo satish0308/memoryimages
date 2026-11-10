@@ -42,6 +42,8 @@ interface BulkActionBarProps {
   onBatchEnhanced?: () => void;
   onBatchBackupToDrive?: (mediaIds: number[]) => void;
   onOpenGooglePhotosHelper?: () => void;
+  onRemoveFromPerson?: () => void;
+  removeFromPersonLabel?: string;
 }
 
 export const BulkActionBar: React.FC<BulkActionBarProps> = ({
@@ -57,6 +59,8 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onBatchEnhanced,
   onBatchBackupToDrive,
   onOpenGooglePhotosHelper,
+  onRemoveFromPerson,
+  removeFromPersonLabel,
 }) => {
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
@@ -704,6 +708,19 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
             </div>
           )}
         </div>
+
+        {/* Remove from Person / Not this person */}
+        {onRemoveFromPerson && (
+          <button
+            onClick={onRemoveFromPerson}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/90 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold transition shadow-xs"
+            title="Remove selected photos from this person (keeps photos in library)"
+          >
+            <X className="w-3.5 h-3.5 text-amber-200" />
+            <span>{removeFromPersonLabel || 'Not This Person'}</span>
+          </button>
+        )}
 
         {/* Favorite All */}
         <button

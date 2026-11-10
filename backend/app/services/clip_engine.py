@@ -182,13 +182,20 @@ def semantic_search(
     query: str, 
     user_id: Optional[int] = None,
     top_k: int = 50, 
-    min_similarity: float = 0.16
+    min_similarity: Optional[float] = None
 ) -> List[Dict[str, Any]]:
     """
     Performs vector cosine similarity search across indexed photos scoped to user_id.
     Uses native PostgreSQL pgvector HNSW index when available, with
     graceful fallback to NumPy in-memory dot product (SQLite).
     """
+    if min_similarity is None:
+        try:
+            from app.services.settings_service import get_setting
+            min_similarity = float(get_setting(db, "semantic_search_min_similarity", "0.16"))
+        except Exception:
+            min_similarity = 0.16
+
     q_vec = embed_text(query)
     if q_vec is None:
         return []

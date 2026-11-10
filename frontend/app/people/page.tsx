@@ -127,6 +127,8 @@ export default function PeoplePage() {
   const [loading, setLoading] = useState(true);
   const [isClustering, setIsClustering] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isRechecking, setIsRechecking] = useState(false);
+  const [isReclusteringUnnamed, setIsReclusteringUnnamed] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Inline editing
@@ -719,6 +721,97 @@ export default function PeoplePage() {
     }
   };
 
+  // Auto-Correct / Re-Check Incorrect Group (e.g. Person 9)
+  const handleRecheckGroup = async (personId: number) => {
+    try {
+      setIsRechecking(true);
+      setStatusMessage('Auto-correcting group: checking faces against named people & current strictness...');
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}/recheck`, { method: 'POST', headers });
+      if (res.ok) {
+        const data = await res.json();
+        const recruitedMsg = data.recruited_to_named > 0 ? `recruited ${data.recruited_to_named} to ${data.recruited_names?.join(', ') || 'named people'}, ` : '';
+        const clustersMsg = data.new_clusters_created > 0 ? `split into ${data.new_clusters_created} new group(s), ` : '';
+        const unassignedMsg = data.unassigned_faces > 0 ? `${data.unassigned_faces} stranger/noise faces cleared` : '';
+        setStatusMessage(`Group auto-corrected! (${recruitedMsg}${clustersMsg}${unassignedMsg || 'done'})`);
+        setTimeout(() => setStatusMessage(null), 5000);
+        closePersonTimeline();
+        fetchPeople();
+        fetchMergeSuggestions();
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Re-check failed.' }));
+        setStatusMessage(err.detail || 'Re-check failed.');
+      }
+    } catch (e: any) {
+      console.error(e);
+      setStatusMessage(e?.message || 'Re-check failed.');
+    } finally {
+      setIsRechecking(false);
+    }
+  };
+
+  // Re-cluster all unnamed groups with current similarity setting
+  const handleReclusterUnnamed = async () => {
+    try {
+      setIsReclusteringUnnamed(true);
+      setStatusMessage('Re-clustering all unnamed groups with current similarity strictness...');
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed`, { method: 'POST', headers });
+      if (res.ok) {
+        fetchPeople();
+        fetchMergeSuggestions();
+        setStatusMessage('Unnamed groups successfully re-clustered!');
+        setTimeout(() => setStatusMessage(null), 3500);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Re-clustering failed.' }));
+        setStatusMessage(err.detail || 'Re-clustering failed.');
+      }
+    } catch (e) {
+      console.error(e);
+      setStatusMessage('Re-clustering failed.');
+    } finally {
+      setIsReclusteringUnnamed(false);
+    }
+  };
+
+  // Remove selected photos from current person group ('Not This Person')
+  const handleRemoveSelectedFromPerson = async () => {
+    if (!selectedPerson || selectedPhotoIds.length === 0) return;
+    if (!confirm(`Remove ${selectedPhotoIds.length} photo(s) from ${selectedPerson.name}? (Photos will remain in your library)`)) return;
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/${selectedPerson.id}/remove-faces`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ media_ids: selectedPhotoIds }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(`Removed ${data.removed_count || selectedPhotoIds.length} face(s) from ${selectedPerson.name}`);
+        setTimeout(() => setStatusMessage(null), 3500);
+        if (data.person_deleted) {
+          closePersonTimeline();
+          fetchPeople();
+        } else {
+          fetchPersonTimeline(selectedPerson.id);
+          fetchPersonDetail(selectedPerson.id);
+        }
+        setSelectedPhotoIds([]);
+      }
+    } catch (err) {
+      console.error('Failed to remove photos from person:', err);
+    }
+  };
+
   // Manual Merge from Modal
   const handleMergePeople = async () => {
     if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId || isMergingModal) return;
@@ -973,6 +1066,17 @@ export default function PeoplePage() {
                   <span>Slideshow</span>
                 </button>
 
+                {/* Auto-Correct Group button */}
+                <button
+                  onClick={() => handleRecheckGroup(selectedPerson.id)}
+                  disabled={isRechecking}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-slate-700 dark:text-slate-300 hover:text-amber-600 rounded-xl text-xs font-semibold transition border border-slate-200 dark:border-slate-700 disabled:opacity-50"
+                  title="Auto-correct incorrect group: disbands and re-recruits faces to named people or splits using current strictness"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-amber-500 ${isRechecking ? 'animate-spin' : ''}`} />
+                  <span>{isRechecking ? 'Re-Checking...' : 'Auto-Correct Group'}</span>
+                </button>
+
                 {/* Merge Button */}
                 <button
                   onClick={() => {
@@ -1141,6 +1245,22 @@ export default function PeoplePage() {
                   />
                   <span className="hidden sm:inline">
                     {isFaceDetectActive ? 'Scanning Library...' : 'Scan Library'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={handleReclusterUnnamed}
+                  disabled={isReclusteringUnnamed}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                  title="Re-cluster all unnamed groups ('Person 1', 'Person 2', ...) using current face similarity strictness, keeping all named people safe"
+                >
+                  <Sparkles
+                    className={`w-3.5 h-3.5 text-purple-500 ${
+                      isReclusteringUnnamed ? 'animate-spin' : ''
+                    }`}
+                  />
+                  <span className="hidden sm:inline">
+                    {isReclusteringUnnamed ? 'Re-clustering...' : 'Re-cluster Unnamed'}
                   </span>
                 </button>
 
@@ -1698,6 +1818,8 @@ export default function PeoplePage() {
           }}
           onBatchBackupToDrive={handleBackupBulkPhotos}
           onOpenGooglePhotosHelper={() => setShowGooglePhotosModal(true)}
+          onRemoveFromPerson={handleRemoveSelectedFromPerson}
+          removeFromPersonLabel="Not This Person"
         />
       )}
 

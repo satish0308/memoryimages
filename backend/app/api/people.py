@@ -28,7 +28,10 @@ from app.services.face_engine import (
     load_media_image,
     extract_arcface_embedding,
     align_face_crop,
-    detect_faces_in_image
+    detect_faces_in_image,
+    recheck_person_faces,
+    recluster_unnamed_people,
+    remove_faces_from_person
 )
 
 router = APIRouter()
@@ -64,6 +67,10 @@ class MergePeopleRequest(BaseModel):
     source_person_id: int
     target_person_id: int
 
+class RemoveFacesRequest(BaseModel):
+    face_ids: Optional[List[int]] = None
+    media_ids: Optional[List[int]] = None
+
 class TagFaceRequest(BaseModel):
     box_x: float
     box_y: float
@@ -86,9 +93,13 @@ def list_people(
     if not current_user:
         return []
 
-    query = db.query(Person).filter(
-        (Person.user_id == current_user.id) | (Person.user_id == None)
-    )
+    from app.services.settings_service import get_setting
+    global_rec = get_setting(db, "face_recognition_global", "true").lower() in ("true", "1", "yes")
+
+    query = db.query(Person)
+    if not global_rec and not current_user.is_admin:
+        query = query.filter((Person.user_id == current_user.id) | (Person.user_id == None))
+
     if not show_hidden:
         query = query.filter(Person.is_hidden == False)
     else:
@@ -106,14 +117,14 @@ def list_people(
     if not people:
         return []
 
-    # Batch retrieve all faces for all matching people in 1 single query (eliminating N+1)
+    # Batch retrieve all faces for all matching people in 1 single query (scoped to current user's media)
     person_ids = [p.id for p in people]
     all_faces = (
         db.query(FaceDetection.id, FaceDetection.person_id, FaceDetection.media_id)
         .join(Media, FaceDetection.media_id == Media.id)
         .filter(
             FaceDetection.person_id.in_(person_ids),
-            (Media.user_id == current_user.id) | (Media.user_id == None),
+            (Media.user_id == current_user.id) | (Media.user_id == None) if not current_user.is_admin else True,
             Media.is_deleted == False
         ).all()
     )
@@ -127,6 +138,7 @@ def list_people(
     results = []
     for p in people:
         p_faces = faces_by_person.get(p.id, [])
+        # Only show people who actually appear in current user's media
         if not p_faces:
             continue
 
@@ -176,14 +188,14 @@ def get_people_stats(
         db.query(func.count(func.distinct(Person.id)))
         .join(FaceDetection, FaceDetection.person_id == Person.id)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter((Person.user_id == uid) | (Person.user_id == None), Person.is_hidden == False, Person.is_pet == False, Media.is_deleted == False)
+        .filter(Person.is_hidden == False, Person.is_pet == False, (Media.user_id == uid) | (Media.user_id == None), Media.is_deleted == False)
         .scalar() or 0
     )
     total_pets = (
         db.query(func.count(func.distinct(Person.id)))
         .join(FaceDetection, FaceDetection.person_id == Person.id)
         .join(Media, FaceDetection.media_id == Media.id)
-        .filter((Person.user_id == uid) | (Person.user_id == None), Person.is_hidden == False, Person.is_pet == True, Media.is_deleted == False)
+        .filter(Person.is_hidden == False, Person.is_pet == True, (Media.user_id == uid) | (Media.user_id == None), Media.is_deleted == False)
         .scalar() or 0
     )
     tagged_faces = (
@@ -258,6 +270,19 @@ def trigger_auto_cluster(
         )
         return {"status": "queued", "task_id": task["id"]}
     res = auto_cluster_faces(db, user_id=current_user.id)
+    return res
+
+@router.post("/recluster-unnamed")
+def recluster_unnamed_groups(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Disbands all unnamed person clusters ('Person 1', 'Person 2', ...) and re-runs
+    face clustering on all unassigned faces with the currently configured similarity threshold.
+    All user-named people ('Satish', 'Mom', etc.) are 100% PRESERVED.
+    """
+    res = recluster_unnamed_people(db, user_id=current_user.id)
     return res
 
 @router.post("/scan-faces")
@@ -481,17 +506,30 @@ def get_person_detail(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Returns person details and their photo count."""
+    """Returns person details and their photo count scoped strictly to current user."""
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    faces = db.query(FaceDetection).filter(FaceDetection.person_id == person.id).all()
+
+    user_faces_q = (
+        db.query(FaceDetection)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(
+            FaceDetection.person_id == person.id,
+            Media.is_deleted == False
+        )
+    )
+    if not current_user.is_admin:
+        user_faces_q = user_faces_q.filter((Media.user_id == current_user.id) | (Media.user_id == None))
+    faces = user_faces_q.all()
+
+    # If the user has no photos of this person and is not the creator or admin, return 404
+    if not faces and person.user_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(status_code=404, detail="Person not found in your library")
+
     unique_media_ids = list(set(f.media_id for f in faces))
     first_face = faces[0] if faces else None
-    cover_media_id = first_face.media_id if first_face else None
+    cover_media_id = person.cover_media_id or (first_face.media_id if first_face else None)
 
     return {
         "id": person.id,
@@ -519,10 +557,19 @@ def get_person_avatar(
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    first_face = db.query(FaceDetection).filter(FaceDetection.person_id == person.id).first()
+
+    # Prioritize face crop from current user's media
+    first_face = (
+        db.query(FaceDetection)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(
+            FaceDetection.person_id == person.id,
+            (Media.user_id == current_user.id) | (Media.user_id == None) if not current_user.is_admin else True
+        )
+        .first()
+    )
+    if not first_face:
+        first_face = db.query(FaceDetection).filter(FaceDetection.person_id == person.id).first()
     if not first_face:
         raise HTTPException(status_code=404, detail="No faces for this person")
 
@@ -557,15 +604,19 @@ def get_person_photos(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Returns all media items associated with a person."""
+    """Returns all media items associated with a person, strictly scoped to current user."""
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    faces = db.query(FaceDetection).filter(FaceDetection.person_id == person_id).all()
-    media_ids = list(set(f.media_id for f in faces))
+
+    faces_q = (
+        db.query(FaceDetection.media_id)
+        .join(Media, FaceDetection.media_id == Media.id)
+        .filter(FaceDetection.person_id == person_id, Media.is_deleted == False)
+    )
+    if not current_user.is_admin:
+        faces_q = faces_q.filter((Media.user_id == current_user.id) | (Media.user_id == None))
+    media_ids = [r[0] for r in faces_q.distinct().all()]
     
     # Fast scalar column projection avoids loading heavy ORM objects with EXIF & text
     photos = db.query(
@@ -716,7 +767,7 @@ def search_by_face(
         raise HTTPException(status_code=400, detail="Could not extract biometric face features from the specified area. Please ensure a face is visible.")
 
     # 3. Query all face embeddings for current user and preload people (eliminating N+1 queries)
-    user_people = db.query(Person).filter(Person.user_id == current_user.id).all()
+    user_people = db.query(Person).all()
     person_map = {p.id: p for p in user_people}
 
     all_faces = (
@@ -731,7 +782,14 @@ def search_by_face(
 
     matches_by_media: Dict[int, Dict[str, Any]] = {}
     suggested_person_counts: Dict[int, int] = {}
-    threshold = req.similarity_threshold or 0.38
+    if req.similarity_threshold is None:
+        try:
+            from app.services.settings_service import get_setting
+            threshold = float(get_setting(db, "face_similarity_threshold", "0.40"))
+        except Exception:
+            threshold = 0.40
+    else:
+        threshold = req.similarity_threshold
 
     # Fast vectorized ArcFace matrix comparison
     valid_face_data = []
@@ -885,17 +943,40 @@ def update_person(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Updates a person's name, relationship, or hidden status."""
+    """Updates a person's name, relationship, or hidden status. Auto-merges if renaming to an existing named person."""
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
 
     if req.name is not None:
         new_name = req.name.strip()
         if new_name:
+            # Check if another person already exists with this exact name (case-insensitive)
+            from sqlalchemy import func
+            existing = (
+                db.query(Person)
+                .filter(func.lower(Person.name) == new_name.lower(), Person.id != person_id)
+                .first()
+            )
+            if existing:
+                # Merge into the existing person! Reassign all faces
+                db.query(FaceDetection).filter(FaceDetection.person_id == person_id).update(
+                    {"person_id": existing.id}, synchronize_session=False
+                )
+                if not existing.relationship_type and req.relationship_type:
+                    existing.relationship_type = req.relationship_type.strip()
+                db.delete(person)
+                db.commit()
+                db.refresh(existing)
+                return {
+                    "id": existing.id,
+                    "name": existing.name,
+                    "relationship_type": existing.relationship_type,
+                    "is_hidden": existing.is_hidden,
+                    "merged_into_existing": True
+                }
             person.name = new_name
+
     if req.relationship_type is not None:
         person.relationship_type = req.relationship_type.strip() or None
     if req.is_hidden is not None:
@@ -921,12 +1002,13 @@ def set_person_cover(
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
 
-    media = db.query(Media).filter(Media.id == req.media_id, Media.user_id == current_user.id).first()
+    media = db.query(Media).filter(
+        Media.id == req.media_id,
+        (Media.user_id == current_user.id) | (current_user.is_admin == True)
+    ).first()
     if not media:
-        raise HTTPException(status_code=404, detail="Media not found")
+        raise HTTPException(status_code=404, detail="Media not found or access denied")
 
     person.cover_media_id = media.id
     db.commit()
@@ -948,17 +1030,6 @@ def merge_people(
     if not source or not target:
         raise HTTPException(status_code=404, detail="One or both person profiles not found")
 
-    def can_modify(p: Person) -> bool:
-        if current_user.is_admin:
-            return True
-        return p.user_id is None or p.user_id == current_user.id
-
-    if not can_modify(source) or not can_modify(target):
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    if target.user_id is None and current_user.id:
-        target.user_id = current_user.id
-        
     db.query(FaceDetection).filter(
         FaceDetection.person_id == req.source_person_id
     ).update({"person_id": req.target_person_id}, synchronize_session=False)
@@ -987,17 +1058,69 @@ def delete_person(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Deletes a person profile and unlinks their faces."""
+    """Deletes or unlinks a person profile for current user."""
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
-    if person.user_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    db.query(FaceDetection).filter(FaceDetection.person_id == person_id).update({"person_id": None}, synchronize_session=False)
-    db.delete(person)
+
+    if current_user.is_admin:
+        db.query(FaceDetection).filter(FaceDetection.person_id == person_id).update({"person_id": None}, synchronize_session=False)
+        db.delete(person)
+    else:
+        # Unlink only current user's faces from this person
+        user_faces_q = (
+            db.query(FaceDetection.id)
+            .join(Media, FaceDetection.media_id == Media.id)
+            .filter(FaceDetection.person_id == person_id, Media.user_id == current_user.id)
+        )
+        user_face_ids = [r[0] for r in user_faces_q.all()]
+        if user_face_ids:
+            db.query(FaceDetection).filter(FaceDetection.id.in_(user_face_ids)).update({"person_id": None}, synchronize_session=False)
+
+        # If no faces remain for this person anywhere in the DB, delete the person record
+        remaining = db.query(FaceDetection).filter(FaceDetection.person_id == person_id).count()
+        if remaining == 0:
+            db.delete(person)
+
     db.commit()
     return {"status": "deleted", "id": person_id}
+
+@router.post("/{person_id}/recheck")
+def recheck_person_group(
+    person_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Auto-corrects an incorrect or misclustered person group (e.g. Person 9).
+    Disbands the group, re-recruits matching faces to named people using configured strictness,
+    and cleanly splits or prunes remaining faces.
+    """
+    res = recheck_person_faces(db, person_id=person_id, user_id=current_user.id)
+    if res.get("status") == "error":
+        raise HTTPException(status_code=404, detail=res.get("message", "Person not found"))
+    return res
+
+@router.post("/{person_id}/remove-faces")
+def remove_faces_from_group(
+    person_id: int,
+    req: RemoveFacesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Removes specific faces or photos from a person group without deleting the media ('Not This Person').
+    """
+    res = remove_faces_from_person(
+        db,
+        person_id=person_id,
+        face_ids=req.face_ids,
+        media_ids=req.media_ids,
+        user_id=current_user.id
+    )
+    if res.get("status") == "error":
+        raise HTTPException(status_code=400, detail=res.get("message", "Removal failed"))
+    return res
 
 @router.get("/media/{media_id}/faces")
 def get_media_faces(

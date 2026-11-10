@@ -53,6 +53,14 @@ interface AppSettings {
   use_google_cdn_thumbnails: boolean;
   max_memory_cache_mb: number;
   allowed_local_dirs: string[];
+  // AI Vision & Recognition Settings
+  face_similarity_threshold: number;
+  face_recognition_global: boolean;
+  face_detection_confidence: number;
+  semantic_search_min_similarity: number;
+  blur_laplacian_threshold: number;
+  duplicate_distance_threshold: number;
+  screenshot_expiry_days: number;
   metrics: StorageMetrics;
 }
 
@@ -179,6 +187,16 @@ export default function AppSettingsPage() {
   const [useGoogleCdn, setUseGoogleCdn] = useState<boolean>(true);
   const [maxMemoryMb, setMaxMemoryMb] = useState<number>(512);
 
+  // AI & Vision Parameters state
+  const [faceSimilarityThreshold, setFaceSimilarityThreshold] = useState<number>(0.48);
+  const [faceRecognitionGlobal, setFaceRecognitionGlobal] = useState<boolean>(true);
+  const [faceDetectionConfidence, setFaceDetectionConfidence] = useState<number>(0.30);
+  const [semanticSearchMinSimilarity, setSemanticSearchMinSimilarity] = useState<number>(0.16);
+  const [blurLaplacianThreshold, setBlurLaplacianThreshold] = useState<number>(65.0);
+  const [duplicateDistanceThreshold, setDuplicateDistanceThreshold] = useState<number>(6);
+  const [screenshotExpiryDays, setScreenshotExpiryDays] = useState<number>(30);
+  const [reclusteringUnnamed, setReclusteringUnnamed] = useState(false);
+
   // Approval modal state
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [approvalText, setApprovalText] = useState('');
@@ -236,6 +254,13 @@ export default function AppSettingsPage() {
         setStorageMode(data.storage_mode);
         setUseGoogleCdn(data.use_google_cdn_thumbnails);
         setMaxMemoryMb(data.max_memory_cache_mb);
+        if (data.face_similarity_threshold !== undefined) setFaceSimilarityThreshold(data.face_similarity_threshold);
+        if (data.face_recognition_global !== undefined) setFaceRecognitionGlobal(data.face_recognition_global);
+        if (data.face_detection_confidence !== undefined) setFaceDetectionConfidence(data.face_detection_confidence);
+        if (data.semantic_search_min_similarity !== undefined) setSemanticSearchMinSimilarity(data.semantic_search_min_similarity);
+        if (data.blur_laplacian_threshold !== undefined) setBlurLaplacianThreshold(data.blur_laplacian_threshold);
+        if (data.duplicate_distance_threshold !== undefined) setDuplicateDistanceThreshold(data.duplicate_distance_threshold);
+        if (data.screenshot_expiry_days !== undefined) setScreenshotExpiryDays(data.screenshot_expiry_days);
       }
     } catch (e) {
       console.error('Failed to load settings:', e);
@@ -360,6 +385,13 @@ export default function AppSettingsPage() {
           storage_mode: storageMode,
           use_google_cdn_thumbnails: useGoogleCdn,
           max_memory_cache_mb: maxMemoryMb,
+          face_similarity_threshold: faceSimilarityThreshold,
+          face_recognition_global: faceRecognitionGlobal,
+          face_detection_confidence: faceDetectionConfidence,
+          semantic_search_min_similarity: semanticSearchMinSimilarity,
+          blur_laplacian_threshold: blurLaplacianThreshold,
+          duplicate_distance_threshold: duplicateDistanceThreshold,
+          screenshot_expiry_days: screenshotExpiryDays,
         }),
       });
       const data = await res.json();
@@ -374,6 +406,31 @@ export default function AppSettingsPage() {
       setMessage({ type: 'error', text: 'Network error saving settings.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReclusterUnnamedInSettings = async () => {
+    try {
+      setReclusteringUnnamed(true);
+      const res = await fetch(`${API_URL}/api/v1/people/recluster-unnamed`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessage({
+          type: 'success',
+          text: `Unnamed groups re-clustered successfully! (${data.created_people || 0} groups formed, ${data.assigned_faces || 0} faces assigned)`,
+        });
+        setTimeout(() => setMessage(null), 5000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Re-clustering failed.' }));
+        setMessage({ type: 'error', text: err.detail || 'Re-clustering failed.' });
+      }
+    } catch (e: any) {
+      setMessage({ type: 'error', text: e?.message || 'Re-clustering failed.' });
+    } finally {
+      setReclusteringUnnamed(false);
     }
   };
 
@@ -1040,6 +1097,266 @@ export default function AppSettingsPage() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* AI VISION, FACE RECOGNITION & SMART TRIAGE PARAMETERS */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-600" />
+                AI Vision, Face Recognition & Smart Triage
+              </h3>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                ArcFace &bull; SCRFD &bull; CLIP ViT-B/32
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Configure biometric matching sensitivity, cross-user face sharing, semantic search cutoffs, and focus tolerances.
+            </p>
+          </div>
+          <button
+            onClick={handleSaveSettings}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>{saving ? 'Saving...' : 'Apply & Save Settings'}</span>
+          </button>
+        </div>
+
+        {/* Global Cross-User Face Recognition Card */}
+        <div className="bg-gradient-to-r from-violet-50/70 to-indigo-50/50 border border-violet-200/80 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <h4 className="text-xs font-bold text-slate-800">
+                Global Cross-User Face Recognition (Zero Duplicate Tagging)
+              </h4>
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-semibold">
+                Privacy Guaranteed
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-600 mt-1 max-w-2xl">
+              When enabled, once any user names a face (e.g. &quot;Satish&quot;), that facial ArcFace centroid is recognized across all user libraries with zero rework. <strong>Your photos and timelines remain 100% private to your account</strong> — other users only see their own photos of that person.
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+            <input
+              type="checkbox"
+              checked={faceRecognitionGlobal}
+              onChange={(e) => setFaceRecognitionGlobal(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+          </label>
+        </div>
+
+        {/* Parameters Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Face Similarity Threshold */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-indigo-600" />
+                Face Match Strictness
+              </label>
+              <span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">
+                {faceSimilarityThreshold.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.25"
+              max="0.75"
+              step="0.01"
+              value={faceSimilarityThreshold}
+              onChange={(e) => setFaceSimilarityThreshold(parseFloat(e.target.value))}
+              className="w-full accent-indigo-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>0.25 (Loose)</span>
+              <span>0.48 (Balanced)</span>
+              <span>0.75 (Strict)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Cosine threshold for clustering ArcFace 512-d embeddings. Higher values prevent accidental merging of different family members.
+            </p>
+          </div>
+
+          {/* Face Detection Confidence */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-violet-600" />
+                Face Detection Sensitivity
+              </label>
+              <span className="text-xs font-mono font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-md">
+                {faceDetectionConfidence.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.15"
+              max="0.70"
+              step="0.05"
+              value={faceDetectionConfidence}
+              onChange={(e) => setFaceDetectionConfidence(parseFloat(e.target.value))}
+              className="w-full accent-violet-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>0.15 (High sensitivity)</span>
+              <span>0.30 (Default)</span>
+              <span>0.70 (Obvious only)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Minimum neural score required to register a face bounding box. Lower catches distant or partially turned faces.
+            </p>
+          </div>
+
+          {/* Semantic Search Minimum Score */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Search className="w-3.5 h-3.5 text-cyan-600" />
+                CLIP Semantic Cutoff
+              </label>
+              <span className="text-xs font-mono font-bold text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded-md">
+                {semanticSearchMinSimilarity.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.08"
+              max="0.40"
+              step="0.01"
+              value={semanticSearchMinSimilarity}
+              onChange={(e) => setSemanticSearchMinSimilarity(parseFloat(e.target.value))}
+              className="w-full accent-cyan-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>0.08 (Broad matches)</span>
+              <span>0.16 (Recommended)</span>
+              <span>0.40 (Exact only)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Minimum cosine similarity cutoff for natural language queries (e.g. &quot;sunset at beach&quot;, &quot;birthday party&quot;).
+            </p>
+          </div>
+
+          {/* Blur & Focus Laplacian Threshold */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-amber-600" />
+                Focus & Blur Tolerance
+              </label>
+              <span className="text-xs font-mono font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">
+                {blurLaplacianThreshold.toFixed(1)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="25.0"
+              max="150.0"
+              step="5.0"
+              value={blurLaplacianThreshold}
+              onChange={(e) => setBlurLaplacianThreshold(parseFloat(e.target.value))}
+              className="w-full accent-amber-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>25.0 (Lenient)</span>
+              <span>65.0 (Default)</span>
+              <span>150.0 (Strict / Soft focus)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Laplacian focus variance score below which photos are classified as out-of-focus during Smart Triage scans.
+            </p>
+          </div>
+
+          {/* Duplicate Distance Threshold */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-rose-600" />
+                Duplicate Burst Distance
+              </label>
+              <span className="text-xs font-mono font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md">
+                {duplicateDistanceThreshold}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="1"
+              max="15"
+              step="1"
+              value={duplicateDistanceThreshold}
+              onChange={(e) => setDuplicateDistanceThreshold(parseInt(e.target.value, 10))}
+              className="w-full accent-rose-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>1 (Exact identical)</span>
+              <span>6 (Burst shots)</span>
+              <span>15 (Similar framing)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Perceptual image hash Hamming distance for detecting burst shots and near-duplicate photos in Smart Triage.
+            </p>
+          </div>
+
+          {/* Screenshot Expiry Days */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-blue-600" />
+                Screenshot Cleanup Expiry
+              </label>
+              <span className="text-xs font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
+                {screenshotExpiryDays} days
+              </span>
+            </div>
+            <input
+              type="range"
+              min="7"
+              max="180"
+              step="1"
+              value={screenshotExpiryDays}
+              onChange={(e) => setScreenshotExpiryDays(parseInt(e.target.value, 10))}
+              className="w-full accent-blue-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+              <span>7 days</span>
+              <span>30 days (Default)</span>
+              <span>180 days (6 months)</span>
+            </div>
+            <p className="text-[11px] text-slate-500 pt-1">
+              Temporary screenshots and bill clips older than this duration are automatically surfaced for one-click triage review.
+            </p>
+          </div>
+        </div>
+
+        {/* Quick Re-Cluster Unnamed People Callout */}
+        <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-6">
+          <div className="space-y-1">
+            <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+              Adjusted Match Strictness? Re-Cluster Unnamed Groups
+            </h4>
+            <p className="text-[11px] text-slate-600">
+              Disbands temporary unnamed groups (e.g. &quot;Person 1&quot;, &quot;Person 9&quot;) and re-evaluates all unassigned faces using your new strictness threshold. All user-named people (e.g. &quot;Satish&quot;, &quot;Mom&quot;) and their tagged photos are 100% preserved.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleReclusterUnnamedInSettings}
+            disabled={reclusteringUnnamed}
+            className="flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow-xs disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${reclusteringUnnamed ? 'animate-spin' : ''}`} />
+            <span>{reclusteringUnnamed ? 'Re-Clustering...' : 'Re-Cluster Unnamed Groups'}</span>
+          </button>
         </div>
       </div>
 

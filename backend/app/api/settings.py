@@ -24,6 +24,19 @@ class UpdateSettingsRequest(BaseModel):
     max_memory_cache_mb: Optional[int] = None
     allowed_local_dirs: Optional[List[str]] = None
 
+    # AI & Face Recognition
+    face_similarity_threshold: Optional[float] = None
+    face_recognition_global: Optional[bool] = None
+    face_detection_confidence: Optional[float] = None
+
+    # Semantic Vector Search
+    semantic_search_min_similarity: Optional[float] = None
+
+    # Smart Triage & Quality
+    blur_laplacian_threshold: Optional[float] = None
+    duplicate_distance_threshold: Optional[int] = None
+    screenshot_expiry_days: Optional[int] = None
+
 class ApprovalRequest(BaseModel):
     approved: bool
     confirmation: str # Must equal "I approve local disk storage" to prevent accidental clicks
@@ -77,6 +90,36 @@ def update_settings(
 
     if req.allowed_local_dirs is not None:
         set_setting(db, "allowed_local_dirs", json.dumps(req.allowed_local_dirs))
+
+    # AI & Face Recognition
+    if req.face_similarity_threshold is not None:
+        val = max(0.20, min(req.face_similarity_threshold, 0.90))
+        set_setting(db, "face_similarity_threshold", f"{val:.2f}")
+
+    if req.face_recognition_global is not None:
+        set_setting(db, "face_recognition_global", "true" if req.face_recognition_global else "false")
+
+    if req.face_detection_confidence is not None:
+        val = max(0.10, min(req.face_detection_confidence, 0.90))
+        set_setting(db, "face_detection_confidence", f"{val:.2f}")
+
+    # Semantic Vector Search
+    if req.semantic_search_min_similarity is not None:
+        val = max(0.05, min(req.semantic_search_min_similarity, 0.60))
+        set_setting(db, "semantic_search_min_similarity", f"{val:.2f}")
+
+    # Smart Triage & Quality
+    if req.blur_laplacian_threshold is not None:
+        val = max(10.0, min(req.blur_laplacian_threshold, 300.0))
+        set_setting(db, "blur_laplacian_threshold", f"{val:.1f}")
+
+    if req.duplicate_distance_threshold is not None:
+        val = max(1, min(req.duplicate_distance_threshold, 30))
+        set_setting(db, "duplicate_distance_threshold", str(val))
+
+    if req.screenshot_expiry_days is not None:
+        val = max(1, min(req.screenshot_expiry_days, 365))
+        set_setting(db, "screenshot_expiry_days", str(val))
 
     return {
         "status": "success",

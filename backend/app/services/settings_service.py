@@ -33,6 +33,37 @@ DEFAULT_SETTINGS = {
     "allowed_local_dirs": {
         "value": "[]",
         "description": "JSON array of explicitly approved local directory paths."
+    },
+    # AI & Face Recognition
+    "face_similarity_threshold": {
+        "value": "0.48",
+        "description": "Cosine similarity threshold (0.20 - 0.80) for face recognition and clustering. Higher = stricter match."
+    },
+    "face_recognition_global": {
+        "value": "true",
+        "description": "Share recognized named people globally across user accounts with zero duplicate tagging, while photos remain 100% private."
+    },
+    "face_detection_confidence": {
+        "value": "0.30",
+        "description": "Minimum confidence threshold (0.10 - 0.90) for detecting human face bounding boxes in photos."
+    },
+    # Semantic Vector Search
+    "semantic_search_min_similarity": {
+        "value": "0.16",
+        "description": "Minimum cosine similarity score (0.05 - 0.50) to return a photo or video keyframe in CLIP natural language search."
+    },
+    # Smart Triage & Quality
+    "blur_laplacian_threshold": {
+        "value": "65.0",
+        "description": "Laplacian focus variance threshold (20.0 - 150.0). Photos with focus score below this are categorized as out-of-focus."
+    },
+    "duplicate_distance_threshold": {
+        "value": "6",
+        "description": "Perceptual hash Hamming distance (1 - 15) for grouping duplicate and burst shots in Smart Triage."
+    },
+    "screenshot_expiry_days": {
+        "value": "30",
+        "description": "Number of days (1 - 365) before temporary screenshots and document clips are surfaced for triage review."
     }
 }
 
@@ -168,20 +199,40 @@ def get_all_settings(db: Session) -> Dict[str, Any]:
     for key, info in DEFAULT_SETTINGS.items():
         result[key] = get_setting(db, key, info["value"])
 
-    # Cast boolean & integer types for frontend convenience
+    # Cast boolean & numerical types for frontend convenience
     return {
         "storage_mode": result["storage_mode"],
         "local_storage_approved": result["local_storage_approved"].lower() in ("true", "1", "yes"),
         "use_google_cdn_thumbnails": result["use_google_cdn_thumbnails"].lower() in ("true", "1", "yes"),
         "max_memory_cache_mb": int(result["max_memory_cache_mb"]) if result["max_memory_cache_mb"].isdigit() else 512,
         "allowed_local_dirs": json.loads(result["allowed_local_dirs"]) if result["allowed_local_dirs"].startswith("[") else [],
+
+        # AI & Recognition settings
+        "face_similarity_threshold": float(result.get("face_similarity_threshold", "0.48")),
+        "face_recognition_global": result.get("face_recognition_global", "true").lower() in ("true", "1", "yes"),
+        "face_detection_confidence": float(result.get("face_detection_confidence", "0.30")),
+        "semantic_search_min_similarity": float(result.get("semantic_search_min_similarity", "0.16")),
+        "blur_laplacian_threshold": float(result.get("blur_laplacian_threshold", "65.0")),
+        "duplicate_distance_threshold": int(result.get("duplicate_distance_threshold", "6")),
+        "screenshot_expiry_days": int(result.get("screenshot_expiry_days", "30")),
+
         "metrics": get_storage_metrics(db)
     }
 
-def _get_dir_size_mb(path: str) -> float:
-    """Helper to compute directory size in megabytes safely."""
+import time
+
+_DIR_SIZE_CACHE: Dict[str, Any] = {}
+
+def _get_dir_size_mb(path: str, ttl_seconds: float = 300.0) -> float:
+    """Helper to compute directory size in megabytes safely with 5-minute TTL cache."""
     if not os.path.isdir(path):
         return 0.0
+    now = time.time()
+    if path in _DIR_SIZE_CACHE:
+        val, ts = _DIR_SIZE_CACHE[path]
+        if (now - ts) < ttl_seconds:
+            return val
+
     total_bytes = 0
     try:
         for root, _, files in os.walk(path):
@@ -191,17 +242,20 @@ def _get_dir_size_mb(path: str) -> float:
                     total_bytes += os.path.getsize(fp)
     except Exception:
         pass
-    return round(total_bytes / (1024.0 * 1024.0), 2)
+    res = round(total_bytes / (1024.0 * 1024.0), 2)
+    _DIR_SIZE_CACHE[path] = (res, now)
+    return res
 
 def get_storage_metrics(db: Session) -> Dict[str, Any]:
     """Calculates live storage consumption metrics across RAM and local volumes."""
     from app.services.drive_cache import get_memory_cache_stats
+    from app.models.media import Media
+    from sqlalchemy import func
 
-    originals_dir = settings.MEDIA_DIR
-    thumbnails_dir = settings.THUMBNAIL_DIR
-
-    orig_mb = _get_dir_size_mb(originals_dir)
-    thumb_mb = _get_dir_size_mb(thumbnails_dir)
+    # Ultra-fast DB aggregation (1ms) instead of 90s recursive disk walk across 190GB
+    total_bytes = db.query(func.sum(Media.file_size)).filter(Media.is_deleted == False).scalar() or 0
+    orig_mb = round(float(total_bytes) / (1024.0 * 1024.0), 2)
+    thumb_mb = _get_dir_size_mb(settings.THUMBNAIL_DIR, ttl_seconds=600.0)
     total_disk_mb = round(orig_mb + thumb_mb, 2)
 
     mem_stats = get_memory_cache_stats()

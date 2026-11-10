@@ -613,7 +613,12 @@ def process_faces_for_media(
             (hasattr(media, "category") and media.category in (MediaCategory.SCREENSHOT, MediaCategory.DOCUMENT_BILL))
             or (media.filename and any(k in media.filename.lower() for k in ("screenshot", "screen_shot", "snap", "docs", "doc_")))
         )
-        conf_threshold = 0.25 if is_screenshot_or_doc else 0.30
+        try:
+            from app.services.settings_service import get_setting
+            base_conf = float(get_setting(db, "face_detection_confidence", "0.30"))
+        except Exception:
+            base_conf = 0.30
+        conf_threshold = max(0.15, base_conf - 0.05) if is_screenshot_or_doc else base_conf
 
     W, H = img.size
     detected = detect_faces_in_image(img, conf_threshold=conf_threshold)
@@ -760,17 +765,28 @@ def is_user_named(name: Optional[str]) -> bool:
 def auto_cluster_faces(
     db: Session,
     user_id: Optional[int] = None,
-    similarity_threshold: float = 0.48,
+    similarity_threshold: Optional[float] = None,
     task_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Intelligently clusters face crops using ArcFace 512-d Biometric Cosine Similarity with Anchor Retention.
     Guarantees:
     1. ZERO SHUFFLE: Faces already assigned to user-named people (like 'Mom') are NEVER reassigned.
-    2. SMART RECOGNITION: Computes ArcFace centroid embeddings for named people and recruits matching faces.
+    2. SMART GLOBAL RECOGNITION: Computes ArcFace centroid embeddings for named people across the database
+       so when another user scans their library, existing named identities are automatically recognized with zero rework.
     3. COHESIVE CLUSTERING: Leader-Centroid matching eliminates false-positive chaining drift.
     4. NOISE REDUCTION: Isolated 1-photo background stranger faces stay unassigned without polluting People gallery.
     """
+    from app.services.settings_service import get_setting
+
+    if similarity_threshold is None:
+        try:
+            similarity_threshold = float(get_setting(db, "face_similarity_threshold", "0.48"))
+        except Exception:
+            similarity_threshold = 0.48
+
+    global_recognition = get_setting(db, "face_recognition_global", "true").lower() in ("true", "1", "yes")
+
     if user_id is None:
         media_user = db.query(Media.user_id).filter(Media.user_id != None).first()
         user_id = media_user[0] if media_user else 1
@@ -845,9 +861,9 @@ def auto_cluster_faces(
 
     embeddings = np.array(embs_list)
 
-    # 1. User-Named People & Centroids (Anchor Retention)
+    # 1. User-Named People & Centroids (Anchor Retention & Global Recruitment)
     people_query = db.query(Person)
-    if user_id:
+    if not global_recognition and user_id:
         people_query = people_query.filter(Person.user_id == user_id)
     named_people = {p.id: p for p in people_query.all() if is_user_named(p.name)}
 
@@ -861,8 +877,30 @@ def auto_cluster_faces(
         if person_indices:
             for idx in person_indices:
                 locked_face_ids.add(valid_faces[idx].id)
-            p_embs = embeddings[person_indices]
-            centroid = np.mean(p_embs, axis=0)
+
+        p_embs_list = []
+        if person_indices:
+            p_embs_list.extend(embeddings[person_indices])
+
+        if global_recognition:
+            # Also pull verified embeddings for this person across the entire database (cross-account recognition)
+            other_faces = (
+                db.query(FaceDetection.embedding_str)
+                .filter(FaceDetection.person_id == person_id, FaceDetection.embedding_str.isnot(None))
+                .limit(100)
+                .all()
+            )
+            for (emb_str,) in other_faces:
+                try:
+                    vec = np.array([float(x) for x in emb_str.split(",")], dtype=np.float32)
+                    norm = np.linalg.norm(vec)
+                    if norm > 1e-6:
+                        p_embs_list.append(vec / norm)
+                except Exception:
+                    pass
+
+        if p_embs_list:
+            centroid = np.mean(p_embs_list, axis=0)
             norm = np.linalg.norm(centroid)
             if norm > 1e-6:
                 person_centroids[person_id] = centroid / norm
@@ -1053,4 +1091,274 @@ def index_all_library_faces(db: Session, user_id: Optional[int] = None, max_phot
         "status": "completed",
         "photos_processed": photos_processed,
         "faces_detected": total_detected
+    }
+
+def recheck_person_faces(
+    db: Session,
+    person_id: int,
+    user_id: Optional[int] = None,
+    similarity_threshold: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Auto-corrects an incorrect person group (e.g. 'Person 9' false merge or misgrouped face):
+    1. Unbinds all face detections from this person.
+    2. Deletes the person profile if empty.
+    3. Re-evaluates each face against all named people (global/local centroids) using similarity_threshold.
+       Faces matching named identities (e.g. Satish) are recruited automatically.
+    4. For remaining faces, re-clusters them with strict leader-centroid matching.
+       If two different people were in the group, they split into separate groups.
+       Single outlier/stranger faces remain unassigned noise.
+    """
+    from app.services.settings_service import get_setting
+
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        return {"status": "error", "message": "Person not found"}
+
+    person_name = person.name
+
+    if similarity_threshold is None:
+        try:
+            similarity_threshold = float(get_setting(db, "face_similarity_threshold", "0.48"))
+        except Exception:
+            similarity_threshold = 0.48
+
+    global_recognition = get_setting(db, "face_recognition_global", "true").lower() in ("true", "1", "yes")
+
+    # 1. Fetch all faces currently bound to this person for this user
+    q = db.query(FaceDetection).join(Media, FaceDetection.media_id == Media.id).filter(
+        FaceDetection.person_id == person_id,
+        Media.is_deleted == False
+    )
+    if user_id:
+        q = q.filter((Media.user_id == user_id) | (Media.user_id == None))
+    faces = q.all()
+
+    if not faces:
+        return {"status": "no_faces", "message": "No faces found for this person", "total_faces": 0}
+
+    # 2. Unassign faces from this person
+    for f in faces:
+        f.person_id = None
+        f.cluster_id = None
+    db.flush()
+
+    # 3. If no faces remain for this person anywhere in the DB, delete the person record
+    remaining = db.query(FaceDetection).filter(FaceDetection.person_id == person_id).count()
+    if remaining == 0:
+        db.delete(person)
+        db.flush()
+
+    # 4. Gather named people and their centroids (excluding the person being rechecked)
+    people_query = db.query(Person).filter(Person.id != person_id)
+    if not global_recognition and user_id:
+        people_query = people_query.filter(Person.user_id == user_id)
+    named_people = {p.id: p for p in people_query.all() if is_user_named(p.name)}
+
+    person_centroids = {}
+    for p_id, p_obj in named_people.items():
+        p_embs_list = []
+        p_faces = (
+            db.query(FaceDetection.embedding_str)
+            .filter(FaceDetection.person_id == p_id, FaceDetection.embedding_str.isnot(None))
+            .limit(100)
+            .all()
+        )
+        for (emb_str,) in p_faces:
+            try:
+                vec = np.array([float(x) for x in emb_str.split(",")], dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 1e-6:
+                    p_embs_list.append(vec / norm)
+            except Exception:
+                pass
+        if p_embs_list:
+            centroid = np.mean(p_embs_list, axis=0)
+            norm = np.linalg.norm(centroid)
+            if norm > 1e-6:
+                person_centroids[p_id] = centroid / norm
+
+    # 5. Extract embeddings for freed faces
+    valid_freed_faces = []
+    freed_embs = []
+    for f in faces:
+        if f.embedding_str:
+            try:
+                vec = np.array([float(x) for x in f.embedding_str.split(",")], dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 1e-6:
+                    valid_freed_faces.append(f)
+                    freed_embs.append(vec / norm)
+            except Exception:
+                pass
+
+    recruited_count = 0
+    recruited_names = set()
+    unassigned_indices = []
+
+    for i, f in enumerate(valid_freed_faces):
+        emb = freed_embs[i]
+        best_sim = -1.0
+        best_target_id = None
+        for target_id, centroid in person_centroids.items():
+            sim = float(np.dot(emb, centroid))
+            if sim > best_sim:
+                best_sim = sim
+                best_target_id = target_id
+
+        if best_sim >= similarity_threshold and best_target_id is not None:
+            f.person_id = best_target_id
+            recruited_count += 1
+            if best_target_id in named_people:
+                recruited_names.add(named_people[best_target_id].name)
+        else:
+            unassigned_indices.append(i)
+
+    # 6. Re-cluster the remaining faces among themselves
+    new_clusters_count = 0
+    viable_clusters = []
+    if unassigned_indices:
+        clusters = []
+        centroids = []
+        for orig_idx in unassigned_indices:
+            emb = freed_embs[orig_idx]
+            if not centroids:
+                clusters.append([orig_idx])
+                centroids.append(emb)
+                continue
+            sims = [float(np.dot(c, emb)) for c in centroids]
+            best_c = int(np.argmax(sims))
+            if sims[best_c] >= (similarity_threshold + 0.02):
+                clusters[best_c].append(orig_idx)
+                new_c = np.mean([freed_embs[j] for j in clusters[best_c]], axis=0)
+                norm = np.linalg.norm(new_c)
+                centroids[best_c] = new_c / max(norm, 1e-6)
+            else:
+                clusters.append([orig_idx])
+                centroids.append(emb)
+
+        min_size = 2 if len(valid_freed_faces) >= 4 else 1
+        viable_clusters = [c for c in clusters if len(c) >= min_size]
+
+        if viable_clusters:
+            existing_numbers = []
+            for p in db.query(Person).all():
+                if p.name.startswith("Person "):
+                    try:
+                        existing_numbers.append(int(p.name[7:].strip()))
+                    except ValueError:
+                        pass
+            next_num = (max(existing_numbers) + 1) if existing_numbers else 1
+
+            for c in viable_clusters:
+                new_person = Person(user_id=user_id, name=f"Person {next_num}")
+                next_num += 1
+                db.add(new_person)
+                db.flush()
+                new_clusters_count += 1
+                for orig_idx in c:
+                    valid_freed_faces[orig_idx].person_id = new_person.id
+                    valid_freed_faces[orig_idx].cluster_id = new_person.id
+
+    db.commit()
+
+    # Re-number remaining unnamed people sequentially
+    remaining_unnamed = [
+        p for p in db.query(Person).filter(Person.user_id == user_id if user_id else True, Person.is_pet == False).order_by(Person.id.asc()).all()
+        if not is_user_named(p.name)
+    ]
+    renumbered = False
+    for idx, p in enumerate(remaining_unnamed, start=1):
+        expected = f"Person {idx}"
+        if p.name != expected:
+            p.name = expected
+            renumbered = True
+    if renumbered:
+        db.commit()
+
+    assigned_in_clusters = sum(len(c) for c in viable_clusters)
+    unassigned_count = len(faces) - recruited_count - assigned_in_clusters
+
+    return {
+        "status": "rechecked",
+        "original_name": person_name,
+        "total_faces": len(faces),
+        "recruited_to_named": recruited_count,
+        "recruited_names": list(recruited_names),
+        "new_clusters_created": new_clusters_count,
+        "unassigned_faces": unassigned_count
+    }
+
+def recluster_unnamed_people(db: Session, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Disbands all unnamed person clusters ('Person 1', 'Person 2', ...) and re-runs
+    leader-centroid clustering on all unassigned faces with the currently configured similarity threshold.
+    All user-named people ('Satish', 'Mom', etc.) and their locked faces are 100% PRESERVED.
+    """
+    unnamed_people = [
+        p for p in db.query(Person).filter(
+            Person.user_id == user_id if user_id else True,
+            Person.is_pet == False
+        ).all()
+        if not is_user_named(p.name)
+    ]
+
+    unnamed_ids = [p.id for p in unnamed_people]
+    if unnamed_ids:
+        db.query(FaceDetection).filter(FaceDetection.person_id.in_(unnamed_ids)).update(
+            {"person_id": None, "cluster_id": None},
+            synchronize_session=False
+        )
+        db.query(Person).filter(Person.id.in_(unnamed_ids)).delete(synchronize_session=False)
+        db.commit()
+
+    return auto_cluster_faces(db, user_id=user_id)
+
+def remove_faces_from_person(
+    db: Session,
+    person_id: int,
+    face_ids: Optional[List[int]] = None,
+    media_ids: Optional[List[int]] = None,
+    user_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Removes specific faces or media photos from a person without deleting the media.
+    Sets FaceDetection.person_id = None.
+    If no faces remain for the person, the person record is automatically pruned.
+    """
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        return {"status": "error", "message": "Person not found"}
+
+    q = db.query(FaceDetection).filter(FaceDetection.person_id == person_id)
+    if face_ids:
+        q = q.filter(FaceDetection.id.in_(face_ids))
+    elif media_ids:
+        q = q.filter(FaceDetection.media_id.in_(media_ids))
+    else:
+        return {"status": "error", "message": "Must provide face_ids or media_ids"}
+
+    if user_id:
+        q = q.join(Media, FaceDetection.media_id == Media.id).filter(
+            (Media.user_id == user_id) | (Media.user_id == None)
+        )
+
+    matched_faces = q.all()
+    count = len(matched_faces)
+    for f in matched_faces:
+        f.person_id = None
+        f.cluster_id = None
+    db.commit()
+
+    remaining = db.query(FaceDetection).filter(FaceDetection.person_id == person_id).count()
+    deleted_person = False
+    if remaining == 0:
+        db.delete(person)
+        db.commit()
+        deleted_person = True
+
+    return {
+        "status": "removed",
+        "removed_count": count,
+        "person_deleted": deleted_person
     }

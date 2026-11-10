@@ -40,7 +40,8 @@ def analyze_directional_motion_blur(arr_gray: np.ndarray) -> float:
 
 def analyze_image_quality(
     image: Image.Image,
-    faces: Optional[List[FaceDetection]] = None
+    faces: Optional[List[FaceDetection]] = None,
+    blur_threshold: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Advanced Subject-Aware Quality & Blur Analyzer:
@@ -48,6 +49,14 @@ def analyze_image_quality(
     - Detects accidental pocket / pitch black or blown-out white shots.
     - Scores subject sharpness accurately based on face / salient center regions.
     """
+    if blur_threshold is None:
+        try:
+            from app.services.settings_service import get_setting
+            from app.database import SessionLocal
+            with SessionLocal() as s_db:
+                blur_threshold = float(get_setting(s_db, "blur_laplacian_threshold", "65.0"))
+        except Exception:
+            blur_threshold = 65.0
     W, H = image.size
     gray = image.convert("L")
     arr_gray = np.array(gray, dtype=np.float32)
@@ -112,15 +121,15 @@ def analyze_image_quality(
             avg_face_var = sum(face_scores) / len(face_scores)
             effective_sharpness = best_face_var
 
-            # If the face is in sharp focus (variance >= 65.0)
-            if best_face_var >= 65.0:
-                if best_face_var >= global_variance * 1.30 or global_variance < 70.0:
+            # If the face is in sharp focus (variance >= blur_threshold)
+            if best_face_var >= blur_threshold:
+                if best_face_var >= global_variance * 1.30 or global_variance < (blur_threshold + 5.0):
                     # Face is crisp while overall canvas has lower variance -> Artistic Portrait / Bokeh!
                     is_bokeh = True
                     blur_type = "bokeh_portrait"
                 else:
                     blur_type = "sharp"
-            elif best_face_var < 50.0 and global_variance < 60.0:
+            elif best_face_var < (blur_threshold * 0.75) and global_variance < (blur_threshold * 0.90):
                 blur_type = "out_of_focus"
     else:
         # No faces detected. Check central salient region vs perimeter (Macro / Center subject depth-of-field)
@@ -129,12 +138,12 @@ def analyze_image_quality(
         center_crop = gray.crop((cx1, cy1, cx2, cy2))
         center_var = calculate_laplacian_variance(center_crop)
 
-        if center_var >= 75.0 and (center_var >= global_variance * 1.30 or global_variance < 65.0):
+        if center_var >= (blur_threshold * 1.15) and (center_var >= global_variance * 1.30 or global_variance < blur_threshold):
             # Macro / Center Bokeh! The subject in the center is crisp, background is soft
             is_bokeh = True
             blur_type = "bokeh_portrait"
             effective_sharpness = center_var
-        elif global_variance < 65.0:
+        elif global_variance < blur_threshold:
             # Check for directional motion blur (camera shake)
             anisotropy = analyze_directional_motion_blur(arr_gray)
             if anisotropy > 0.32:
