@@ -40,6 +40,8 @@ class PersonUpdateRequest(BaseModel):
     name: Optional[str] = None
     relationship_type: Optional[str] = None
     is_hidden: Optional[bool] = None
+    is_pet: Optional[bool] = None
+    pet_type: Optional[str] = None
 
 class SetCoverRequest(BaseModel):
     media_id: int
@@ -981,6 +983,10 @@ def update_person(
         person.relationship_type = req.relationship_type.strip() or None
     if req.is_hidden is not None:
         person.is_hidden = req.is_hidden
+    if req.is_pet is not None:
+        person.is_pet = req.is_pet
+    if req.pet_type is not None:
+        person.pet_type = req.pet_type.strip() or None
 
     db.commit()
     db.refresh(person)
@@ -988,7 +994,9 @@ def update_person(
         "id": person.id,
         "name": person.name,
         "relationship_type": person.relationship_type,
-        "is_hidden": person.is_hidden
+        "is_hidden": person.is_hidden,
+        "is_pet": bool(person.is_pet),
+        "pet_type": person.pet_type
     }
 
 @router.patch("/{person_id}/cover")

@@ -319,3 +319,87 @@ def purge_expired_trash(
         "reclaimed_mb": round(reclaimed_bytes / (1024 * 1024), 2),
         "retention_days": days
     }
+
+def generate_prometheus_metrics() -> str:
+    """Generates standard Prometheus text exposition format metrics for Grafana/Prometheus scraping."""
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        media_active = db.query(func.count(Media.id)).filter(Media.is_deleted == False).scalar() or 0
+        media_trash = db.query(func.count(Media.id)).filter(Media.is_deleted == True).scalar() or 0
+        total_storage_bytes = db.query(func.coalesce(func.sum(Media.file_size), 0)).filter(Media.is_deleted == False).scalar() or 0
+        faces_count = db.query(func.count(FaceDetection.id)).scalar() or 0
+        people_count = db.query(func.count(Person.id)).scalar() or 0
+        users_count = db.query(func.count(User.id)).scalar() or 0
+        albums_count = db.query(func.count(Album.id)).scalar() or 0
+
+    disk = shutil.disk_usage("/")
+    cpu_cores = os.cpu_count() or 1
+    cpu_percent = 0.0
+    try:
+        load1, _, _ = os.getloadavg()
+        cpu_percent = round(min(100.0, (load1 / cpu_cores) * 100), 1)
+    except Exception:
+        pass
+
+    mem_total = 0
+    mem_used = 0
+    try:
+        if os.path.exists("/proc/meminfo"):
+            with open("/proc/meminfo", "r") as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        meminfo[parts[0].strip()] = parts[1].strip()
+                t_kb = float(meminfo.get("MemTotal", "0 kB").split()[0])
+                a_kb = float(meminfo.get("MemAvailable", meminfo.get("MemFree", "0 kB")).split()[0])
+                mem_total = int(t_kb * 1024)
+                mem_used = int(max(0.0, t_kb - a_kb) * 1024)
+    except Exception:
+        pass
+
+    pending_tasks = 0
+    try:
+        from app.services.task_queue import get_task_queue
+        q = get_task_queue()
+        if hasattr(q, "redis_client") and q.redis_client:
+            pending_tasks = q.redis_client.llen("task_queue") or 0
+    except Exception:
+        pass
+
+    lines = [
+        "# HELP memorypics_media_total Total number of indexed media items",
+        "# TYPE memorypics_media_total gauge",
+        f'memorypics_media_total{{status="active"}} {media_active}',
+        f'memorypics_media_total{{status="trash"}} {media_trash}',
+        "# HELP memorypics_storage_bytes Total storage consumed by active media",
+        "# TYPE memorypics_storage_bytes gauge",
+        f'memorypics_storage_bytes {total_storage_bytes}',
+        "# HELP memorypics_faces_total Total number of detected faces",
+        "# TYPE memorypics_faces_total gauge",
+        f'memorypics_faces_total {faces_count}',
+        "# HELP memorypics_people_total Total number of named people",
+        "# TYPE memorypics_people_total gauge",
+        f'memorypics_people_total {people_count}',
+        "# HELP memorypics_users_total Total number of users",
+        "# TYPE memorypics_users_total gauge",
+        f'memorypics_users_total {users_count}',
+        "# HELP memorypics_albums_total Total number of albums",
+        "# TYPE memorypics_albums_total gauge",
+        f'memorypics_albums_total {albums_count}',
+        "# HELP memorypics_queue_pending_tasks Number of background jobs waiting in Redis queue",
+        "# TYPE memorypics_queue_pending_tasks gauge",
+        f'memorypics_queue_pending_tasks {pending_tasks}',
+        "# HELP memorypics_host_cpu_percent Host CPU usage percentage",
+        "# TYPE memorypics_host_cpu_percent gauge",
+        f'memorypics_host_cpu_percent {cpu_percent}',
+        "# HELP memorypics_host_memory_bytes Host memory in bytes",
+        "# TYPE memorypics_host_memory_bytes gauge",
+        f'memorypics_host_memory_bytes{{type="total"}} {mem_total}',
+        f'memorypics_host_memory_bytes{{type="used"}} {mem_used}',
+        "# HELP memorypics_host_disk_bytes Host root mount capacity in bytes",
+        "# TYPE memorypics_host_disk_bytes gauge",
+        f'memorypics_host_disk_bytes{{type="total"}} {disk.total}',
+        f'memorypics_host_disk_bytes{{type="free"}} {disk.free}',
+    ]
+    return "\n".join(lines) + "\n"

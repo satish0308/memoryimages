@@ -1,0 +1,34 @@
+# MyMemoryPics Automated Reverse Proxy & SSL Configuration
+# Default: Local HTTP on port 80. For automatic HTTPS on a public domain,
+# replace ':80' with your domain name (e.g., photos.example.com) and set your email.
+
+:80 {
+    # Gzip & Zstandard compression
+    encode zstd gzip
+
+    # Reverse proxy backend API endpoints
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    # Reverse proxy API documentation
+    handle /docs* {
+        reverse_proxy backend:8000
+    }
+    handle /redoc* {
+        reverse_proxy backend:8000
+    }
+    handle /openapi.json {
+        reverse_proxy backend:8000
+    }
+
+    # Prometheus telemetry metrics
+    handle /metrics {
+        reverse_proxy backend:8000
+    }
+
+    # Reverse proxy Next.js frontend application and web sockets
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

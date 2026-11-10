@@ -133,7 +133,14 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                 total_steps=total,
                 message=f"Indexed {processed_so_far}/{total} ({pct}%): {last_item_name}"
             )
+            TaskQueue.save_checkpoint("clip_indexing", {
+                "indexed_count": indexed_count,
+                "current_step": processed_so_far,
+                "total": total,
+                "last_item": last_item_name
+            })
 
+        TaskQueue.clear_checkpoint("clip_indexing")
         return {"indexed_count": indexed_count, "total": total}
 
 
@@ -272,14 +279,21 @@ def run_database_backup(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
 
 
 def run_media_scan(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Runs local filesystem scan to ingest new photos and generate WebP thumbnails with live progress."""
+    """Runs local filesystem scan to ingest new photos and generate WebP thumbnails with live progress and resilient checkpoints."""
     from app.services.scanner import scan_directory
     from app.models.user import User
+    import hashlib
+
+    target_dir = payload.get("directory_path") or settings.MEDIA_DIR
+    dir_hash = hashlib.md5(target_dir.encode()).hexdigest()[:8]
+    checkpoint_key = f"media_scan:{dir_hash}"
+    prior_checkpoint = TaskQueue.get_checkpoint(checkpoint_key)
+    resume_note = f" (Resuming scan: ~{prior_checkpoint.get('current')}/{prior_checkpoint.get('total')})" if prior_checkpoint else ""
 
     TaskQueue.update_task(
         task_id,
         progress=0,
-        message="Discovering files across storage directories..."
+        message=f"Discovering files across storage directories...{resume_note}"
     )
 
     def on_progress(current, total, pct, filename, added):
@@ -294,14 +308,23 @@ def run_media_scan(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             total_steps=total,
             message=msg
         )
+        TaskQueue.save_checkpoint(checkpoint_key, {
+            "directory": target_dir,
+            "current": current,
+            "total": total,
+            "added": added,
+            "last_file": filename
+        })
 
     with SessionLocal() as db:
         primary_user = db.query(User).order_by(User.id.asc()).first()
         uid = primary_user.id if primary_user else 1
-        target_dir = payload.get("directory_path") or settings.MEDIA_DIR
 
         res = scan_directory(db, target_dir, user_id=uid, progress_callback=on_progress)
         
+        # Clear checkpoint on clean completion
+        TaskQueue.clear_checkpoint(checkpoint_key)
+
         added_count = res.get("added", 0)
         scanned_count = res.get("scanned", 0)
         existing_count = res.get("existing", 0)

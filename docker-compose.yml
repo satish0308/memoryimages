@@ -28,6 +28,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - ./backend/app:/app/app
       - ./data/db:/data/db
@@ -86,6 +88,8 @@ services:
       - S3_PUBLIC_URL=${S3_PUBLIC_URL:-http://localhost:${MINIO_PORT:-9000}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - ./backend/app:/app/app
       - ./data/db:/data/db
@@ -151,6 +155,21 @@ services:
       backend:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: memorypics-caddy
+    restart: unless-stopped
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+
 volumes:
   db_data:
   postgres_data:
@@ -158,3 +177,5 @@ volumes:
   thumbnails_data:
   redis_data:
   minio_data:
+  caddy_data:
+  caddy_config:

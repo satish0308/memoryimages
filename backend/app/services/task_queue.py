@@ -14,6 +14,7 @@ TASK_QUEUE_KEY = "memorypics:tasks:queue"
 TASK_HISTORY_KEY = "memorypics:tasks:history"
 TASK_DATA_PREFIX = "memorypics:task:"
 TASK_CANCEL_PREFIX = "memorypics:cancel:"
+TASK_CHECKPOINT_PREFIX = "memorypics:checkpoint:"
 TASK_EVENTS_CHANNEL = "memorypics:events:tasks"
 
 # In-memory fallback if Redis is unreachable
@@ -270,6 +271,45 @@ class TaskQueue:
             message="Task cancellation requested by user."
         )
         return task is not None
+
+    @staticmethod
+    def save_checkpoint(key: str, data: Dict[str, Any], ttl: int = 86400 * 7):
+        """Saves a resilient worker job checkpoint to Redis/memory so long scans resume seamlessly."""
+        data_with_ts = {**data, "_checkpoint_at": datetime.now(timezone.utc).isoformat()}
+        r = get_redis_client()
+        if r:
+            try:
+                r.set(f"{TASK_CHECKPOINT_PREFIX}{key}", json.dumps(data_with_ts, default=str), ex=ttl)
+                r.close()
+            except Exception as e:
+                logger.debug(f"Failed to save checkpoint {key}: {e}")
+        _memory_tasks[f"checkpoint:{key}"] = data_with_ts
+
+    @staticmethod
+    def get_checkpoint(key: str) -> Optional[Dict[str, Any]]:
+        """Retrieves an existing checkpoint to resume an interrupted scan/AI background job."""
+        r = get_redis_client()
+        if r:
+            try:
+                raw = r.get(f"{TASK_CHECKPOINT_PREFIX}{key}")
+                r.close()
+                if raw:
+                    return json.loads(raw)
+            except Exception as e:
+                logger.debug(f"Failed to read checkpoint {key}: {e}")
+        return _memory_tasks.get(f"checkpoint:{key}")
+
+    @staticmethod
+    def clear_checkpoint(key: str):
+        """Clears a checkpoint after successful job completion."""
+        r = get_redis_client()
+        if r:
+            try:
+                r.delete(f"{TASK_CHECKPOINT_PREFIX}{key}")
+                r.close()
+            except Exception as e:
+                logger.debug(f"Failed to clear checkpoint {key}: {e}")
+        _memory_tasks.pop(f"checkpoint:{key}", None)
 
     @staticmethod
     def deduplicate_queue() -> int:

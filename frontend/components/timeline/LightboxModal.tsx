@@ -32,7 +32,10 @@ import {
   ShieldCheck,
   Search,
   Crown,
-  AlertTriangle
+  AlertTriangle,
+  FileText,
+  Copy,
+  ScanText
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 import { SharePhotoModal } from './SharePhotoModal';
@@ -183,6 +186,54 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     } finally {
       setIsSavingEnhancedCopy(false);
     }
+  };
+
+  // Apple-Style Live Text OCR State
+  const [showLiveText, setShowLiveText] = useState(false);
+  const [liveTextBlocks, setLiveTextBlocks] = useState<Array<{ text: string; box_x: number; box_y: number; box_w: number; box_h: number }>>([]);
+  const [liveTextFull, setLiveTextFull] = useState<string>('');
+  const [isLoadingLiveText, setIsLoadingLiveText] = useState(false);
+  const [copiedTextMsg, setCopiedTextMsg] = useState<string | null>(null);
+
+  // Reset Live Text when navigating photos
+  useEffect(() => {
+    setShowLiveText(false);
+    setLiveTextBlocks([]);
+    setLiveTextFull('');
+    setCopiedTextMsg(null);
+  }, [photo?.id]);
+
+  const handleToggleLiveText = async () => {
+    if (!photo) return;
+    const nextState = !showLiveText;
+    setShowLiveText(nextState);
+
+    if (nextState && liveTextBlocks.length === 0 && !liveTextFull) {
+      setIsLoadingLiveText(true);
+      try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}/ocr`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setLiveTextBlocks(data.blocks || []);
+          setLiveTextFull(data.full_text || '');
+        }
+      } catch (e) {
+        console.error('Live text fetch error:', e);
+      } finally {
+        setIsLoadingLiveText(false);
+      }
+    }
+  };
+
+  const copyLiveTextToClipboard = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedTextMsg('Copied to clipboard!');
+    setTimeout(() => setCopiedTextMsg(null), 2500);
   };
 
   useEffect(() => {
@@ -1201,6 +1252,67 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 </div>
               </div>
             ))}
+
+            {/* Apple-Style Live Text OCR Overlay Canvas */}
+            {showLiveText && zoom === 1 && !isEnhancing && (
+              <>
+                {liveTextBlocks.map((block, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      left: `${block.box_x * 100}%`,
+                      top: `${block.box_y * 100}%`,
+                      width: `${block.box_w * 100}%`,
+                      height: `${block.box_h * 100}%`,
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyLiveTextToClipboard(block.text);
+                    }}
+                    title={`Click to copy: "${block.text}"`}
+                    className="absolute cursor-pointer border border-sky-400/80 bg-sky-500/25 hover:bg-sky-500/40 rounded transition-all group backdrop-blur-[1px] shadow-sm hover:shadow-sky-500/50"
+                  >
+                    <div className="hidden group-hover:flex absolute -top-7 left-1/2 -translate-x-1/2 z-40 items-center gap-1 bg-slate-950/95 text-white text-[10px] px-2 py-0.5 rounded shadow-lg border border-slate-700 whitespace-nowrap">
+                      <Copy className="w-2.5 h-2.5 text-sky-400" />
+                      <span>Copy</span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Floating Bottom Live Text Action Bar */}
+                <div className="absolute bottom-4 right-4 z-30 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-sky-500/40 shadow-xl">
+                  <FileText className="w-4 h-4 text-sky-400" />
+                  <span className="text-xs text-slate-200">
+                    {isLoadingLiveText
+                      ? 'Scanning text...'
+                      : liveTextBlocks.length > 0
+                      ? `${liveTextBlocks.length} text region(s)`
+                      : 'No text detected'}
+                  </span>
+                  {(liveTextFull || liveTextBlocks.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyLiveTextToClipboard(liveTextFull || liveTextBlocks.map((b) => b.text).join('\n'));
+                      }}
+                      className="flex items-center gap-1 ml-2 px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow transition"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy All</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Live Text Copied Toast */}
+            {copiedTextMsg && (
+              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white text-xs px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 animate-bounce">
+                <Check className="w-4 h-4" />
+                <span>{copiedTextMsg}</span>
+              </div>
+            )}
           </div>
 
           {/* Adding Face Tag Hint */}
@@ -1312,6 +1424,25 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               {faces.length > 0 && (
                 <span className="bg-indigo-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-bold">
                   {faces.length}
+                </span>
+              )}
+            </button>
+
+            {/* Apple-Style Live Text OCR Toggle */}
+            <button
+              onClick={handleToggleLiveText}
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium transition ${
+                showLiveText 
+                  ? 'bg-sky-600/40 text-sky-200 border border-sky-400/50 shadow-sm shadow-sky-500/20' 
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Apple-Style Live Text: Select & Copy Text from Photo"
+            >
+              <ScanText className="w-3.5 h-3.5" />
+              <span>Live Text</span>
+              {liveTextBlocks.length > 0 && (
+                <span className="bg-sky-500 text-white text-[9px] px-1.5 py-0.2 rounded-full font-bold">
+                  {liveTextBlocks.length}
                 </span>
               )}
             </button>

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import settings
@@ -191,5 +191,12 @@ def root():
         "app": settings.PROJECT_NAME,
         "docs": "/docs",
         "api_v1": settings.API_V1_STR,
+        "metrics": "/metrics",
         "status": "online"
     }
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics():
+    """Exposes standard Prometheus exposition format telemetry for monitoring."""
+    from app.api.admin import generate_prometheus_metrics
+    return PlainTextResponse(generate_prometheus_metrics(), media_type="text/plain; version=0.0.4")

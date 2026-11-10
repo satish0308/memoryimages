@@ -14,10 +14,13 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from app.config import settings
 
-# Register pillow-heif for transparent HEIC / HEIF loading
+# Register pillow-heif for transparent HEIC / HEIF / AVIF loading and saving
+HAS_AVIF = False
 try:
     import pillow_heif
     pillow_heif.register_heif_opener()
+    pillow_heif.register_avif_opener()
+    HAS_AVIF = True
 except Exception:
     pass
 
@@ -120,6 +123,14 @@ def generate_thumbnails(original_path: str, media_id: int) -> Dict[str, Any]:
         if icc_profile:
             thumb_256_kwargs["icc_profile"] = icc_profile
         img_256.save(thumb_256_path, "WEBP", **thumb_256_kwargs)
+
+        # 2b. Next-gen AVIF Thumbnail (additional 30-40% file size reduction for modern clients)
+        if HAS_AVIF:
+            try:
+                avif_256_path = os.path.splitext(thumb_256_path)[0] + ".avif"
+                img_256.save(avif_256_path, "AVIF", quality=80)
+            except Exception:
+                pass
 
         # 3. Calculate perceptual hash (pHash) directly from 512px thumbnail (identical hash, 48x faster)
         phash_val = str(imagehash.phash(img_256))

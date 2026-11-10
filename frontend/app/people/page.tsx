@@ -23,7 +23,9 @@ import {
   CheckSquare,
   Calendar,
   Play,
-  Layers
+  Layers,
+  Smile,
+  ArrowDownUp
 } from 'lucide-react';
 import { MediaItem } from '@/components/timeline/PhotoCard';
 import { DaySection, TimelineGroup } from '@/components/timeline/DaySection';
@@ -143,6 +145,8 @@ export default function PeoplePage() {
   const [density, setDensity] = useState<GridDensity>('normal');
   const [collapseBursts, setCollapseBursts] = useState(true);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
+  const [expressionFilter, setExpressionFilter] = useState<'all' | 'smiling' | 'neutral'>('all');
+  const [chronologicalOrder, setChronologicalOrder] = useState<'desc' | 'asc'>('desc');
 
   // Modals
   const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
@@ -365,10 +369,35 @@ export default function PeoplePage() {
     isSearchPersonOpen,
   ]);
 
+  // Filtered & Chronologically Ordered Timeline for Person
+  const displayedTimeline = useMemo(() => {
+    let list = personTimeline.map((group) => {
+      if (expressionFilter === 'all') return group;
+      const filteredItems = group.items.filter((it) => {
+        if (expressionFilter === 'smiling') return Boolean(it.is_smiling);
+        if (expressionFilter === 'neutral') return !it.is_smiling;
+        return true;
+      });
+      return {
+        ...group,
+        items: filteredItems,
+        count: filteredItems.length,
+      };
+    }).filter((g) => g.items.length > 0);
+
+    if (chronologicalOrder === 'asc') {
+      return [...list].reverse().map((g) => ({
+        ...g,
+        items: [...g.items].reverse(),
+      }));
+    }
+    return list;
+  }, [personTimeline, expressionFilter, chronologicalOrder]);
+
   // Flat array of all photos in current person timeline
   const allPersonPhotos = useMemo(() => {
-    return personTimeline.flatMap((group) => group.items);
-  }, [personTimeline]);
+    return displayedTimeline.flatMap((group) => group.items);
+  }, [displayedTimeline]);
 
   // 2D Drag-and-Select Hook for Person Timeline
   const {
@@ -812,6 +841,27 @@ export default function PeoplePage() {
     }
   };
 
+  const handleToggleIsPet = async (personId: number, isPet: boolean) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${API_URL}/api/v1/people/${personId}`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ is_pet: isPet }),
+      });
+      if (res.ok) {
+        setSelectedPerson((prev) => (prev ? { ...prev, is_pet: isPet } : null));
+        fetchPeople();
+        setStatusMessage(isPet ? 'Marked as Pet 🐾' : 'Marked as Person 👤');
+        setTimeout(() => setStatusMessage(null), 2500);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Manual Merge from Modal
   const handleMergePeople = async () => {
     if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId || isMergingModal) return;
@@ -1045,6 +1095,21 @@ export default function PeoplePage() {
                   <option value="Other">🏷️ Other</option>
                 </select>
 
+                {/* Pet / Human Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => handleToggleIsPet(selectedPerson.id, !selectedPerson.is_pet)}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition shadow-xs ${
+                    selectedPerson.is_pet
+                      ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200'
+                      : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:text-indigo-600'
+                  }`}
+                  title={selectedPerson.is_pet ? 'Switch category to Person' : 'Switch category to Pet (Dog/Cat)'}
+                >
+                  <span>🐾</span>
+                  <span>{selectedPerson.is_pet ? 'Pet' : 'Person'}</span>
+                </button>
+
                 {/* Ambient Kiosk Mode Frame launcher */}
                 <Link
                   href={`/kiosk?person_id=${selectedPerson.id}&person_name=${encodeURIComponent(selectedPerson.name)}`}
@@ -1127,6 +1192,52 @@ export default function PeoplePage() {
                 <Layers className="w-3.5 h-3.5 text-indigo-500" />
                 <span>Bursts: {collapseBursts ? 'Collapsed' : 'Expanded'}</span>
               </button>
+
+              {/* Facial Expression Filter */}
+              <div className="flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-0.5 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setExpressionFilter('all')}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition ${
+                    expressionFilter === 'all'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                  title="Show all expressions"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpressionFilter('smiling')}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg transition ${
+                    expressionFilter === 'smiling'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-emerald-500'
+                  }`}
+                  title="Filter strictly smiling & joyful photos"
+                >
+                  <Smile className="w-3.5 h-3.5" />
+                  <span>Smiling</span>
+                </button>
+              </div>
+
+              {/* Age Progression / Chronological Direction */}
+              <button
+                type="button"
+                onClick={() => setChronologicalOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition shadow-xs ${
+                  chronologicalOrder === 'asc'
+                    ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                }`}
+                title="Toggle between Newest First and Childhood / Growing Up progression"
+              >
+                <ArrowDownUp className="w-3.5 h-3.5 text-amber-500" />
+                <span>
+                  {chronologicalOrder === 'asc' ? '🌱 Growing Up (Childhood First)' : 'Newest First'}
+                </span>
+              </button>
             </div>
 
             {/* Right: Selection status & Select All */}
@@ -1161,19 +1272,19 @@ export default function PeoplePage() {
               <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
               <span>Loading {selectedPerson.name}&apos;s life timeline...</span>
             </div>
-          ) : personTimeline.length === 0 ? (
+          ) : displayedTimeline.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-3xl p-16 text-center space-y-3">
               <div className="w-12 h-12 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-full flex items-center justify-center mx-auto">
                 <Users className="w-6 h-6" />
               </div>
               <h3 className="font-bold text-slate-800 dark:text-white text-base">No Photos Found</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                No photos were detected for {selectedPerson.name} in this timeline.
+                No photos match the current expression or time filters for {selectedPerson.name}.
               </p>
             </div>
           ) : (
             <div className="space-y-8">
-              {personTimeline.map((group) => (
+              {displayedTimeline.map((group) => (
                 <DaySection
                   key={group.key || group.date}
                   group={group}
