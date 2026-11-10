@@ -20,13 +20,13 @@ export const ScaleSelector: React.FC<ScaleSelectorProps> = ({
   onChangeDensity,
 }) => {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 py-1">
+    <div className="flex items-center gap-2 py-0.5">
       {/* Timeline Scale Switcher: Days | Months | Years */}
       <div className="flex items-center bg-slate-200/80 p-1 rounded-xl shadow-inner">
         <button
           type="button"
           onClick={() => onChangeScale('day')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
             scale === 'day'
               ? 'bg-white text-indigo-600 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
@@ -40,7 +40,7 @@ export const ScaleSelector: React.FC<ScaleSelectorProps> = ({
         <button
           type="button"
           onClick={() => onChangeScale('month')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
             scale === 'month'
               ? 'bg-white text-indigo-600 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
@@ -54,7 +54,7 @@ export const ScaleSelector: React.FC<ScaleSelectorProps> = ({
         <button
           type="button"
           onClick={() => onChangeScale('year')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold transition ${
             scale === 'year'
               ? 'bg-white text-indigo-600 shadow-sm'
               : 'text-slate-600 hover:text-slate-900'
@@ -66,8 +66,8 @@ export const ScaleSelector: React.FC<ScaleSelectorProps> = ({
         </button>
       </div>
 
-      {/* Grid Thumbnail Zoom / Density: Compact | Normal | Large */}
-      <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl shadow-inner">
+      {/* Grid Thumbnail Zoom / Density: Compact | Normal | Large (Desktop web only) */}
+      <div className="hidden sm:flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl shadow-inner">
         <button
           type="button"
           onClick={() => onChangeDensity('compact')}

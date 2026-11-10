@@ -71,6 +71,7 @@ interface PhotoCardProps {
   item: MediaItem;
   apiUrl: string;
   isSelected?: boolean;
+  selectionModeActive?: boolean;
   onSelect: (item: MediaItem) => void;
   onToggleSelect?: (id: number, e: React.MouseEvent) => void;
   onPointerDown?: (e: React.PointerEvent, id: number) => void;
@@ -93,6 +94,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   item,
   apiUrl,
   isSelected = false,
+  selectionModeActive = false,
   onSelect,
   onToggleSelect,
   onPointerDown,
@@ -106,7 +108,23 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
   const [scrubProgress, setScrubProgress] = useState<number | null>(null);
   const [scrubTimeLabel, setScrubTimeLabel] = useState<string>('');
   const isTouchRef = useRef(false);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressRef = useRef(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const clearLongPress = React.useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearLongPress();
+    };
+  }, [clearLongPress]);
 
   let filterStyle: string | undefined = undefined;
   if (item.is_enhanced) {
@@ -161,13 +179,55 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
         onPointerDown={(e) => {
           isTouchRef.current = e.pointerType === 'touch';
           if (onPointerDown) onPointerDown(e, item.id);
+
+          if (e.pointerType === 'touch') {
+            isLongPressRef.current = false;
+            touchStartPosRef.current = { x: e.clientX, y: e.clientY };
+            clearLongPress();
+            longPressTimerRef.current = setTimeout(() => {
+              isLongPressRef.current = true;
+              if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                try { navigator.vibrate(40); } catch {}
+              }
+              if (onToggleSelect) {
+                onToggleSelect(item.id, e as unknown as React.MouseEvent);
+              }
+            }, 450);
+          }
+        }}
+        onPointerMove={(e) => {
+          if (isTouchRef.current && touchStartPosRef.current && longPressTimerRef.current) {
+            const dx = Math.abs(e.clientX - touchStartPosRef.current.x);
+            const dy = Math.abs(e.clientY - touchStartPosRef.current.y);
+            if (dx > 10 || dy > 10) {
+              // User dragged finger (scrolling) -> cancel long-press immediately
+              clearLongPress();
+            }
+          }
+        }}
+        onPointerUp={() => {
+          clearLongPress();
+        }}
+        onPointerCancel={() => {
+          clearLongPress();
         }}
         onClick={(e) => {
+          if (isLongPressRef.current) {
+            isLongPressRef.current = false;
+            return;
+          }
+
           if (isTouchRef.current) {
-            // Touch devices: single tap immediately opens the photo
-            onSelect(item);
+            // Touch devices:
+            // If selection mode is active, tapping toggles photo selection.
+            // If selection mode is NOT active, single tap opens full view in Lightbox.
+            if (selectionModeActive) {
+              if (onToggleSelect) onToggleSelect(item.id, e);
+            } else {
+              onSelect(item);
+            }
           } else {
-            // Desktop mouse: single click toggles selection
+            // Desktop mouse: single click toggles selection, double click opens Lightbox
             if (onToggleSelect) onToggleSelect(item.id, e);
           }
         }}
@@ -183,7 +243,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
           setScrubProgress(null);
           setScrubTimeLabel('');
         }}
-        className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition select-none ${
+        className={`relative aspect-square bg-slate-200 rounded-xl overflow-hidden cursor-pointer shadow-sm hover:shadow-md transition select-none touch-pan-y ${
           isSelected ? 'ring-4 ring-indigo-500 ring-offset-2 scale-[0.98]' : ''
         }`}
       >
@@ -253,12 +313,14 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
         }}
         className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-full flex items-center justify-center transition-all shadow-md cursor-pointer ${
           isSelected
-            ? 'bg-indigo-600 text-white scale-100 opacity-100'
+            ? 'bg-indigo-600 text-white scale-100 opacity-100 ring-2 ring-white/80'
+            : selectionModeActive
+            ? 'bg-black/40 text-white/70 opacity-100 border-2 border-white/80'
             : 'bg-black/40 text-transparent hover:bg-black/70 hover:text-white/80 opacity-0 group-hover:opacity-100 border border-white/60'
         }`}
         title={isSelected ? 'Deselect photo' : 'Select photo'}
       >
-        <Check className={`w-3.5 h-3.5 stroke-[3] ${isSelected ? 'text-white' : ''}`} />
+        <Check className={`w-3.5 h-3.5 stroke-[3] ${isSelected ? 'text-white' : 'opacity-0'}`} />
       </button>
 
       {/* Category & Status Pills */}
@@ -270,7 +332,7 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
             title={`AI Best Shot in sequence (Score: ${Math.round(item.aesthetic_score || item.burst_score || 90)}/100)`}
           >
             <Crown className="w-2.5 h-2.5 fill-slate-950 text-slate-950" />
-            <span>BEST SHOT</span>
+            <span className="hidden sm:inline">BEST SHOT</span>
           </span>
         )}
         {item.has_faces && (
@@ -279,17 +341,19 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
             title={`${item.face_count || 1} person${(item.face_count || 1) > 1 ? 's' : ''} detected`}
           >
             <Users className="w-2.5 h-2.5 text-white" />
-            <span>{item.face_count && item.face_count > 1 ? item.face_count : 'People'}</span>
+            <span>{item.face_count && item.face_count > 1 ? item.face_count : ''}</span>
           </span>
         )}
         {item.category === 'screenshot' && (
           <span className="bg-blue-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
-            Screenshot
+            <span className="hidden sm:inline">Screenshot</span>
+            <span className="sm:hidden">Shot</span>
           </span>
         )}
         {item.category === 'document_bill' && (
           <span className="bg-emerald-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
-            Bill / Doc
+            <span className="hidden sm:inline">Bill / Doc</span>
+            <span className="sm:hidden">Doc</span>
           </span>
         )}
         {item.is_video && (
@@ -307,13 +371,13 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
         {item.has_motion_photo && !item.is_video && (
           <span className="bg-amber-500/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm" title="Live / Motion Photo">
             <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-            <span>LIVE</span>
+            <span className="hidden sm:inline">LIVE</span>
           </span>
         )}
         {item.is_bokeh && (
           <span className="bg-purple-600/90 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm flex items-center gap-1 shadow-sm" title="Artistic Bokeh / Portrait Depth-of-Field">
             <span>🎨</span>
-            <span>Portrait</span>
+            <span className="hidden sm:inline">Portrait</span>
           </span>
         )}
         {item.is_enhanced && (
@@ -352,12 +416,13 @@ const PhotoCardComponent: React.FC<PhotoCardProps> = ({
             e.stopPropagation();
             if (onOpenBurst) onOpenBurst(item, e);
           }}
-          className="absolute bottom-2 left-2 z-20 flex items-center gap-1.5 bg-slate-950/85 hover:bg-slate-900 text-amber-300 hover:text-amber-200 text-[10px] font-bold px-2 py-0.5 rounded-lg backdrop-blur-md shadow-md border border-amber-400/30 transition-all hover:scale-105"
+          className="absolute bottom-2 left-2 z-20 flex items-center gap-1 bg-slate-950/85 hover:bg-slate-900 text-amber-300 hover:text-amber-200 text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-lg backdrop-blur-md shadow-md border border-amber-400/30 transition-all hover:scale-105"
           title={`${item.burst_count} burst shots. Click to inspect, compare & clean.`}
         >
           <Layers className="w-3 h-3 text-amber-400" />
-          <span>{item.burst_count} shots</span>
-          <span className="text-[9px] bg-amber-400/20 text-amber-300 px-1 py-0.2 rounded font-semibold">
+          <span>{item.burst_count}</span>
+          <span className="hidden sm:inline">shots</span>
+          <span className="hidden sm:inline text-[9px] bg-amber-400/20 text-amber-300 px-1 py-0.2 rounded font-semibold">
             ★ Best
           </span>
         </button>

@@ -472,7 +472,7 @@ export default function PhotosPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20" onPointerDown={handlePointerDown}>
       {/* Search Bar with AI Semantic Toggle */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-2xl">
+      <div className="flex items-center gap-2 max-w-2xl">
         <div className="relative flex-1">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -481,10 +481,10 @@ export default function PhotosPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={
               isSemanticSearch
-                ? "✨ AI Semantic Search: Describe visual concepts (e.g. 'sunset at beach', 'green nature', 'car')..."
+                ? "✨ AI Semantic Search: Describe visual concepts (e.g. 'sunset at beach', 'green nature')..."
                 : "Search by exact keywords, receipts text, camera model, or location..."
             }
-            className={`w-full pl-10 pr-9 py-2.5 text-xs bg-white border rounded-xl shadow-sm transition focus:outline-none ${
+            className={`w-full pl-10 pr-9 py-2 sm:py-2.5 text-xs bg-white border rounded-xl shadow-sm transition focus:outline-none ${
               isSemanticSearch
                 ? 'border-indigo-300 focus:border-indigo-600 ring-1 ring-indigo-500/10'
                 : 'border-slate-200 focus:border-indigo-500'
@@ -504,7 +504,7 @@ export default function PhotosPage() {
         <button
           type="button"
           onClick={() => setIsSemanticSearch(!isSemanticSearch)}
-          className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition border shadow-sm flex-shrink-0 ${
+          className={`flex items-center justify-center gap-1.5 px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl text-xs font-semibold transition border shadow-sm flex-shrink-0 ${
             isSemanticSearch
               ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white border-indigo-600 shadow-indigo-200'
               : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
@@ -512,12 +512,13 @@ export default function PhotosPage() {
           title="Toggle between AI Semantic Concept Search and Keyword Search"
         >
           <Sparkles className={`w-3.5 h-3.5 ${isSemanticSearch ? 'text-amber-300' : 'text-slate-400'}`} />
-          <span>{isSemanticSearch ? 'AI Semantic ON' : 'AI Semantic OFF'}</span>
+          <span className="hidden sm:inline">{isSemanticSearch ? 'AI Semantic ON' : 'AI Semantic OFF'}</span>
+          <span className="sm:hidden font-mono text-[10px]">AI</span>
         </button>
       </div>
 
-      {/* Quick Emotion, Mood & Format Filter Pills */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
+      {/* Quick Emotion, Mood & Format Filter Pills (Desktop web view) */}
+      <div className="hidden md:flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
         {[
           { id: 'all', label: 'All Moods', emoji: '✨' },
           { id: 'joyful', label: 'Joyful', emoji: '😊' },
@@ -572,23 +573,52 @@ export default function PhotosPage() {
         </button>
       </div>
 
-      {/* Nostalgia Flashbacks: "On This Day" */}
+      {/* Desktop Full Memories & Flashbacks (Preserved 100% on desktop web) */}
       {!searchResults && (
-        <OnThisDaySection apiUrl={API_URL} onSelectPhoto={(photo) => setSelectedPhoto(photo)} />
+        <div className="hidden md:block space-y-6">
+          <OnThisDaySection apiUrl={API_URL} onSelectPhoto={(photo) => setSelectedPhoto(photo)} />
+          <MomentsCarousel
+            events={events}
+            apiUrl={API_URL}
+            onSelectEvent={(ev) => setSelectedEvent(ev)}
+          />
+        </div>
       )}
 
-      {/* Highlights & Outing Stories Carousel */}
-      {!searchResults && (
-        <MomentsCarousel
-          events={events}
-          apiUrl={API_URL}
-          onSelectEvent={(ev) => setSelectedEvent(ev)}
-        />
+      {/* Mobile Compact Stories Bar (Instagram / Google Photos Style - only ~75px height) */}
+      {!searchResults && events.length > 0 && (
+        <div className="md:hidden space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>Memories & Moments</span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1 no-scrollbar">
+            {events.map((ev, idx) => (
+              <div
+                key={idx}
+                onClick={() => setSelectedEvent(ev)}
+                className="flex-shrink-0 flex flex-col items-center gap-1 w-16 cursor-pointer group"
+              >
+                <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-amber-400 via-rose-500 to-indigo-600 shadow-sm group-hover:scale-105 transition-transform">
+                  <img
+                    src={`${API_URL}${ev.cover_thumbnail_url}`}
+                    alt={ev.title}
+                    className="w-full h-full object-cover rounded-[14px]"
+                    loading="lazy"
+                  />
+                </div>
+                <span className="text-[10px] text-slate-700 dark:text-slate-300 truncate max-w-[64px] text-center font-medium">
+                  {ev.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Timeline Controls Bar: Scale Switcher, Slideshow & Smart Filters */}
       {!searchResults && (
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-2 overflow-x-auto no-scrollbar py-0.5">
           <ScaleSelector
             scale={scale}
             onChangeScale={setScale}
@@ -596,11 +626,11 @@ export default function PhotosPage() {
             onChangeDensity={setDensity}
           />
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             {/* Smart Burst Collapse Toggle */}
             <button
               onClick={() => setCollapseBursts((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
                 collapseBursts
                   ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 shadow-amber-50'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -612,23 +642,23 @@ export default function PhotosPage() {
               }
             >
               <Layers className="w-3.5 h-3.5 text-amber-500" />
-              <span>{collapseBursts ? 'Bursts: Collapsed' : 'Bursts: Expanded'}</span>
+              <span className="hidden sm:inline">{collapseBursts ? 'Bursts: Collapsed' : 'Bursts: Expanded'}</span>
             </button>
 
             {/* Ambient Slideshow Launcher */}
             <button
               onClick={() => setIsSlideshowOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition shadow-sm"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition shadow-sm"
               title="Play Ambient Slideshow"
             >
               <Play className="w-3.5 h-3.5 fill-indigo-600 text-indigo-600 dark:fill-indigo-400 dark:text-indigo-400" />
-              <span>Slideshow</span>
+              <span className="hidden sm:inline">Slideshow</span>
             </button>
 
             {/* Smart Filters Drawer Trigger */}
             <button
               onClick={() => setIsFilterDrawerOpen(true)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold border transition shadow-sm ${
                 activeFilterCount > 0
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-100'
                   : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800'
@@ -636,7 +666,7 @@ export default function PhotosPage() {
               title="Filter by date, camera, orientation, favorites"
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Filters</span>
+              <span className="hidden sm:inline">Filters</span>
               {activeFilterCount > 0 && (
                 <span className="bg-white text-indigo-600 text-[10px] font-bold px-1.5 py-0.2 rounded-full">
                   {activeFilterCount}
@@ -727,6 +757,7 @@ export default function PhotosPage() {
                   item={item}
                   apiUrl={API_URL}
                   isSelected={selectedIds.includes(item.id)}
+                  selectionModeActive={selectedIds.length > 0}
                   onSelect={setSelectedPhoto}
                   onToggleSelect={handleItemClick}
                   onPointerDown={handlePointerDown}

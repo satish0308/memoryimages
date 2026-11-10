@@ -189,6 +189,7 @@ const DaySectionComponent: React.FC<DaySectionProps> = ({
                     item={item}
                     apiUrl={apiUrl}
                     isSelected={selectedSet.has(item.id)}
+                    selectionModeActive={selectedIds.length > 0}
                     onSelect={onSelect}
                     onToggleSelect={onToggleSelect}
                     onPointerDown={onPointerDown}

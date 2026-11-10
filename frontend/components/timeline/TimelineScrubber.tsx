@@ -168,7 +168,7 @@ export const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ groups }) =>
 
   return (
     <aside
-      className="fixed right-3 top-36 bottom-20 z-30 select-none flex items-center justify-end pointer-events-none group/scrubber"
+      className="hidden md:flex fixed right-3 top-36 bottom-20 z-30 select-none items-center justify-end pointer-events-none group/scrubber"
       aria-label="Timeline Minimap Scrubber"
     >
       {/* Floating Tooltip Bubble when Hovering or Dragging */}

@@ -343,9 +343,9 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   };
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex flex-wrap items-center gap-3 max-w-[95vw] animate-slideUp">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-3 sm:px-5 py-2 sm:py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center gap-2 sm:gap-3 max-w-[96vw] animate-slideUp overflow-x-auto no-scrollbar">
       {/* Selected Counter */}
-      <div className="flex items-center gap-2 pr-3 border-r border-slate-700 flex-shrink-0">
+      <div className="flex items-center gap-2 pr-2.5 sm:pr-3 border-r border-slate-700 shrink-0">
         <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">
           {selectedIds.length}
         </span>
@@ -355,7 +355,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
       </div>
 
       {/* Action Buttons */}
-      <div className="flex items-center gap-2 relative flex-wrap">
+      <div className="flex items-center gap-1.5 sm:gap-2 relative flex-nowrap md:flex-wrap shrink-0">
         {/* Bulk Share */}
         <button
           onClick={handleBatchShare}

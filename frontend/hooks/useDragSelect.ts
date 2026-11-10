@@ -152,6 +152,13 @@ export function useDragSelect({
       // Only handle primary left button
       if (e.button !== 0) return;
 
+      // On touch devices (smartphones/tablets), 1-finger drag is reserved exclusively
+      // for native buttery-smooth vertical scrolling. Intercepting it with 2D marquee
+      // drag-selection blocks scroll momentum and accidentally selects photos.
+      if (e.pointerType === 'touch') {
+        return;
+      }
+
       // Don't start drag if clicking interactive buttons / inputs / links
       const target = e.target as HTMLElement;
       if (
@@ -218,6 +225,7 @@ export function useDragSelect({
       // Window pointermove handler for high-frequency coordinate tracking
       const onWindowPointerMove = (moveEvent: PointerEvent) => {
         if (!startPosRef.current) return;
+        if (moveEvent.pointerType === 'touch') return;
 
         const dx = moveEvent.pageX - startPosRef.current.pageX;
         const dy = moveEvent.pageY - startPosRef.current.pageY;
