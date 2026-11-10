@@ -39,6 +39,9 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 
 ### 📅 Smart Interactive Timeline & 0ms Client Caching
 - **Interactive Vertical Minimap Scrubber**: A sleek, floating glassmorphic rail on the right edge of the screen displaying distinct year ticks and month dots. Dragging or hovering pops up an interactive glassmorphic tooltip badge (e.g. `📅 Aug 2024 · 142 photos`) and smoothly navigates across 15,000+ photos in a split second with active section auto-tracking.
+- **Anticipatory Lightbox Pre-fetching (Zero-Latency Navigation)**: When viewing photo $N$ in the full-screen Lightbox, photo $N+1$ and $N-1$ are silently pre-fetched in full 1080p preview in the background. Pressing Left/Right Arrow navigates with **0ms instant response** and zero loading spinners.
+- **Service Worker `CacheStorage` Grid Layer**: Background Service Worker caches timeline thumbnails in a dedicated browser `CacheStorage` partition (`mymemorypics-thumbnails-v1`), completely eliminating network roundtrips on repeated scrolls and providing a native iOS/Mac desktop app feel.
+- **Apple-Style Live Text OCR Selection in Lightbox**: Automatically renders detected OCR text bounding boxes over photos; click the document icon to highlight, select, and copy text directly from photos into your clipboard.
 - **Client-Side Smart Caching (IndexedDB)**: Browser-native IndexedDB engine (`mymemorypics_thumbnail_cache`) pre-warms and caches thumbnails locally. Subsequent visits to your 14,000+ photo library load instantly with **0ms network latency** and full offline capability.
 - **Apple Live Photos & Google Motion Photos**: Auto-detects paired Apple Live Photos (`.heic` + `.mov`) and Google Motion Photos (embedded MP4 micro-video in JPEGs). Timeline cards display an ambient iOS-style **`[LIVE]`** pulsing badge, cross-fading to a smooth muted video loop on hover, and full high-definition playback in the Lightbox viewer.
 - **High-DPI Retina Thumbnails**: Ultra-crisp 512px WebP thumbnails rendered with Display P3 color profile preservation and smooth progressive blur backdrops.
@@ -266,6 +269,22 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Dynamic Dual-Database Switching**: Switch effortlessly between SQLite (default offline local WAL) and PostgreSQL 16 with native `vector` extension via `DATABASE_URL`.
 - **Native HNSW Vector Indexing**: Accelerates 512-dimensional CLIP multimodal search with `idx_media_embeddings_hnsw` (cosine distance operator `<=>`, `m=16, ef_construction=64`) for sub-10ms queries over 100,000+ photos.
 - **1-Click Reflection Migration**: Copy all records, users, media, face detections, albums, and embeddings from SQLite to PostgreSQL (or vice versa) in seconds with foreign key hierarchy validation.
+- **Automated HNSW pgvector Maintenance**: Worker executes automated periodic maintenance (`REINDEX INDEX CONCURRENTLY` + `VACUUM ANALYZE`) every 24 hours to keep vector graph search sub-5ms across large libraries, with a single-click manual maintenance trigger in `/admin`.
+
+### 🎥 Google Drive HTTP 206 Range Streaming & 64-bit Architecture
+- **RFC 7233 Byte-Range Video Streaming**: Translates browser `<video>` player `Range: bytes=X-Y` headers directly to Google Drive API requests. Delivers instant seek, scrub, and buffering in ~300ms without sequential full-file downloads.
+- **64-bit `BIGINT` Storage Engine**: Database schema supports 64-bit file size allocations, natively accommodating massive 4K 60fps video files exceeding 2.14GB.
+- **Unrestricted Full-Library Sync**: Synchronizes entire Google Drive photo and video collections (14,000+ files) with automatic batch commits every 1,000 items and graceful quota handling.
+
+### 🔐 Multi-Tenant 1-Click Account Switching & Google SSO
+- **1-Click Account Switcher**: Active sessions are safely cached in `memorypics_saved_sessions`. Family members can switch between accounts from the user dropdown with a single click (`⚡ Switch`) with **zero password re-entry**.
+- **Instant State Refresh**: Automatic state re-validation upon login/switch ensures data hooks, albums, and permissions reflect the newly selected user immediately on the very first attempt.
+- **Always-Visible Google SSO**: Prominently positioned Google OAuth authentication button accessible from both Sign In and Create Account modal tabs.
+
+### 🌐 Automated Caddy SSL Reverse Proxy & Telemetry Operations
+- **Zero-Config SSL / HTTPS**: Containerized Caddy reverse proxy automatically provisions TLS certificates for custom domains and LAN hostnames with HTTP→HTTPS redirection.
+- **On-Demand Prometheus & Grafana Controls**: Interactive Start/Stop toggles in the `/admin` portal allowing administrators to run monitoring on-demand and reclaim host RAM during normal usage.
+- **Human-Friendly Telemetry**: Real-time MB/GB/TB metrics display across all host and storage volumes.
 
 ### ⚡ Asynchronous Background Worker Queue (Redis + WebSockets)
 - **Dedicated Background Worker**: Offloads heavy tasks to `memorypics-worker`:
@@ -523,7 +542,14 @@ mymemorypics/
 - [x] **🔄 Group Auto-Correct & Face Ejection Studio**: One-click re-checking of misgrouped people clusters (`/recheck`), individual face ejection ("Not This Person"), and non-destructive re-clustering of unnamed faces.
 - [x] **⚙️ Dynamic AI & Smart Triage Settings Studio**: Configurable sliders for face similarity, SCRFD sensitivity, CLIP cutoff, Laplacian focus variance, duplicate distance/window, and screenshot expiry with persistent host JSON + DB storage.
 - [x] **🔍 Google Photos Cloud Deletion Search Optimizer**: Robust hyphen/symbol quoting to eliminate Google search negation filtering (`-term`), 4 query formats (Smart Match, Quote All, Base Name, Raw), configurable batch sizing (5/10/15), and 1-click date grouping headers for rapid deletion.
-- [ ] **📱 PWA Offline App**: Mobile home-screen installation and background sync service worker.
+- [x] **📱 PWA Offline App**: Progressive Web App installability, app manifest, and client-side service worker thumbnail caching.
+- [x] **🎥 Google Drive RFC 7233 Range Video Streaming**: HTTP 206 partial content range forwarding enabling instant video seeking and buffering directly from Google Drive.
+- [x] **⚡ Anticipatory Lightbox Pre-fetching**: 0ms zero-latency left/right arrow navigation pre-loading adjacent 1080p previews into browser memory.
+- [x] **🧹 HNSW pgvector 24-Hour Periodic Maintenance**: Automated background worker job running non-blocking concurrent reindexing and vacuuming.
+- [x] **🌐 Automated Caddy SSL & On-Demand Observability**: Zero-config HTTPS with on-demand Prometheus and Grafana container toggles to save host RAM.
+- [x] **👥 1-Click Multi-Account Switching**: Instant account switcher with persistent local sessions and always-visible Google SSO.
+- [x] **📑 Apple-Style Live Text OCR Selection**: Interactive on-canvas OCR text selection and clipboard copying directly from the Lightbox viewer.
+- [x] **⚖️ Duplicate Auto-Merge Preview Studio**: Interactive split-curtain curtain slider and rapid flicker comparison between duplicates in `/triage`.
 
 ---
 

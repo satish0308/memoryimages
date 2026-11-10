@@ -207,8 +207,13 @@ def handle_oauth_callback(db: Session, code: str, state: Optional[str] = None) -
         logger.error(f"OAuth callback error: {e}")
         return {"status": "error", "error": str(e)}
 
-def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
-    """Syncs photos from Google Drive into user account library."""
+def run_google_drive_sync(
+    db: Session, 
+    source_id: int, 
+    user_id: Optional[int] = None,
+    max_import: Optional[int] = None
+) -> Dict[str, Any]:
+    """Syncs photos from Google Drive into user account library. If max_import is None, syncs all files."""
     source = db.query(SyncSource).filter(SyncSource.id == source_id).first()
     if not source or not source.oauth_tokens_json:
         return {"status": "error", "message": "Google Drive credentials missing"}
@@ -261,7 +266,7 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
         synced_count = 0
         already_count = 0
         total_discovered = 0
-        max_import_per_sync = 5000
+        max_import_per_sync = max_import
 
         while True:
             list_kwargs = {
@@ -394,10 +399,10 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
                     db.commit()
                     new_media_batch = []
 
-                if synced_count >= max_import_per_sync:
+                if max_import_per_sync and synced_count >= max_import_per_sync:
                     break
 
-            if synced_count >= max_import_per_sync:
+            if max_import_per_sync and synced_count >= max_import_per_sync:
                 break
 
             page_token = results.get("nextPageToken")
@@ -411,11 +416,12 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
         # Automatic post-sync GPS extraction & outing propagation for new photos
         if synced_count > 0 and effective_user_id:
             try:
-                scan_google_drive_geotags(db=db, user_id=effective_user_id, max_photos=synced_count + 100, propagate_hours=3.0)
+                scan_google_drive_geotags(db=db, user_id=effective_user_id, max_photos=min(synced_count, 200), propagate_hours=3.0)
             except Exception as e:
                 logger.warning(f"Post-sync GPS extraction notice: {e}")
 
         total_active_user_media = db.query(Media).filter(
+            Media.source_type == SourceType.GOOGLE_DRIVE,
             Media.user_id == effective_user_id,
             Media.is_deleted == False
         ).count() if effective_user_id else total_discovered
@@ -425,7 +431,7 @@ def run_google_drive_sync(db: Session, source_id: int, user_id: Optional[int] = 
         source.last_synced_at = datetime.utcnow()
         db.commit()
 
-        has_more = bool(page_token and synced_count >= max_import_per_sync)
+        has_more = bool(page_token and max_import_per_sync and synced_count >= max_import_per_sync)
         if synced_count > 0:
             msg = f"Sync complete: imported {synced_count} photos from Google Drive ({total_active_user_media} total in library)!"
             if has_more:

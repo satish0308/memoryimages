@@ -2,12 +2,12 @@ import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User
-from app.models.media import Media
+from app.models.media import Media, SourceType
 from app.api.auth import get_current_user, get_optional_current_user
 from app.models.sync import SyncSource, SyncType, SyncStatus
 from app.services.scanner import scan_directory
@@ -37,8 +37,22 @@ def list_sync_sources(
     if not current_user:
         return []
     if current_user.is_admin:
-        return db.query(SyncSource).all()
-    return db.query(SyncSource).filter(SyncSource.user_id == current_user.id).all()
+        sources = db.query(SyncSource).all()
+    else:
+        sources = db.query(SyncSource).filter(SyncSource.user_id == current_user.id).all()
+
+    # Reconcile items_count with actual active media in database so UI never displays stale 5000 count
+    for s in sources:
+        if s.sync_type == SyncType.GOOGLE_DRIVE:
+            actual = db.query(Media).filter(
+                Media.source_type == SourceType.GOOGLE_DRIVE,
+                Media.user_id == s.user_id if s.user_id else True,
+                Media.is_deleted == False
+            ).count()
+            if actual != s.items_count:
+                s.items_count = actual
+                db.commit()
+    return sources
 
 @router.post("/scan-local")
 def trigger_local_scan(
@@ -130,6 +144,7 @@ def google_oauth_callback(
 @router.post("/google/{source_id}/trigger")
 def trigger_google_sync(
     source_id: int,
+    limit: Optional[int] = Query(None, description="Max photos to sync, or leave empty for complete sync"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -140,7 +155,7 @@ def trigger_google_sync(
     if source.user_id and source.user_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    result = run_google_drive_sync(db, source_id, user_id=current_user.id)
+    result = run_google_drive_sync(db, source_id, user_id=current_user.id, max_import=limit)
     return result
 
 # ==============================================================================

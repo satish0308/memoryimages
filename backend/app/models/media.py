@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Enum, ForeignKey, Text, LargeBinary, Index
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Boolean, DateTime, Enum, ForeignKey, Text, LargeBinary, Index
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -27,7 +27,7 @@ class Media(Base):
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)
     original_path = Column(String(1024), nullable=False, unique=True, index=True)
-    file_size = Column(Integer, default=0)
+    file_size = Column(BigInteger, default=0)
     file_hash = Column(String(64), index=True)  # SHA256
     perceptual_hash = Column(String(32), index=True)  # pHash for deduplication
     

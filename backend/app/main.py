@@ -86,6 +86,11 @@ def check_and_upgrade_schema(db_engine):
                     conn.execute(text("ALTER TABLE media ADD COLUMN marked_for_deletion_at TIMESTAMP"))
                 if "user_id" not in columns:
                     conn.execute(text("UPDATE media SET user_id = 1 WHERE user_id IS NULL"))
+                if db_engine.dialect.name == "postgresql":
+                    try:
+                        conn.execute(text("ALTER TABLE media ALTER COLUMN file_size TYPE BIGINT;"))
+                    except Exception:
+                        pass
                 conn.commit()
 
         if "albums" in inspector.get_table_names():
