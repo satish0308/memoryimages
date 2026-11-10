@@ -441,6 +441,8 @@ export default function PhotosPage() {
     : -1;
   const hasPrev = currentPhotoIndex > 0;
   const hasNext = currentPhotoIndex >= 0 && currentPhotoIndex < allFlatPhotos.length - 1;
+  const prevPhoto = hasPrev ? allFlatPhotos[currentPhotoIndex - 1] : null;
+  const nextPhoto = hasNext ? allFlatPhotos[currentPhotoIndex + 1] : null;
 
   const navigatePrev = () => {
     if (hasPrev) setSelectedPhoto(allFlatPhotos[currentPhotoIndex - 1]);
@@ -1027,6 +1029,8 @@ export default function PhotosPage() {
         onNavigateNext={navigateNext}
         hasPrev={hasPrev}
         hasNext={hasNext}
+        nextPhoto={nextPhoto}
+        prevPhoto={prevPhoto}
         onSelectPhoto={(photoOrId) => {
           if (typeof photoOrId === 'number') {
             const found = allPhotos.find((p) => p.id === photoOrId);

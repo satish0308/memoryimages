@@ -1660,13 +1660,19 @@ def view_original(
 
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
         try:
-            return StreamingResponse(
-                stream_google_drive_file(media.source_id, db),
-                media_type=media.mime_type or "image/jpeg",
-                headers={"Content-Disposition": "inline"}
+            from app.services.drive_cache import stream_google_drive_range
+            range_header = request.headers.get("range")
+            return stream_google_drive_range(
+                media.source_id,
+                db,
+                range_header=range_header,
+                user_id=current_user.id if current_user else None,
+                media_type=media.mime_type or "video/mp4"
             )
+        except HTTPException:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"In-memory stream error: {e}")
+            raise HTTPException(status_code=502, detail=f"Google Drive stream error: {e}")
 
     if media.source_type == SourceType.S3_MINIO and media.source_id:
         try:

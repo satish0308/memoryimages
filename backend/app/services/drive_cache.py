@@ -5,6 +5,8 @@ import json
 import logging
 from typing import Dict, Any, Optional, Generator
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse, Response
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -207,4 +209,92 @@ def clear_memory_cache() -> int:
     _DRIVE_THUMBNAIL_CACHE.clear()
     _DRIVE_THUMBNAIL_BYTES_CACHE.clear()
     return count
+
+def stream_google_drive_range(
+    file_id: str,
+    db: Session,
+    range_header: Optional[str] = None,
+    user_id: Optional[int] = None,
+    media_type: Optional[str] = "video/mp4"
+) -> Response:
+    """
+    Streams Google Drive video or large file with native HTTP 206 Partial Content range support.
+    Enables instant seeking, smooth scrubbing, and rapid initial buffering in video players.
+    """
+    query = db.query(SyncSource).filter(SyncSource.sync_type == SyncType.GOOGLE_DRIVE)
+    if user_id:
+        source = query.filter(SyncSource.user_id == user_id).first() or query.first()
+    else:
+        source = query.first()
+
+    if not source or not source.oauth_tokens_json:
+        raise HTTPException(status_code=502, detail="Google Drive credentials unavailable")
+
+    try:
+        creds_info = json.loads(source.oauth_tokens_json)
+        credentials = Credentials(
+            token=creds_info.get("token"),
+            refresh_token=creds_info.get("refresh_token"),
+            token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
+            client_id=creds_info.get("client_id"),
+            client_secret=creds_info.get("client_secret"),
+            scopes=creds_info.get("scopes")
+        )
+        if not credentials.valid and credentials.refresh_token:
+            from google.auth.transport.requests import Request as GRequest
+            credentials.refresh(GRequest())
+            creds_info["token"] = credentials.token
+            source.oauth_tokens_json = json.dumps(creds_info)
+            db.commit()
+        token = credentials.token
+    except Exception as e:
+        logger.error(f"[drive_cache] OAuth credential refresh error: {e}")
+        raise HTTPException(status_code=502, detail=f"Google Drive token refresh failed: {e}")
+
+    session = get_http_session()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "MyMemoryPics-Streamer/1.0"
+    }
+    if range_header:
+        headers["Range"] = range_header
+
+    url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
+    try:
+        resp = session.get(url, headers=headers, stream=True, timeout=20)
+    except Exception as e:
+        logger.error(f"[drive_cache] Range stream error for {file_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Google Drive connection failed: {e}")
+
+    if resp.status_code not in (200, 206):
+        raise HTTPException(status_code=resp.status_code, detail=f"Google Drive error {resp.status_code}")
+
+    content_range = resp.headers.get("Content-Range")
+    content_length = resp.headers.get("Content-Length")
+    resp_content_type = resp.headers.get("Content-Type") or media_type or "video/mp4"
+
+    response_headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": "inline",
+        "Cache-Control": "public, max-age=604800",
+    }
+    if content_range:
+        response_headers["Content-Range"] = content_range
+    if content_length:
+        response_headers["Content-Length"] = content_length
+
+    def iter_chunks():
+        try:
+            for chunk in resp.iter_content(chunk_size=1024 * 64):
+                if chunk:
+                    yield chunk
+        finally:
+            resp.close()
+
+    return StreamingResponse(
+        iter_chunks(),
+        status_code=resp.status_code,
+        media_type=resp_content_type,
+        headers=response_headers
+    )
 

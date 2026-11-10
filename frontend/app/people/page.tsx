@@ -614,6 +614,8 @@ export default function PeoplePage() {
     : -1;
   const hasPrev = currentPhotoIndex > 0;
   const hasNext = currentPhotoIndex !== -1 && currentPhotoIndex < allPersonPhotos.length - 1;
+  const prevPhoto = hasPrev ? allPersonPhotos[currentPhotoIndex - 1] : null;
+  const nextPhoto = hasNext ? allPersonPhotos[currentPhotoIndex + 1] : null;
 
   const navigatePrev = () => {
     if (hasPrev) setSelectedPhoto(allPersonPhotos[currentPhotoIndex - 1]);
@@ -2004,6 +2006,8 @@ export default function PeoplePage() {
         onDelete={deletePhoto}
         hasPrev={hasPrev}
         hasNext={hasNext}
+        nextPhoto={nextPhoto}
+        prevPhoto={prevPhoto}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
         onSelectPhoto={(photoOrId) => {

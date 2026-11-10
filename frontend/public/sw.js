@@ -1,5 +1,8 @@
 // MyMemoryPics Progressive Web App Service Worker
-const CACHE_NAME = 'mymemorypics-v1.0';
+const CACHE_NAME = 'mymemorypics-v1.1';
+const THUMBNAIL_CACHE = 'mymemorypics-thumbnails-v1';
+const ALLOWED_CACHES = [CACHE_NAME, THUMBNAIL_CACHE];
+
 const PRECACHE_URLS = [
   '/',
   '/manifest.json',
@@ -22,7 +25,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (!ALLOWED_CACHES.includes(cacheName)) {
             return caches.delete(cacheName);
           }
         })
@@ -31,16 +34,44 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: Network-First strategy for pages & shell; bypass media range streams and API writes
+// Fetch: Handles App Shell, Icons, and High-Speed CacheStorage for Thumbnails
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass non-GET requests, websockets, and API range requests
-  if (event.request.method !== 'GET' || url.pathname.startsWith('/api/') || event.request.headers.get('range')) {
+  // Bypass non-GET requests and media range streams (video seek/scrubbing)
+  if (event.request.method !== 'GET' || event.request.headers.get('range')) {
     return;
   }
 
-  // Cache-first for icons and manifest
+  // 1. High-Performance Thumbnail & Preview CacheStorage Layer (Zero Network Overhead on Re-scroll)
+  const isThumbnail = /^\/api\/v1\/media\/\d+\/(thumbnail|preview)/.test(url.pathname);
+  if (isThumbnail) {
+    event.respondWith(
+      caches.open(THUMBNAIL_CACHE).then(async (cache) => {
+        const cached = await cache.match(event.request);
+        if (cached) {
+          return cached;
+        }
+        try {
+          const networkResponse = await fetch(event.request);
+          if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque')) {
+            cache.put(event.request, networkResponse.clone());
+          }
+          return networkResponse;
+        } catch (fetchErr) {
+          return cached || new Response('Thumbnail unavailable offline', { status: 503 });
+        }
+      })
+    );
+    return;
+  }
+
+  // Bypass any other backend API endpoints (dynamic database queries, admin metrics, auth)
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  // 2. Cache-first for static icons and PWA manifest
   if (url.pathname.startsWith('/icons/') || url.pathname === '/manifest.json') {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
@@ -56,7 +87,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first with cache fallback for navigation / app shell
+  // 3. Network-first with cache fallback for navigation / app shell
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {

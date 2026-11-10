@@ -34,7 +34,23 @@ interface AuthContextType {
   logout: () => void;
   refreshProfile: () => Promise<void>;
   fetchAllUsers: () => Promise<void>;
+  switchAccount: (userId: number) => boolean;
+  hasSavedSession: (userId: number) => boolean;
 }
+
+const SAVED_SESSIONS_KEY = 'memorypics_saved_sessions';
+
+const saveUserSession = (token: string, user: User) => {
+  if (typeof window === 'undefined' || !user?.id) return;
+  try {
+    const raw = localStorage.getItem(SAVED_SESSIONS_KEY);
+    const sessions: Record<string, { token: string; user: User }> = raw ? JSON.parse(raw) : {};
+    sessions[String(user.id)] = { token, user };
+    localStorage.setItem(SAVED_SESSIONS_KEY, JSON.stringify(sessions));
+  } catch (e) {
+    console.error('Error saving user session:', e);
+  }
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -73,11 +89,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (savedToken && savedUser) {
       try {
+        const parsed = JSON.parse(savedUser);
         setToken(savedToken);
-        setUser(JSON.parse(savedUser));
+        setUser(parsed);
         if (typeof document !== 'undefined') {
           document.cookie = `memorypics_token=${savedToken}; path=/; SameSite=Lax; max-age=604800`;
         }
+        saveUserSession(savedToken, parsed);
         validateToken(savedToken);
       } catch (e) {
         localStorage.removeItem('memorypics_token');
@@ -108,6 +126,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const profile = await res.json();
         setUser(profile);
         localStorage.setItem('memorypics_user', JSON.stringify(profile));
+        saveUserSession(authToken, profile);
       } else {
         // Token expired or invalid
         logout();
@@ -150,6 +169,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (typeof document !== 'undefined') {
         document.cookie = `memorypics_token=${data.access_token}; path=/; SameSite=Lax; max-age=604800`;
       }
+      saveUserSession(data.access_token, data.user);
       fetchAllUsers();
       return { success: true };
     } catch (e: any) {
@@ -184,10 +204,47 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (typeof document !== 'undefined') {
         document.cookie = `memorypics_token=${data.access_token}; path=/; SameSite=Lax; max-age=604800`;
       }
+      saveUserSession(data.access_token, data.user);
       fetchAllUsers();
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e.message || 'Connection failed' };
+    }
+  };
+
+  const hasSavedSession = (userId: number): boolean => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem(SAVED_SESSIONS_KEY);
+      if (!raw) return false;
+      const sessions = JSON.parse(raw);
+      return Boolean(sessions[String(userId)]?.token);
+    } catch {
+      return false;
+    }
+  };
+
+  const switchAccount = (userId: number): boolean => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem(SAVED_SESSIONS_KEY);
+      if (!raw) return false;
+      const sessions = JSON.parse(raw);
+      const targetSession = sessions[String(userId)];
+      if (!targetSession || !targetSession.token || !targetSession.user) {
+        return false;
+      }
+      localStorage.setItem('memorypics_token', targetSession.token);
+      localStorage.setItem('memorypics_user', JSON.stringify(targetSession.user));
+      document.cookie = `memorypics_token=${targetSession.token}; path=/; SameSite=Lax; max-age=604800`;
+      setToken(targetSession.token);
+      setUser(targetSession.user);
+      // Force page reload so all data hooks and permissions refresh instantly
+      window.location.reload();
+      return true;
+    } catch (e) {
+      console.error('Failed to switch account:', e);
+      return false;
     }
   };
 
@@ -221,6 +278,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         logout,
         refreshProfile,
         fetchAllUsers,
+        switchAccount,
+        hasSavedSession,
       }}
     >
       {children}

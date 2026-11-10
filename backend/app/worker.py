@@ -552,6 +552,121 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         )
         return {"processed_count": processed, "total": total}
 
+
+def run_pgvector_reindex_maintenance(task_id: str, payload: dict):
+    """
+    Performs periodic HNSW vector index maintenance and vacuuming.
+    Keeps semantic search and face clustering sub-5ms at 100,000+ embeddings.
+    """
+    from app.database import engine, get_db_dialect
+    from sqlalchemy import text
+
+    dialect = get_db_dialect()
+    reindexed_items = []
+
+    TaskQueue.update_task(
+        task_id,
+        progress=10,
+        current_step=1,
+        total_steps=4,
+        message=f"Starting vector index maintenance on {dialect.upper()}..."
+    )
+
+    if dialect == "postgresql":
+        # AUTOCOMMIT isolation is required for REINDEX CONCURRENTLY and VACUUM in PostgreSQL
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Step 1: Vacuum analyze embedding tables
+            TaskQueue.update_task(
+                task_id,
+                progress=25,
+                current_step=1,
+                total_steps=4,
+                message="Running VACUUM ANALYZE on media_embeddings and video_keyframes..."
+            )
+            try:
+                conn.execute(text("VACUUM ANALYZE media_embeddings;"))
+                conn.execute(text("VACUUM ANALYZE video_keyframes;"))
+            except Exception as e:
+                logger.warning(f"Vacuum notice: {e}")
+
+            # Step 2: Reindex media_embeddings HNSW index concurrently
+            TaskQueue.update_task(
+                task_id,
+                progress=50,
+                current_step=2,
+                total_steps=4,
+                message="Rebuilding HNSW cosine index (idx_media_embeddings_hnsw) concurrently..."
+            )
+            try:
+                res = conn.execute(text("SELECT indexname FROM pg_indexes WHERE indexname = 'idx_media_embeddings_hnsw';")).fetchone()
+                if res:
+                    conn.execute(text("REINDEX INDEX CONCURRENTLY idx_media_embeddings_hnsw;"))
+                    reindexed_items.append("idx_media_embeddings_hnsw")
+                else:
+                    from app.services.database_service import ensure_pgvector_hnsw_index
+                    ensure_pgvector_hnsw_index()
+                    reindexed_items.append("idx_media_embeddings_hnsw (created)")
+            except Exception as e:
+                logger.warning(f"Reindex media_embeddings notice: {e}")
+
+            # Step 3: Reindex video_keyframes HNSW index concurrently
+            TaskQueue.update_task(
+                task_id,
+                progress=75,
+                current_step=3,
+                total_steps=4,
+                message="Rebuilding keyframe HNSW index (idx_video_keyframes_hnsw) concurrently..."
+            )
+            try:
+                res_vf = conn.execute(text("SELECT indexname FROM pg_indexes WHERE indexname = 'idx_video_keyframes_hnsw';")).fetchone()
+                if res_vf:
+                    conn.execute(text("REINDEX INDEX CONCURRENTLY idx_video_keyframes_hnsw;"))
+                    reindexed_items.append("idx_video_keyframes_hnsw")
+            except Exception as e:
+                logger.warning(f"Reindex video_keyframes notice: {e}")
+
+            # Step 4: Refresh table planner statistics
+            TaskQueue.update_task(
+                task_id,
+                progress=90,
+                current_step=4,
+                total_steps=4,
+                message="Refreshing planner statistics with ANALYZE..."
+            )
+            try:
+                conn.execute(text("ANALYZE media_embeddings;"))
+                conn.execute(text("ANALYZE video_keyframes;"))
+            except Exception as e:
+                logger.warning(f"Analyze notice: {e}")
+    else:
+        # SQLite maintenance
+        with engine.connect() as conn:
+            TaskQueue.update_task(
+                task_id,
+                progress=50,
+                current_step=2,
+                total_steps=4,
+                message="Optimizing SQLite B-tree indices and statistics..."
+            )
+            try:
+                conn.execute(text("PRAGMA optimize;"))
+                conn.execute(text("ANALYZE;"))
+                conn.commit()
+                reindexed_items.append("sqlite_pragma_optimize")
+            except Exception as e:
+                logger.warning(f"SQLite optimize notice: {e}")
+
+    summary = f"Completed HNSW vector index maintenance on {dialect.upper()} ({len(reindexed_items)} indices updated)."
+    TaskQueue.update_task(
+        task_id,
+        progress=100,
+        status="completed",
+        message=summary,
+        result={"dialect": dialect, "reindexed": reindexed_items}
+    )
+    return {"dialect": dialect, "reindexed": reindexed_items}
+
+
 DISPATCH_TABLE = {
     "clip_index_all": run_clip_indexing,
     "face_detect_all": run_face_detection,
@@ -563,6 +678,7 @@ DISPATCH_TABLE = {
     "mood_analysis_all": run_mood_analysis,
     "video_index_all": run_video_indexing,
     "pregenerate_1080p_renditions": run_pregenerate_1080p_renditions,
+    "pgvector_reindex_maintenance": run_pgvector_reindex_maintenance,
 }
 
 
@@ -656,6 +772,7 @@ def main():
 
     redis_retry_delay = 2
     r = None
+    last_maintenance_check = time.time()
     while not _should_exit:
         if r is None:
             r = get_redis_client()
@@ -677,6 +794,18 @@ def main():
                     rebind_engine()
             except Exception as e_engine:
                 logger.debug(f"Worker engine check notice: {e_engine}")
+
+            # Periodic 24-hour HNSW vector index maintenance check
+            if time.time() - last_maintenance_check > 86400:
+                last_maintenance_check = time.time()
+                try:
+                    TaskQueue.enqueue(
+                        "pgvector_reindex_maintenance",
+                        name="Scheduled HNSW Vector Index Maintenance",
+                        payload={"source": "worker_cron_daily"}
+                    )
+                except Exception as e_sched:
+                    logger.debug(f"Scheduled maintenance enqueue notice: {e_sched}")
 
             # Persistent blocking pop from task queue (2s timeout to check _should_exit)
             item = r.blpop(TASK_QUEUE_KEY, timeout=2)

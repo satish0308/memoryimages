@@ -63,6 +63,8 @@ interface LightboxModalProps {
   onNavigateNext?: () => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  nextPhoto?: MediaItem | null;
+  prevPhoto?: MediaItem | null;
   onSelectPhoto?: (photoOrId: MediaItem | number) => void;
   onBackupToDrive?: (photo: MediaItem) => void;
 }
@@ -77,6 +79,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   onNavigateNext,
   hasPrev = false,
   hasNext = false,
+  nextPhoto,
+  prevPhoto,
   onSelectPhoto,
   onBackupToDrive,
 }) => {
@@ -510,6 +514,28 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       isMounted = false;
     };
   }, [photo?.id, apiUrl]);
+
+  // Anticipatory zero-latency pre-fetching for adjacent photos (N+1 and N-1)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = localStorage.getItem('memorypics_token');
+    const tokenParam = token ? `&token=${token}` : '';
+
+    const prefetchItem = (item?: MediaItem | null) => {
+      if (!item || item.is_video || !item.id) return;
+      // Preload 1080p preview image into browser cache
+      const img = new window.Image();
+      img.src = `${apiUrl}/api/v1/media/${item.id}/thumbnail?size=1080${tokenParam}`;
+      // Also ensure low-res thumbnail is warm
+      if (item.thumbnail_url && !item.thumbnail_url.startsWith('http')) {
+        const thumbImg = new window.Image();
+        thumbImg.src = `${apiUrl}${item.thumbnail_url}${item.thumbnail_url.includes('?') ? tokenParam : `?token=${token}`}`;
+      }
+    };
+
+    if (nextPhoto) prefetchItem(nextPhoto);
+    if (prevPhoto) prefetchItem(prevPhoto);
+  }, [nextPhoto?.id, prevPhoto?.id, apiUrl]);
 
   // On-demand original raw download only when zooming deep (> 1.2x) to save network & memory
   useEffect(() => {

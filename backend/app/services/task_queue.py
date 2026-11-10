@@ -33,6 +33,7 @@ TASK_NAMES = {
     "mood_analysis_all": "AI Emotion, Mood & Color Analysis",
     "video_index_all": "Video Keyframe AI Search Indexing",
     "pregenerate_1080p_renditions": "Background 1080p WebP Pre-Generation",
+    "pgvector_reindex_maintenance": "Database HNSW pgvector Reindex Maintenance",
 }
 
 # Global batch jobs that process the entire library and must not be queued redundantly
@@ -45,6 +46,7 @@ SINGLETON_TASK_TYPES = {
     "video_index_all",
     "db_backup_create",
     "pregenerate_1080p_renditions",
+    "pgvector_reindex_maintenance",
 }
 
 _redis_pool = None

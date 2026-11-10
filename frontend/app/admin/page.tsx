@@ -132,6 +132,7 @@ export default function AdminPortalPage() {
     grafana?: MonitoringServiceItem;
   } | null>(null);
   const [togglingService, setTogglingService] = useState<string | null>(null);
+  const [reindexingVectors, setReindexingVectors] = useState(false);
 
   // Invite creation form state
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
@@ -280,6 +281,27 @@ export default function AdminPortalPage() {
       setStatusMessage({ type: 'error', text: e.message });
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleReindexVectors = async () => {
+    setReindexingVectors(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/admin/maintenance/reindex-vectors`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to trigger vector reindex');
+      }
+      setStatusMessage({
+        type: 'success',
+        text: 'HNSW pgvector index maintenance task enqueued! Live progress is tracked in background tasks.'
+      });
+    } catch (e: any) {
+      setStatusMessage({ type: 'error', text: e.message || 'Error triggering vector reindex' });
+    } finally {
+      setReindexingVectors(false);
     }
   };
 
@@ -678,6 +700,32 @@ export default function AdminPortalPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Database HNSW pgvector Maintenance Section */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-900">Database HNSW pgvector Periodic Maintenance</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Sub-5ms Vector Lookup
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 max-w-2xl">
+                Executes a non-blocking <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono">REINDEX INDEX CONCURRENTLY</code> and <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono">VACUUM ANALYZE</code> on media embeddings and video keyframe tables. Background worker also triggers this maintenance automatically every 24 hours.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleReindexVectors}
+              disabled={reindexingVectors}
+              className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow transition cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${reindexingVectors ? 'animate-spin' : ''}`} />
+              <span>{reindexingVectors ? 'Enqueuing...' : 'Reindex Vector Index Now'}</span>
+            </button>
           </div>
         </div>
       )}

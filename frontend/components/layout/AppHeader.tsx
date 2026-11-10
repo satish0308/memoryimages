@@ -10,6 +10,7 @@ import { TaskQueueDrawer } from '@/components/tasks/TaskQueueDrawer';
 
 export const AppHeader: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authInitialUser, setAuthInitialUser] = useState<string | undefined>(undefined);
   const [showUploadDropdown, setShowUploadDropdown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -166,13 +167,22 @@ export const AppHeader: React.FC = () => {
           <div className="h-5 w-px bg-slate-200 mx-1" />
 
           {/* User Profile & Account Switcher */}
-          <UserNavMenu onOpenAuthModal={() => setShowAuthModal(true)} />
+          <UserNavMenu
+            onOpenAuthModal={(userToSwitch) => {
+              setAuthInitialUser(userToSwitch);
+              setShowAuthModal(true);
+            }}
+          />
         </div>
 
         {/* Authentication & Account Modal */}
         <AuthModal
           isOpen={showAuthModal}
-          onClose={() => setShowAuthModal(false)}
+          initialIdentifier={authInitialUser}
+          onClose={() => {
+            setShowAuthModal(false);
+            setAuthInitialUser(undefined);
+          }}
         />
       </header>
 

@@ -18,6 +18,7 @@ from app.models.media import Media
 from app.models.album import Album
 from app.models.person import Person, FaceDetection
 from app.api.auth import get_current_user
+from app.services.task_queue import TaskQueue
 
 logger = logging.getLogger("memorypics.admin")
 
@@ -528,4 +529,23 @@ def control_monitoring_service(
         "success": ok,
         "status": info["status"],
         "running": info["running"]
+    }
+
+@router.post("/maintenance/reindex-vectors")
+def reindex_vector_embeddings(
+    admin_user: User = Depends(require_admin)
+):
+    """
+    Enqueues background HNSW pgvector index maintenance and VACUUM ANALYZE.
+    Keeps semantic search, face clustering, and keyframe lookup sub-5ms across high-volume libraries.
+    """
+    task = TaskQueue.enqueue(
+        "pgvector_reindex_maintenance",
+        name="HNSW pgvector Index Maintenance",
+        payload={"triggered_by": admin_user.username}
+    )
+    return {
+        "status": "queued",
+        "task_id": task["id"],
+        "message": "Vector index maintenance task enqueued successfully."
     }

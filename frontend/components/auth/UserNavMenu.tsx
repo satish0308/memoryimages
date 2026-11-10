@@ -16,11 +16,11 @@ import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/utils/apiUrl';
 
 interface UserNavMenuProps {
-  onOpenAuthModal: () => void;
+  onOpenAuthModal: (initialUser?: string) => void;
 }
 
 export const UserNavMenu: React.FC<UserNavMenuProps> = ({ onOpenAuthModal }) => {
-  const { user, isAuthenticated, logout, allUsers, login } = useAuth();
+  const { user, isAuthenticated, logout, allUsers, switchAccount, hasSavedSession } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -50,7 +50,7 @@ export const UserNavMenu: React.FC<UserNavMenuProps> = ({ onOpenAuthModal }) => 
   if (!isAuthenticated || !user) {
     return (
       <button
-        onClick={onOpenAuthModal}
+        onClick={() => onOpenAuthModal()}
         className="flex items-center gap-2 px-3.5 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-semibold border border-indigo-200 dark:border-indigo-800 transition"
       >
         <LogIn className="w-3.5 h-3.5" />
@@ -110,30 +110,39 @@ export const UserNavMenu: React.FC<UserNavMenuProps> = ({ onOpenAuthModal }) => 
                 Family & Accounts
               </p>
               <div className="space-y-1">
-                {allUsers.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      // Switch user
-                      if (u.id !== user.id) {
+                {allUsers.map((u) => {
+                  const saved = hasSavedSession(u.id);
+                  return (
+                    <button
+                      key={u.id}
+                      onClick={() => {
+                        if (u.id === user.id) return;
                         setIsOpen(false);
-                        onOpenAuthModal();
-                      }
-                    }}
-                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition ${
-                      u.id === user.id
-                        ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span className="truncate">{u.full_name || u.username}</span>
-                    {u.id === user.id ? (
-                      <span className="text-[10px] text-indigo-600 font-bold">• Active</span>
-                    ) : (
-                      <span className="text-[10px] text-slate-400">Switch</span>
-                    )}
-                  </button>
-                ))}
+                        if (saved) {
+                          switchAccount(u.id);
+                        } else {
+                          onOpenAuthModal(u.username);
+                        }
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition ${
+                        u.id === user.id
+                          ? 'bg-indigo-50 text-indigo-700 font-semibold cursor-default'
+                          : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="truncate">{u.full_name || u.username}</span>
+                      {u.id === user.id ? (
+                        <span className="text-[10px] text-indigo-600 font-bold">• Active</span>
+                      ) : saved ? (
+                        <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                          ⚡ Switch
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">Sign In</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

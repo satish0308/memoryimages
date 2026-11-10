@@ -224,6 +224,8 @@ export default function AlbumsPage() {
   const hasNext = selectedCollection
     ? currentPhotoIndex >= 0 && currentPhotoIndex < selectedCollection.photos.length - 1
     : false;
+  const prevPhoto = hasPrev && selectedCollection ? selectedCollection.photos[currentPhotoIndex - 1] : null;
+  const nextPhoto = hasNext && selectedCollection ? selectedCollection.photos[currentPhotoIndex + 1] : null;
 
   const navigatePrev = () => {
     if (hasPrev && selectedCollection) {
@@ -1544,6 +1546,8 @@ export default function AlbumsPage() {
         }}
         hasPrev={hasPrev}
         hasNext={hasNext}
+        nextPhoto={nextPhoto}
+        prevPhoto={prevPhoto}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
         onBackupToDrive={(item) => handleBackupSinglePhoto(item)}
