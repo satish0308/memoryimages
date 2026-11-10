@@ -163,10 +163,13 @@ def run_face_detection(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         photos = query.all()
         total = len(photos)
         if total == 0:
-            try:
-                auto_cluster_faces(db, user_id=user_id)
-            except Exception as e:
-                logger.warning(f"Post-detection face clustering notice: {e}")
+            TaskQueue.update_task(
+                task_id,
+                status="completed",
+                progress=100,
+                message="All photos in library are already scanned for faces.",
+                result={"photos_scanned": 0, "faces_detected": 0}
+            )
             return {"photos_scanned": 0, "faces_detected": 0}
 
         TaskQueue.update_task(
@@ -236,7 +239,7 @@ def run_face_clustering(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
             progress=50,
             message="Clustering biometrics into people profiles..."
         )
-        res = auto_cluster_faces(db, user_id=user_id)
+        res = auto_cluster_faces(db, user_id=user_id, task_id=task_id)
         
         TaskQueue.update_task(
             task_id,
@@ -588,9 +591,9 @@ def main():
     try:
         r_init = get_redis_client()
         if r_init:
-            from app.services.task_queue import TASK_QUEUE_KEY, TASK_DATA_PREFIX
-            queue_ids = r_init.lrange(TASK_QUEUE_KEY, 0, -1)
-            for q_id in queue_ids:
+            from app.services.task_queue import TASK_QUEUE_KEY, TASK_HISTORY_KEY, TASK_DATA_PREFIX
+            check_ids = set(r_init.lrange(TASK_QUEUE_KEY, 0, -1) + r_init.lrange(TASK_HISTORY_KEY, 0, 50))
+            for q_id in check_ids:
                 raw = r_init.get(f"{TASK_DATA_PREFIX}{q_id}")
                 if raw:
                     t = json.loads(raw)

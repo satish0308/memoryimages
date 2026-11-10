@@ -697,7 +697,9 @@ export default function PeoplePage() {
       const res = await fetch(`${API_URL}/api/v1/people/scan-faces?max_photos=250`, { method: 'POST', headers });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        if (data.status === 'queued') {
+        if (data.status === 'already_up_to_date') {
+          setStatusMessage('All photos in your library are already scanned for faces! (0 new photos)');
+        } else if (data.status === 'queued') {
           setStatusMessage('Biometric scan running in background! Check Task Queue in header for live progress.');
         } else {
           setStatusMessage('Deep scan complete!');

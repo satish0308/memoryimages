@@ -757,7 +757,12 @@ def is_user_named(name: Optional[str]) -> bool:
         return False
     return True
 
-def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_threshold: float = 0.48) -> Dict[str, Any]:
+def auto_cluster_faces(
+    db: Session,
+    user_id: Optional[int] = None,
+    similarity_threshold: float = 0.48,
+    task_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Intelligently clusters face crops using ArcFace 512-d Biometric Cosine Similarity with Anchor Retention.
     Guarantees:
@@ -895,29 +900,41 @@ def auto_cluster_faces(db: Session, user_id: Optional[int] = None, similarity_th
     assigned_faces_count = newly_matched_to_named
 
     if rem_indices:
+        # Pre-allocate contiguous buffer for centroids to eliminate list->numpy conversions
+        max_clusters = len(rem_indices)
+        c_matrix = np.empty((max_clusters, 512), dtype=np.float32)
+        n_clusters = 0
         clusters = []
-        cluster_centroids = []
 
-        for r_i in rem_indices:
+        for count, r_i in enumerate(rem_indices):
+            if task_id and count % 500 == 0:
+                from app.services.task_queue import TaskQueue
+                if TaskQueue.is_cancelled(task_id):
+                    logger.info(f"Task {task_id} cancellation observed during face clustering.")
+                    break
+
             face_emb = embeddings[r_i]
-            if not cluster_centroids:
+            if n_clusters == 0:
                 clusters.append([r_i])
-                cluster_centroids.append(face_emb.copy())
+                c_matrix[0] = face_emb
+                n_clusters = 1
                 continue
 
-            c_matrix = np.array(cluster_centroids)
-            sims = np.dot(c_matrix, face_emb)
+            # Fast vectorized BLAS matrix-vector dot product
+            sims = np.dot(c_matrix[:n_clusters], face_emb)
             best_c_idx = int(np.argmax(sims))
             best_sim = float(sims[best_c_idx])
 
             if best_sim >= (similarity_threshold + 0.02):
                 clusters[best_c_idx].append(r_i)
                 k = len(clusters[best_c_idx])
-                new_c = cluster_centroids[best_c_idx] * ((k - 1) / k) + face_emb * (1 / k)
-                cluster_centroids[best_c_idx] = new_c / max(float(np.linalg.norm(new_c)), 1e-6)
+                new_c = c_matrix[best_c_idx] * ((k - 1) / k) + face_emb * (1 / k)
+                norm = float(np.linalg.norm(new_c))
+                c_matrix[best_c_idx] = new_c / max(norm, 1e-6)
             else:
                 clusters.append([r_i])
-                cluster_centroids.append(face_emb.copy())
+                c_matrix[n_clusters] = face_emb
+                n_clusters += 1
 
         # Clean up empty unnamed person records before allocating clusters (1 bulk query)
         all_unnamed = (

@@ -263,15 +263,34 @@ def trigger_auto_cluster(
 @router.post("/scan-faces")
 def scan_faces(
     max_photos: int = Query(250, ge=1, le=1000),
+    force: bool = Query(False),
     background: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Deep scans library photos for human faces (UltraFace + ArcFace) and household pets (YOLOv8)."""
+    unscanned_q = db.query(Media).filter(
+        Media.is_deleted == False,
+        (Media.mime_type == None) | (~Media.mime_type.startswith("video/")),
+        (Media.faces_scanned == False) | (Media.faces_scanned == None)
+    )
+    if current_user:
+        unscanned_q = unscanned_q.filter(Media.user_id == current_user.id)
+    unscanned_count = unscanned_q.count()
+
+    if unscanned_count == 0 and not force:
+        return {
+            "status": "already_up_to_date",
+            "task_id": None,
+            "message": "All photos in your library have already been scanned for faces.",
+            "photos_processed": 0,
+            "faces_detected": 0
+        }
+
     if background:
         task = TaskQueue.enqueue(
             task_type="face_detect_all",
-            payload={"user_id": current_user.id, "max_photos": max_photos},
+            payload={"user_id": current_user.id, "max_photos": max_photos, "force": force},
             name="UltraFace Face Detection"
         )
         return {
