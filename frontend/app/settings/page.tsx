@@ -2465,7 +2465,10 @@ export default function AppSettingsPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      const q = (pendingPurge?.items || []).slice(0, 15).map((i) => i.filename).join(' OR ');
+                      const q = (pendingPurge?.items || []).slice(0, 15).map((i) => {
+                        const clean = (i.filename || '').replace(/"/g, '').trim();
+                        return /[\s\-[\]()+]/.test(clean) ? `"${clean}"` : clean;
+                      }).join(' OR ');
                       navigator.clipboard.writeText(q);
                       setMessage({ type: 'success', text: 'Copied Google Photos query (15 files) to clipboard!' });
                       setTimeout(() => setMessage(null), 3000);
@@ -2525,7 +2528,7 @@ export default function AppSettingsPage() {
 
                     <div className="flex items-center gap-1.5 shrink-0">
                       <a
-                        href={`https://photos.google.com/search/${encodeURIComponent(item.filename)}`}
+                        href={`https://photos.google.com/search/${encodeURIComponent(/[\s\-[\]()+]/.test(item.filename) ? `"${item.filename.replace(/"/g, '')}"` : item.filename)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"

@@ -180,7 +180,8 @@ def main():
         query_lines = []
         for i in range(0, len(filenames), batch_size):
             chunk = filenames[i:i + batch_size]
-            b_query = " OR ".join(chunk)
+            formatted_chunk = [f'"{fn}"' if any(c in fn for c in ' -()[]+') else fn for fn in chunk]
+            b_query = " OR ".join(formatted_chunk)
             query_lines.append(b_query)
             encoded = urllib.parse.quote(b_query)
             print(f"\n[Batch {i // batch_size + 1}] ({len(chunk)} files):")

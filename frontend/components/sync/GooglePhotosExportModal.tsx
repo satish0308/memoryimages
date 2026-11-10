@@ -12,7 +12,8 @@ import {
   AlertTriangle,
   Layers,
   Sparkles,
-  Info
+  Info,
+  Calendar
 } from 'lucide-react';
 
 export interface GooglePhotosExportItem {
@@ -32,7 +33,7 @@ interface GooglePhotosExportModalProps {
   subtitle?: string;
 }
 
-const BATCH_SIZE = 15; // Google Photos search query token limit for best compatibility
+export type QueryFormat = 'smart' | 'quoted' | 'basename' | 'raw';
 
 export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = ({
   isOpen,
@@ -44,7 +45,9 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [activeBatchIndex, setActiveBatchIndex] = useState(0);
   const [searchFilter, setSearchFilter] = useState('');
-  const [queryFormat, setQueryFormat] = useState<'exact' | 'basename'>('exact');
+  const [queryFormat, setQueryFormat] = useState<QueryFormat>('smart');
+  const [batchSize, setBatchSize] = useState<number>(10);
+  const [separator, setSeparator] = useState<'OR' | 'space'>('OR');
 
   // Extract filenames safely and deduplicate
   const filenames = useMemo(() => {
@@ -52,40 +55,60 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
     return Array.from(new Set(raw));
   }, [items]);
 
+  // Unique dates for 1-click day-based Google Photos searching
+  const dateGroups = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of items) {
+      if (item.captured_at) {
+        const d = item.captured_at.slice(0, 10);
+        map.set(d, (map.get(d) || 0) + 1);
+      }
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [items]);
+
   // Helper to format individual filename token for Google Photos query
-  const formatToken = (name: string, format: 'exact' | 'basename') => {
-    let clean = (name || '').trim();
+  const formatToken = (name: string, format: QueryFormat) => {
+    let clean = (name || '').trim().replace(/"/g, '');
     if (format === 'basename') {
       const lastDot = clean.lastIndexOf('.');
       if (lastDot > 0) clean = clean.substring(0, lastDot);
     }
-    // Clean existing quotes then wrap in quotes if spaces or special syntax are present
-    clean = clean.replace(/"/g, '');
-    if (/\s|[()[\]]|^[-]/.test(clean)) {
+    if (format === 'raw') {
+      return clean;
+    }
+    if (format === 'quoted') {
+      return `"${clean}"`;
+    }
+    // 'smart': Crucial fix for Google Photos - wrap in quotes if the filename contains
+    // spaces, ANY hyphen '-' (which Google treats as NOT/exclusion), parentheses, or brackets
+    if (/[\s\-[\]()+]/.test(clean)) {
       return `"${clean}"`;
     }
     return clean;
   };
 
-  // Split into batches of 15 filenames
+  // Split into batches according to chosen batch size
   const batches = useMemo(() => {
     const res: string[][] = [];
-    for (let i = 0; i < filenames.length; i += BATCH_SIZE) {
-      res.push(filenames.slice(i, i + BATCH_SIZE));
+    const size = batchSize > 0 ? batchSize : 10;
+    for (let i = 0; i < filenames.length; i += size) {
+      res.push(filenames.slice(i, i + size));
     }
     return res.length > 0 ? res : [[]];
-  }, [filenames]);
+  }, [filenames, batchSize]);
 
   const currentBatch = batches[activeBatchIndex] || batches[0] || [];
+  const sepStr = separator === 'OR' ? ' OR ' : ' ';
 
   // Formatted queries with proper quoting and format selection
   const currentBatchQuery = useMemo(() => {
-    return currentBatch.map((fn) => formatToken(fn, queryFormat)).join(' OR ');
-  }, [currentBatch, queryFormat]);
+    return currentBatch.map((fn) => formatToken(fn, queryFormat)).join(sepStr);
+  }, [currentBatch, queryFormat, sepStr]);
 
   const fullQuery = useMemo(() => {
-    return filenames.map((fn) => formatToken(fn, queryFormat)).join(' OR ');
-  }, [filenames, queryFormat]);
+    return filenames.map((fn) => formatToken(fn, queryFormat)).join(sepStr);
+  }, [filenames, queryFormat, sepStr]);
 
   // Current batch search URL
   const currentBatchSearchUrl = useMemo(() => {
@@ -124,7 +147,8 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
       const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(2);
       const hostPath = it.host_path || '';
       const dateMarked = it.captured_at || '';
-      const searchUrl = `https://photos.google.com/search/${encodeURIComponent(fn)}`;
+      const formattedFn = formatToken(fn, queryFormat);
+      const searchUrl = `https://photos.google.com/search/${encodeURIComponent(formattedFn)}`;
       return [
         `"${fn.replace(/"/g, '""')}"`,
         sizeBytes,
@@ -197,17 +221,22 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
           </button>
         </div>
 
-        {/* Step-by-Step 3-Step Banner */}
+        {/* Step-by-Step 3-Step Banner with Google Syntax Note */}
         <div className="bg-gradient-to-r from-indigo-50/80 via-purple-50/50 to-pink-50/80 dark:from-slate-800/60 dark:via-slate-800/40 dark:to-slate-800/60 border border-indigo-100 dark:border-slate-700/80 rounded-2xl p-4 text-xs space-y-2.5">
-          <div className="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-300">
-            <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            <span>How to trash these in Google Photos (3 Quick Steps):</span>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-300">
+              <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span>How to trash these in Google Photos (3 Quick Steps):</span>
+            </div>
+            <span className="text-[10px] text-slate-500 bg-white/70 dark:bg-slate-900/60 px-2 py-0.5 rounded-full border border-indigo-100/60 dark:border-slate-700">
+              💡 Hyphens safely quoted to prevent Google negation exclusion
+            </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
             <div className="bg-white/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-indigo-100/60 dark:border-slate-700 text-slate-700 dark:text-slate-300">
               <span className="font-bold text-indigo-600 dark:text-indigo-400 mr-1.5">1.</span>
-              Click <b className="text-slate-900 dark:text-white">Copy Query</b> or <b className="text-slate-900 dark:text-white">Open in Google Photos</b> below.
+              Click <b className="text-slate-900 dark:text-white">Copy & Open Google Photos</b> below.
             </div>
             <div className="bg-white/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-indigo-100/60 dark:border-slate-700 text-slate-700 dark:text-slate-300">
               <span className="font-bold text-indigo-600 dark:text-indigo-400 mr-1.5">2.</span>
@@ -215,18 +244,44 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
             </div>
             <div className="bg-white/80 dark:bg-slate-900/60 p-2.5 rounded-xl border border-indigo-100/60 dark:border-slate-700 text-slate-700 dark:text-slate-300">
               <span className="font-bold text-indigo-600 dark:text-indigo-400 mr-1.5">3.</span>
-              Press <kbd className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[10px] font-mono">Shift + #</kbd> or click the <b className="text-rose-600 dark:text-rose-400">Trash</b> icon.
+              Press <kbd className="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded text-[10px] font-mono">#</kbd> or click the <b className="text-rose-600 dark:text-rose-400">Trash</b> icon.
             </div>
           </div>
         </div>
 
-        {/* Batch Selector if > 15 items */}
+        {/* 1-Click Date Search Pills (Google Photos native date headers allow selecting all photos in a day with 1 click) */}
+        {dateGroups.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs scrollbar-thin">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1 shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Search by Date:</span>
+            </span>
+            {dateGroups.slice(0, 8).map(([dStr, count]) => (
+              <a
+                key={dStr}
+                href={`https://photos.google.com/search/${encodeURIComponent(dStr)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200 dark:border-slate-700 rounded-xl text-[10px] font-semibold transition shrink-0 shadow-2xs"
+                title={`Open all photos from ${dStr} in Google Photos (${count} photos). Click the date checkmark to select all.`}
+              >
+                <span>{dStr}</span>
+                <span className="text-[9px] bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.2 rounded-full font-bold">
+                  {count}
+                </span>
+                <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+              </a>
+            ))}
+          </div>
+        )}
+
+        {/* Batch Selector if > 1 batch */}
         {batches.length > 1 && (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                 <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                Google Photos Query Batches (Google allows ~15 terms per search):
+                Google Photos Batches ({batchSize} per search):
               </span>
               <span className="text-slate-400 text-[11px]">
                 Batch {activeBatchIndex + 1} of {batches.length}
@@ -260,37 +315,114 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
                 : 'Google Photos Search Query:'}
             </span>
 
-            {/* Query Format Selector (Exact with extension vs Base Name without extension) */}
-            <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5 rounded-xl text-[10px]">
-              <button
-                type="button"
-                onClick={() => setQueryFormat('exact')}
-                className={`px-2 py-0.5 rounded-lg font-semibold transition ${
-                  queryFormat === 'exact'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-                title="Full filename with extension (e.g. 'PXL_2022.jpg')"
-              >
-                Exact Filename
-              </button>
-              <button
-                type="button"
-                onClick={() => setQueryFormat('basename')}
-                className={`px-2 py-0.5 rounded-lg font-semibold transition ${
-                  queryFormat === 'basename'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                }`}
-                title="Base filename without extension (e.g. 'PXL_2022') - useful if Google Photos stripped extension"
-              >
-                Base Name Only
-              </button>
+            {/* Query Options Toolbar */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Batch Size Selector */}
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5 rounded-xl text-[10px]">
+                <span className="text-slate-400 px-1 font-semibold">Size:</span>
+                {[5, 10, 15].map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => {
+                      setBatchSize(sz);
+                      setActiveBatchIndex(0);
+                    }}
+                    className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                      batchSize === sz
+                        ? 'bg-slate-800 text-white dark:bg-slate-700 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {sz}
+                  </button>
+                ))}
+              </div>
+
+              {/* Format Selector: Smart Quoting vs Quoted vs Base Name vs Raw */}
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5 rounded-xl text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setQueryFormat('smart')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    queryFormat === 'smart'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Auto-quotes hyphens & spaces to prevent exclusion, keeps clean filenames unquoted"
+                >
+                  Smart Match
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQueryFormat('quoted')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    queryFormat === 'quoted'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Encloses every filename in quotes for literal exact string matching"
+                >
+                  Quote All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQueryFormat('basename')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    queryFormat === 'basename'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Base filename without extension (.jpg/.png) - useful if Google Photos stripped extension"
+                >
+                  Base Name
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQueryFormat('raw')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    queryFormat === 'raw'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Raw unquoted filenames joined by OR"
+                >
+                  Raw
+                </button>
+              </div>
+
+              {/* Separator Toggle: OR vs Space */}
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-0.5 rounded-xl text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => setSeparator('OR')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    separator === 'OR'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Join terms with OR"
+                >
+                  OR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSeparator('space')}
+                  className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                    separator === 'space'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                  title="Join terms with spaces"
+                >
+                  Space
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Query String Display */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 font-mono text-xs text-slate-800 dark:text-slate-200 overflow-x-auto max-h-20 select-all leading-relaxed">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 font-mono text-xs text-slate-800 dark:text-slate-200 overflow-x-auto max-h-24 select-all leading-relaxed">
             {currentBatchQuery || 'No items to display'}
           </div>
 
@@ -388,7 +520,7 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
           </div>
         </div>
 
-        {/* Scrollable File List with Individual Search Links */}
+        {/* Scrollable File List with Individual Search Links & Copy */}
         <div className="flex-1 overflow-hidden flex flex-col space-y-2 min-h-[160px]">
           <div className="flex items-center justify-between text-xs text-slate-500">
             <span className="font-semibold text-slate-700 dark:text-slate-300">
@@ -407,37 +539,57 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
             {filteredItems.length === 0 ? (
               <p className="text-xs text-slate-400 text-center py-6">No matching files found.</p>
             ) : (
-              filteredItems.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-slate-100 dark:border-slate-800/80 transition text-xs gap-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={item.filename}>
-                      {item.filename}
-                    </p>
-                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                      {item.file_size ? <span>{(item.file_size / (1024 * 1024)).toFixed(2)} MB</span> : null}
-                      {item.host_path && (
-                        <span className="truncate max-w-[280px]" title={item.host_path}>
-                          • {item.host_path}
-                        </span>
-                      )}
+              filteredItems.map((item, idx) => {
+                const itemFormatted = formatToken(item.filename, queryFormat);
+                const itemUrl = `https://photos.google.com/search/${encodeURIComponent(itemFormatted)}`;
+                return (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 border border-slate-100 dark:border-slate-800/80 transition text-xs gap-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-800 dark:text-slate-200 truncate" title={item.filename}>
+                        {item.filename}
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        {item.file_size ? <span>{(item.file_size / (1024 * 1024)).toFixed(2)} MB</span> : null}
+                        {item.captured_at && <span>• {item.captured_at.slice(0, 10)}</span>}
+                        {item.host_path && (
+                          <span className="truncate max-w-[240px]" title={item.host_path}>
+                            • {item.host_path}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(itemFormatted, `row_${idx}`)}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
+                        title={`Copy ${itemFormatted}`}
+                      >
+                        {copiedType === `row_${idx}` ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-500" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+
+                      <a
+                        href={itemUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg text-[11px] font-semibold transition shrink-0"
+                        title={`Search ${itemFormatted} in Google Photos`}
+                      >
+                        <span>Search</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
                     </div>
                   </div>
-
-                  <a
-                    href={`https://photos.google.com/search/${encodeURIComponent(item.filename)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg text-[11px] font-semibold transition shrink-0"
-                    title={`Search ${item.filename} in Google Photos`}
-                  >
-                    <span>Search</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -446,7 +598,7 @@ export const GooglePhotosExportModal: React.FC<GooglePhotosExportModalProps> = (
         <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
           <span className="text-xs text-slate-400 flex items-center gap-1">
             <Info className="w-3.5 h-3.5" />
-            Paste search queries directly into Google Photos search bar
+            Paste queries directly into Google Photos search bar
           </span>
           <button
             type="button"

@@ -177,8 +177,13 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Zero Auto-Deletion Guarantee**: Redundant shots are soft-deleted to Trash only upon explicit user confirmation.
 
 ### 👥 People & Face Management Studio & Visual Search (`/people`)
+- **Global Identity Directory with Strict Photo Isolation**: In multi-user setups, whenever any user names an identified face (e.g. "Satish"), that named person's 512-dimensional ArcFace centroid embedding is recognized across the entire database. When another user scans their library, matching faces automatically recruit to the established identity with **zero duplicate naming effort**.
+  - **100% Zero Photo Leakage**: User photos remain strictly isolated. Each user only sees their own media—foreign photos are never queried or visible.
+- **Group Auto-Correction & Misgroup Re-Check**: If an initial cluster (e.g., *"Person 9"*) is mixed or inaccurate, a single click on **"Auto-Correct Group"** (`POST /api/v1/people/{id}/recheck`) disbands the cluster, recruits genuine matches to known named identities, and cleanly splits or prunes remaining outliers.
+- **Selective Face Ejection ("Not This Person")**: Select specific photos within a person's Life Timeline and click **"Not This Person"** (`POST /api/v1/people/{id}/remove-faces`) in the Bulk Action Bar to detach misattributed faces while keeping the original photos safe in your library.
+- **Re-Cluster Unnamed Faces**: 1-click re-clustering (`POST /api/v1/people/recluster-unnamed`) re-evaluates all temporary unnamed faces against updated similarity thresholds without modifying existing named people profiles.
 - **Visual Face Crop & ArcFace Library Search**: Draw a custom box or click any detected face in Lightbox or People studio to compute its 512-dimensional ArcFace biometric vector, query across 15,000+ photos via vector cosine similarity, and 1-click group matches into a named person profile.
-- **Adaptive SCRFD & ArcFace Engine**: State-of-the-art SCRFD neural face detector running with adaptive confidence thresholding (`0.25` for document snips and screenshots; `0.30` for camera photos) and 20px minimum crop validation, ensuring embedded profile avatars, document portraits, and family snapshots are reliably detected without false positives.
+- **Adaptive SCRFD & ArcFace Engine**: State-of-the-art SCRFD neural face detector running with configurable confidence thresholding (`0.15`–`0.70`, default `0.30`) and 20px minimum crop validation, ensuring embedded profile avatars, document portraits, and family snapshots are reliably detected without false positives.
 - **AI "Merge Same Person" Suggestions**: Automatically identifies duplicate people profiles with match confidence percentages and 1-click merge.
 - **Relationship Categorization**: Tag profiles with relationship types (**Family**, **Friends**, **Work**, **Partner**, **Self**, **Other**) and filter by relationship category pills.
 - **Custom Cover Photos & Profile Visibility**: Set any photo in a person's gallery as their primary cover thumbnail, and toggle hiding/unhiding unwanted face detections.
@@ -208,8 +213,29 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
   - 🌫️ **Blurry Photos Tray**: Laplacian variance sharpness scoring to identify out-of-focus shots and pocket black frames.
   - 📦 **Large Files Tray**: Identifies heavy camera files (>3MB) for storage review.
   - 🗑️ **Memes & Junk Tray**: Separates viral media and forwarded graphics.
-- **Google Photos Cloud Deletion Helper**: Exports sanitized, batch-optimized search strings (15 items per batch with auto-quotes for special characters and spaces) to easily locate and purge redundant media in Google Photos.
+- **Google Photos Cloud Deletion Helper & Search Optimizer**:
+  - **Negation Bug Prevention**: Eliminates Google Photos search failures caused by unquoted hyphens in camera and WhatsApp filenames (e.g. `IMG-20251217-WA0003.jpg`, `Screenshot_2026-06-30-12-04-13.jpg`) being misinterpreted as Google negation operators (`-term`).
+  - **4 Selectable Query Formats**:
+    - **Smart Match (Recommended)**: Automatically wraps filenames with hyphens, spaces, brackets, or plus signs in double quotes (`"IMG-20251217-WA0003.jpg"`), ensuring exact literal matches without operator conflicts.
+    - **Quote All**: Wraps every filename in quotes (`"DSC001.jpg"`).
+    - **Base Name**: Strips file extensions (e.g. searching `20240702_145030` instead of `20240702_145030.jpg`), resilient against Google transcoding extensions.
+    - **Raw**: Unquoted raw filenames for standard simple token search.
+  - **Selectable Batch Sizes**: Toggle between **5**, **10** (recommended sweet-spot for Google Photos URL query limits), or **15** items per search batch.
+  - **1-Click Search by Date Header**: Photos in the batch are automatically grouped into clickable date pills (e.g., `📅 2024-07-02 (5 photos)`). Clicking a date searches that day in Google Photos, where the built-in calendar header selection circle allows selecting all matching photos in a single click.
+  - **1-Click Copy & Direct Search**: Individual rows include 1-click clipboard copy buttons and direct search links (`https://photos.google.com/search/...`).
 - **Reclaimable Storage Calculator**: Real-time disk space calculation (e.g. 13.8 GB reclaimable) with safe batch trash actions adhering to Zero Auto-Deletion.
+
+### ⚙️ Dynamic AI & Smart Triage Settings Studio (`/settings`)
+- **Interactive Threshold Sliders**: Adjust core AI detection, vision clustering, and triage sensitivity parameters directly from the browser UI with instant value updates:
+  - **Face Match Strictness** (`0.25`–`0.75`, default `0.48`): Controls cosine similarity cutoff for clustering faces. Higher prevents false positive merges; lower bridges different lighting conditions.
+  - **Cross-Account Global Recognition**: Toggle sharing named biometric representations across users with 100% photo isolation.
+  - **Face Detection Sensitivity (SCRFD)** (`0.15`–`0.70`, default `0.30`): Minimum confidence threshold for neural face detection.
+  - **CLIP Semantic Match Cutoff** (`0.08`–`0.40`, default `0.16`): Cosine similarity cutoff for natural language semantic search.
+  - **Focus & Sharpness Threshold** (`25.0`–`150.0`, default `65.0`): Laplacian focus variance score below which photos are classified as blurry.
+  - **Duplicate Burst Hamming Distance** (`1`–`15`, default `6`): Perceptual hash distance cutoff for burst groupings.
+  - **Screenshot & Bill Cleanup Expiry** (`7`–`180` days, default `30` days): Retention threshold before surfacing documents for triage.
+- **Persistent Dual Storage**: Settings are persisted immediately in PostgreSQL as well as `/data/db/app_settings.json` on the host, guaranteeing settings survive Docker container updates and rebuilds.
+- **1-Click Triage Recalculation**: Re-evaluate all library media against updated focus, duplicate, and screenshot thresholds with a single click (`POST /api/v1/triage/recalculate`).
 
 ### 📚 Albums & Smart Collections Hub
 - **Collections Group "Select All & Batch Delete"**: Multi-select toolbar in custom albums, places, trips, and people with Select All, Deselect All, and Safe Batch Delete modal (choice between "Remove from Album" and "Move to Trash").
@@ -384,6 +410,9 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `POST` | `/api/v1/people/group-matched-faces` | 1-click group matched face crops into new or existing person profile |
 | `PATCH` | `/api/v1/people/{id}` | Updates person name, relationship category (Family, Friends, Work, Partner, Self), and hidden state |
 | `PATCH` | `/api/v1/people/{id}/cover` | Sets custom cover photo for person profile |
+| `POST` | `/api/v1/people/{id}/recheck` | Auto-corrects misgrouped person clusters against named identities |
+| `POST` | `/api/v1/people/{id}/remove-faces` | Detaches specific photos from a person ("Not This Person") without deleting |
+| `POST` | `/api/v1/people/recluster-unnamed` | Re-clusters unnamed faces using current similarity threshold |
 | `POST` | `/api/v1/people/auto-cluster` | Triggers offline ArcFace embedding clustering |
 | `GET` | `/api/v1/albums` | Lists custom and dynamic smart albums with live photo counts |
 | `POST` | `/api/v1/albums` | Creates standard custom albums or self-updating dynamic smart albums |
@@ -397,6 +426,11 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/triage/overview` | High-level statistics on screenshots, bills, blurry shots, and reclaimable MB |
 | `GET` | `/api/v1/triage/duplicates` | Rapid burst sequences and perceptual duplicate clusters |
 | `POST` | `/api/v1/triage/resolve-duplicates`| Keeps selected best shot and soft-deletes redundant copies |
+| `POST` | `/api/v1/triage/recalculate` | Re-evaluates media items against updated smart triage thresholds |
+| `GET` | `/api/v1/settings` | Retrieves dynamic application & AI vision settings |
+| `PUT` | `/api/v1/settings` | Updates dynamic application & AI settings with disk persistence |
+| `GET` | `/api/v1/purge/google-photos-query`| Generates batch-optimized Google Photos search queries with hyphen negation prevention |
+| `GET` | `/api/v1/purge/export-csv` | Exports pending purge items as CSV with direct Google Photos search links |
 | `GET` | `/api/v1/storage/s3/status` | Live MinIO S3 connectivity, bucket stats, and console URLs |
 | `GET` | `/api/v1/storage/s3/objects` | Real-time object listing across photos, thumbnails, backups |
 | `POST` | `/api/v1/storage/s3/upload` | Direct multipart ingestion of photos into MinIO bucket |
@@ -485,6 +519,10 @@ mymemorypics/
 - [x] **📅 Vertical Minimap Scrubber**: Interactive fast scrubber rail on timeline with dynamic year/month jump bubbles.
 - [x] **🌟 Curated Memories Tab (`/memories`)**: Fullscreen story player with On This Day, This Week, and Joyful Moments highlights.
 - [x] **📺 Ambient TV & Kiosk Mode (`/kiosk`)**: Fullscreen Ken Burns digital picture frame for smart TVs and tablets with live clock and date.
+- [x] **👥 Global Identity Directory & Multi-User Biometric Re-use**: Cross-account ArcFace biometric directory sharing named identities to eliminate duplicate face tagging while guaranteeing 100% photo isolation across users.
+- [x] **🔄 Group Auto-Correct & Face Ejection Studio**: One-click re-checking of misgrouped people clusters (`/recheck`), individual face ejection ("Not This Person"), and non-destructive re-clustering of unnamed faces.
+- [x] **⚙️ Dynamic AI & Smart Triage Settings Studio**: Configurable sliders for face similarity, SCRFD sensitivity, CLIP cutoff, Laplacian focus variance, duplicate distance/window, and screenshot expiry with persistent host JSON + DB storage.
+- [x] **🔍 Google Photos Cloud Deletion Search Optimizer**: Robust hyphen/symbol quoting to eliminate Google search negation filtering (`-term`), 4 query formats (Smart Match, Quote All, Base Name, Raw), configurable batch sizing (5/10/15), and 1-click date grouping headers for rapid deletion.
 - [ ] **📱 PWA Offline App**: Mobile home-screen installation and background sync service worker.
 
 ---

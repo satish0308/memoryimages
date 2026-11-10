@@ -229,18 +229,21 @@ def get_google_photos_purge_query(
     batches = []
     for i in range(0, len(filenames), batch_size):
         chunk = filenames[i:i + batch_size]
-        q_str = " OR ".join(format_gp_token(fn) for fn in chunk)
+        gdrive_q = " or ".join(f"name = '{fn}'" for fn in chunk)
+        first_exact = f'"{chunk[0]}"' if chunk else ""
         batches.append({
             "batch_index": len(batches) + 1,
             "count": len(chunk),
-            "query": q_str,
-            "google_photos_url": f"https://photos.google.com/search/{urllib.parse.quote(q_str)}"
+            "filenames": chunk,
+            "first_exact_filename": first_exact,
+            "google_photos_url": f"https://photos.google.com/search/{urllib.parse.quote(first_exact)}" if first_exact else "",
+            "google_drive_query": gdrive_q,
+            "google_drive_url": f"https://drive.google.com/drive/search?q={urllib.parse.quote(gdrive_q)}"
         })
 
     return {
         "total_count": len(filenames),
         "filenames": filenames,
-        "full_query": " OR ".join(format_gp_token(fn) for fn in filenames),
         "batches": batches
     }
 
@@ -265,7 +268,8 @@ def export_pending_purge_csv(
         size_bytes = m.file_size or 0
         size_mb = f"{(size_bytes / (1024 * 1024)):.2f}"
         marked = m.marked_for_deletion_at.isoformat() if m.marked_for_deletion_at else ""
-        encoded_fn = urllib.parse.quote(m.filename or "")
+        exact_fn = f'"{m.filename}"' if m.filename else ""
+        encoded_fn = urllib.parse.quote(exact_fn)
         search_url = f"https://photos.google.com/search/{encoded_fn}"
 
         clean_fn = (m.filename or "").replace('"', '""')
