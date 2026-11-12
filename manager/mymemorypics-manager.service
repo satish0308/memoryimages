@@ -1,0 +1,16 @@
+[Unit]
+Description=MyMemoryPics Minimalist Server Controller & Wake/Sleep Daemon
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/memoryimages
+ExecStart=/usr/bin/python3 %h/memoryimages/manager/server.py --port 8080
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -10,7 +10,8 @@ import {
   UserPlus, 
   Users,
   LogIn,
-  Settings
+  Settings,
+  Moon
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/utils/apiUrl';
@@ -184,6 +185,24 @@ export const UserNavMenu: React.FC<UserNavMenuProps> = ({ onOpenAuthModal }) => 
               <Settings className="w-3.5 h-3.5 text-slate-400" />
               <span>App & Storage Settings</span>
             </Link>
+
+            <button
+              onClick={async () => {
+                setIsOpen(false);
+                if (confirm('Put MyMemoryPics to sleep? This gracefully stops all heavy Docker containers, immediately freeing ~2GB of laptop RAM and CPU. You can wake it anytime with 1 click.')) {
+                  const managerUrl = `http://${window.location.hostname}:8080`;
+                  try {
+                    await fetch(`${managerUrl}/api/stop`, { method: 'POST', mode: 'no-cors' });
+                  } catch {}
+                  window.location.href = managerUrl;
+                }
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-amber-600 hover:bg-amber-50 rounded-xl transition font-medium"
+              title="Stop Docker containers & release laptop RAM/CPU"
+            >
+              <Moon className="w-3.5 h-3.5 text-amber-500" />
+              <span>Sleep Server (Free RAM)</span>
+            </button>
 
             <button
               onClick={() => {

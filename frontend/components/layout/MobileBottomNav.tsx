@@ -21,7 +21,9 @@ import {
   ChevronRight,
   Shield,
   Layers,
-  Heart
+  Heart,
+  Moon,
+  Power
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { UserNavMenu } from '@/components/auth/UserNavMenu';
@@ -271,6 +273,33 @@ export const MobileBottomNav: React.FC = () => {
                   </Link>
                 );
               })}
+
+              {/* Sleep Server Action Button */}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm('Put MyMemoryPics to sleep? This gracefully stops all heavy Docker containers, immediately freeing ~2GB of laptop RAM and CPU. You can wake it anytime with 1 click.')) {
+                    setIsDrawerOpen(false);
+                    const managerUrl = `http://${window.location.hostname}:8080`;
+                    try {
+                      await fetch(`${managerUrl}/api/stop`, { method: 'POST', mode: 'no-cors' });
+                    } catch {}
+                    window.location.href = managerUrl;
+                  }
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-700 dark:text-amber-300 transition active:scale-[0.98] mt-2"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                    <Moon className="w-4 h-4" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-bold">Sleep Server (Free RAM)</p>
+                    <p className="text-[10px] text-amber-600/80 dark:text-amber-400/80">Stop Docker containers & save laptop battery</p>
+                  </div>
+                </div>
+                <Power className="w-4 h-4 text-amber-500" />
+              </button>
 
               {/* Zero Auto-Delete Guarantee Card */}
               <div className="bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-900/60 rounded-2xl p-3 text-xs mt-3">
