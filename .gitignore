@@ -67,6 +67,8 @@ minio.license
 # Logs
 *.log
 logs/
+manager/*.pid
+manager/*.log
 
 # System & IDE
 .DS_Store
