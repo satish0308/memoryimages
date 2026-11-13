@@ -81,11 +81,14 @@ def get_triage_overview(
         func.sum(case(((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= seven_days), 1), else_=0)).label("expiring_screenshots"),
         func.sum(case((Media.category == MediaCategory.DOCUMENT_BILL, 1), else_=0)).label("total_bills"),
         func.sum(case(((Media.is_blurry == True) & (Media.is_bokeh == False), 1), else_=0)).label("total_blurry"),
+        func.sum(case((((Media.is_blurry == True) & (Media.is_bokeh == False) & (Media.id.in_(select(faces_sub)))), 1), else_=0)).label("blurry_with_people"),
         func.sum(case((Media.blur_type == "black_pocket", 1), else_=0)).label("total_pocket_shots"),
         func.sum(case((Media.blur_type == "motion_blur", 1), else_=0)).label("total_motion_blur"),
         func.sum(case((Media.is_bokeh == True, 1), else_=0)).label("total_bokeh"),
         func.sum(case((Media.category == MediaCategory.MEME_JUNK, 1), else_=0)).label("total_memes"),
+        func.sum(case((((Media.category == MediaCategory.MEME_JUNK) & (Media.id.in_(select(faces_sub)))), 1), else_=0)).label("memes_with_people"),
         func.sum(case((((Media.width >= 1920) & (Media.width > Media.height) & (Media.camera_make.is_(None))), 1), else_=0)).label("total_wallpapers"),
+        func.sum(case((((Media.width >= 1920) & (Media.width > Media.height) & (Media.camera_make.is_(None)) & (Media.id.in_(select(faces_sub)))), 1), else_=0)).label("wallpapers_with_people"),
         func.sum(case((
             ((Media.category == MediaCategory.SCREENSHOT) & (Media.expires_at <= now)) |
             ((Media.is_blurry == True) & (Media.is_bokeh == False)) |
@@ -103,11 +106,17 @@ def get_triage_overview(
     expiring_screenshots = int(stats.expiring_screenshots or 0)
     total_bills = int(stats.total_bills or 0)
     total_blurry = int(stats.total_blurry or 0)
+    blurry_with_people = int(stats.blurry_with_people or 0)
+    blurry_without_people = max(0, total_blurry - blurry_with_people)
     total_pocket_shots = int(stats.total_pocket_shots or 0)
     total_motion_blur = int(stats.total_motion_blur or 0)
     total_bokeh = int(stats.total_bokeh or 0)
     total_memes = int(stats.total_memes or 0)
+    memes_with_people = int(stats.memes_with_people or 0)
+    memes_without_people = max(0, total_memes - memes_with_people)
     total_wallpapers = int(stats.total_wallpapers or 0)
+    wallpapers_with_people = int(stats.wallpapers_with_people or 0)
+    wallpapers_without_people = max(0, total_wallpapers - wallpapers_with_people)
     clutter_size = int(stats.clutter_size or 0)
     
     return {
@@ -117,11 +126,17 @@ def get_triage_overview(
         "expiring_screenshots": expiring_screenshots,
         "total_bills_receipts": total_bills,
         "total_blurry": total_blurry,
+        "blurry_with_people": blurry_with_people,
+        "blurry_without_people": blurry_without_people,
         "total_pocket_shots": total_pocket_shots,
         "total_motion_blur": total_motion_blur,
         "total_bokeh": total_bokeh,
         "total_memes": total_memes,
+        "memes_with_people": memes_with_people,
+        "memes_without_people": memes_without_people,
         "total_wallpapers": total_wallpapers,
+        "wallpapers_with_people": wallpapers_with_people,
+        "wallpapers_without_people": wallpapers_without_people,
         "reclaimable_bytes": clutter_size,
         "reclaimable_mb": round(clutter_size / (1024 * 1024), 2)
     }
@@ -215,28 +230,63 @@ def get_screenshots(
 
 @router.get("/bills")
 def get_bills_and_receipts(
+    content_type: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """Lists all detected documents, invoices, and bills for current user."""
     if not current_user:
         return []
-    items = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.category == MediaCategory.DOCUMENT_BILL,
-        Media.is_deleted == False
-    ).order_by(desc(Media.captured_at)).all()
+
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.category == MediaCategory.DOCUMENT_BILL,
+            Media.is_deleted == False
+        )
+    )
+
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type in ("without_people", "text_only"):
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
+
+    items = query.order_by(desc(Media.captured_at)).all()
     
-    return [{
-        "id": item.id,
-        "filename": item.filename,
-        "captured_at": item.captured_at,
-        "file_size": item.file_size,
-        "extracted_text": item.extracted_text,
-        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
-        "source_id": item.source_id,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
-    } for item in items]
+    results = []
+    for item, fc in items:
+        has_people = fc > 0
+        has_text = bool(item.extracted_text and len(item.extracted_text.strip()) > 0)
+        text_preview = item.extracted_text[:120].strip() if has_text else None
+        results.append({
+            "id": item.id,
+            "filename": item.filename,
+            "captured_at": item.captured_at,
+            "file_size": item.file_size,
+            "extracted_text": item.extracted_text,
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+        })
+    return results
 
 @router.get("/duplicates")
 @router.get("/bursts")
@@ -397,58 +447,128 @@ def batch_delete(
 
 @router.get("/memes")
 def get_memes_and_graphics(
+    content_type: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists detected memes and social media junk for current user."""
+    """Lists detected memes and social media junk for current user with people vs graphics separation."""
     if not current_user:
         return []
-    items = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.category == MediaCategory.MEME_JUNK,
-        Media.is_deleted == False
-    ).order_by(desc(Media.captured_at)).all()
+
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.category == MediaCategory.MEME_JUNK,
+            Media.is_deleted == False
+        )
+    )
+
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type in ("without_people", "text_only"):
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
+
+    items = query.order_by(desc(Media.captured_at)).all()
     
-    return [{
-        "id": item.id,
-        "filename": item.filename,
-        "captured_at": item.captured_at,
-        "file_size": item.file_size,
-        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
-        "source_id": item.source_id,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
-    } for item in items]
+    results = []
+    for item, fc in items:
+        has_people = fc > 0
+        has_text = bool(item.extracted_text and len(item.extracted_text.strip()) > 0)
+        text_preview = item.extracted_text[:120].strip() if has_text else None
+        results.append({
+            "id": item.id,
+            "filename": item.filename,
+            "captured_at": item.captured_at,
+            "file_size": item.file_size,
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+        })
+    return results
 
 @router.get("/large-files")
 def get_large_storage_files(
     min_mb: float = 3.0,
+    content_type: Optional[str] = None,
     limit: int = 50,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    """Lists largest files in the current user's library."""
+    """Lists largest files in the current user's library with people vs non-people separation."""
     if not current_user:
         return []
     min_bytes = int(min_mb * 1024 * 1024)
-    items = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.file_size >= min_bytes,
-        Media.is_deleted == False
-    ).order_by(desc(Media.file_size)).limit(limit).all()
+
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.file_size >= min_bytes,
+            Media.is_deleted == False
+        )
+    )
+
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type in ("without_people", "text_only"):
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
+
+    items = query.order_by(desc(Media.file_size)).limit(limit).all()
     
-    return [{
-        "id": item.id,
-        "filename": item.filename,
-        "category": item.category.value if hasattr(item.category, 'value') else str(item.category),
-        "file_size": item.file_size,
-        "file_size_mb": round(item.file_size / (1024 * 1024), 2),
-        "width": item.width,
-        "height": item.height,
-        "captured_at": item.captured_at,
-        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
-        "source_id": item.source_id,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
-    } for item in items]
+    results = []
+    for item, fc in items:
+        has_people = fc > 0
+        has_text = bool(item.extracted_text and len(item.extracted_text.strip()) > 0)
+        text_preview = item.extracted_text[:120].strip() if has_text else None
+        results.append({
+            "id": item.id,
+            "filename": item.filename,
+            "category": item.category.value if hasattr(item.category, 'value') else str(item.category),
+            "file_size": item.file_size,
+            "file_size_mb": round(item.file_size / (1024 * 1024), 2),
+            "width": item.width,
+            "height": item.height,
+            "captured_at": item.captured_at,
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+        })
+    return results
 
 @router.post("/move-to-memories")
 def move_to_memories(
@@ -495,40 +615,73 @@ def resolve_all_duplicates(
 @router.get("/blurry")
 def get_blurry_photos(
     blur_type: Optional[str] = Query(None, regex="^(all|motion_blur|out_of_focus|black_pocket|blown_white)$"),
+    content_type: Optional[str] = None,
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Lists photos flagged as blurry or poor quality for current user.
+    Lists photos flagged as blurry or poor quality for current user with people vs scenery separation.
     """
     if not current_user:
         return []
-    query = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.is_blurry == True,
-        Media.is_bokeh == False,
-        Media.is_deleted == False
+
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_blurry == True,
+            Media.is_bokeh == False,
+            Media.is_deleted == False
+        )
     )
 
     if blur_type and blur_type != "all":
         query = query.filter(Media.blur_type == blur_type)
 
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type in ("without_people", "text_only"):
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
+
     items = query.order_by(desc(Media.captured_at)).all()
 
-    return [{
-        "id": item.id,
-        "filename": item.filename,
-        "captured_at": item.captured_at,
-        "file_size": item.file_size,
-        "blur_type": getattr(item, "blur_type", "out_of_focus") or "out_of_focus",
-        "blurriness_score": item.blurriness_score,
-        "is_blurry": item.is_blurry,
-        "is_bokeh": getattr(item, "is_bokeh", False) or False,
-        "is_enhanced": getattr(item, "is_enhanced", False) or False,
-        "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
-        "source_id": item.source_id,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
-    } for item in items]
+    results = []
+    for item, fc in items:
+        has_people = fc > 0
+        has_text = bool(item.extracted_text and len(item.extracted_text.strip()) > 0)
+        text_preview = item.extracted_text[:120].strip() if has_text else None
+        results.append({
+            "id": item.id,
+            "filename": item.filename,
+            "captured_at": item.captured_at,
+            "file_size": item.file_size,
+            "blur_type": getattr(item, "blur_type", "out_of_focus") or "out_of_focus",
+            "blurriness_score": item.blurriness_score,
+            "is_blurry": item.is_blurry,
+            "is_bokeh": getattr(item, "is_bokeh", False) or False,
+            "is_enhanced": getattr(item, "is_enhanced", False) or False,
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
+            "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
+            "source_id": item.source_id,
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+        })
+    return results
 
 @router.post("/pocket-shots/cleanup")
 def cleanup_pocket_shots(
@@ -627,21 +780,39 @@ def reclassify_screenshots(
 @router.get("/wallpapers")
 def get_wallpapers(
     resolution: Optional[str] = Query(None, regex="^(all|4k|2k|1080p|ultrawide)$"),
+    content_type: Optional[str] = Query(None, regex="^(all|without_people|with_people|with_text|text_only)$"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Lists widescreen desktop wallpapers and digital artwork (16:9, 16:10, 21:9 >= 1080p).
+    Lists widescreen desktop wallpapers and digital artwork (16:9, 16:10, 21:9 >= 1080p)
+    with people vs artwork/text separation.
     """
     if not current_user:
         return []
     
-    query = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        Media.is_deleted == False,
-        Media.width >= 1920,
-        Media.width > Media.height,
-        Media.camera_make.is_(None)
+    face_counts = (
+        db.query(
+            FaceDetection.media_id,
+            func.count(FaceDetection.id).label("face_count")
+        )
+        .group_by(FaceDetection.media_id)
+        .subquery()
+    )
+
+    query = (
+        db.query(
+            Media,
+            func.coalesce(face_counts.c.face_count, 0).label("face_count")
+        )
+        .outerjoin(face_counts, Media.id == face_counts.c.media_id)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            Media.width >= 1920,
+            Media.width > Media.height,
+            Media.camera_make.is_(None)
+        )
     )
     
     if resolution == "4k":
@@ -652,11 +823,22 @@ def get_wallpapers(
         query = query.filter(Media.width == 1920)
     elif resolution == "ultrawide":
         query = query.filter((Media.width / Media.height) >= 2.2)
+
+    if content_type == "with_people":
+        query = query.filter(face_counts.c.face_count > 0)
+    elif content_type in ("without_people", "text_only"):
+        query = query.filter((face_counts.c.face_count == 0) | (face_counts.c.face_count.is_(None)))
+    elif content_type == "with_text":
+        query = query.filter(Media.extracted_text.isnot(None), func.length(func.trim(Media.extracted_text)) > 0)
         
     items = query.order_by(Media.file_size.desc()).limit(300).all()
     
-    return [
-        {
+    results = []
+    for m, fc in items:
+        has_people = fc > 0
+        has_text = bool(m.extracted_text and len(m.extracted_text.strip()) > 0)
+        text_preview = m.extracted_text[:120].strip() if has_text else None
+        results.append({
             "id": m.id,
             "filename": m.filename,
             "width": m.width,
@@ -664,12 +846,15 @@ def get_wallpapers(
             "file_size": m.file_size,
             "captured_at": m.captured_at,
             "category": m.category.value if hasattr(m.category, 'value') else str(m.category),
+            "has_faces": has_people,
+            "face_count": int(fc),
+            "has_text": has_text,
+            "text_preview": text_preview,
             "source_type": (m.source_type.value if hasattr(m.source_type, "value") else str(m.source_type)) if m.source_type else "local",
             "source_id": m.source_id,
             "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
-        }
-        for m in items
-    ]
+        })
+    return results
 
 @router.patch("/category")
 def change_media_category(

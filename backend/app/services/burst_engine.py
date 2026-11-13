@@ -230,6 +230,13 @@ def detect_burst_clusters(
             raw_clusters.append([id_to_item[x] for x in comp])
 
     # 4. Format and rank each cluster
+    all_cluster_media_ids = [m.id for comp in raw_clusters for m in comp]
+    media_ids_with_faces = set(
+        r[0] for r in db.query(FaceDetection.media_id).filter(
+            FaceDetection.media_id.in_(all_cluster_media_ids)
+        ).all()
+    ) if all_cluster_media_ids else set()
+
     formatted_clusters = []
     for c_items in raw_clusters:
         # Sort items by timestamp ascending
@@ -239,6 +246,8 @@ def detect_burst_clusters(
         scored_items = []
         for m in c_items:
             q = calculate_photo_quality(m)
+            has_people = m.id in media_ids_with_faces
+            has_text = bool(m.extracted_text and len(m.extracted_text.strip()) > 0)
             scored_items.append({
                 "id": m.id,
                 "filename": m.filename,
@@ -262,6 +271,8 @@ def detect_burst_clusters(
                 "is_smiling": q["is_smiling"],
                 "is_blurry": q["is_blurry"],
                 "is_favorite": q["is_favorite"],
+                "has_faces": has_people,
+                "has_text": has_text,
                 "is_best_shot": False
             })
 
@@ -294,6 +305,7 @@ def detect_burst_clusters(
             "count": len(scored_items),
             "duration_seconds": round(duration, 2),
             "best_shot_id": best_shot_id,
+            "has_people": any(it["has_faces"] for it in scored_items),
             "captured_at": c_items[0].captured_at.isoformat() if c_items[0].captured_at else None,
             "reclaimable_bytes": reclaimable_bytes,
             "reclaimable_mb": round(reclaimable_bytes / (1024 * 1024), 2),

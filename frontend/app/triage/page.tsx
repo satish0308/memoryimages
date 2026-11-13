@@ -53,11 +53,17 @@ interface TriageOverview {
   screenshots_text_only?: number;
   total_bills_receipts: number;
   total_blurry: number;
+  blurry_with_people?: number;
+  blurry_without_people?: number;
   total_pocket_shots?: number;
   total_motion_blur?: number;
   total_bokeh?: number;
   total_memes: number;
+  memes_with_people?: number;
+  memes_without_people?: number;
   total_wallpapers?: number;
+  wallpapers_with_people?: number;
+  wallpapers_without_people?: number;
   reclaimable_bytes: number;
   reclaimable_mb: number;
 }
@@ -94,6 +100,10 @@ interface WallpaperItem {
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 interface BillItem {
@@ -105,6 +115,10 @@ interface BillItem {
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 interface BlurryItem {
@@ -120,6 +134,10 @@ interface BlurryItem {
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 interface LargeFileItem {
@@ -134,6 +152,10 @@ interface LargeFileItem {
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 interface MemeItem {
@@ -144,6 +166,10 @@ interface MemeItem {
   thumbnail_url: string;
   source_type?: string;
   source_id?: string | null;
+  has_faces?: boolean;
+  face_count?: number;
+  has_text?: boolean;
+  text_preview?: string | null;
 }
 
 export type TimeGrouping = 'week' | 'month' | 'year' | 'all';
@@ -254,12 +280,29 @@ export default function TriagePage() {
   const [loading, setLoading] = useState(true);
   const [loadingWallpapers, setLoadingWallpapers] = useState(false);
   const [billSearchQuery, setBillSearchQuery] = useState('');
+  const [billContentType, setBillContentType] = useState<'all' | 'without_people' | 'with_people'>('all');
+
   const [screenshotFilter, setScreenshotFilter] = useState<'all' | 'expired' | 'recent'>('all');
   const [screenshotOrientation, setScreenshotOrientation] = useState<'all' | 'portrait' | 'desktop'>('all');
   const [screenshotContentType, setScreenshotContentType] = useState<'all' | 'text_only' | 'with_people'>('all');
   const [screenshotGrouping, setScreenshotGrouping] = useState<'content' | 'week' | 'month' | 'year' | 'all'>('content');
+
   const [wallpaperFilter, setWallpaperFilter] = useState<'all' | '4k' | '2k' | '1080p' | 'ultrawide'>('all');
+  const [wallpaperContentType, setWallpaperContentType] = useState<'all' | 'without_people' | 'with_people' | 'with_text'>('all');
+  const [wallpaperGrouping, setWallpaperGrouping] = useState<'content' | 'resolution' | 'month' | 'year' | 'all'>('content');
+
   const [blurFilter, setBlurFilter] = useState<'all' | 'motion_blur' | 'out_of_focus' | 'black_pocket'>('all');
+  const [blurryContentType, setBlurryContentType] = useState<'all' | 'without_people' | 'with_people'>('all');
+  const [blurryGrouping, setBlurryGrouping] = useState<'content' | 'blur_type' | 'month' | 'year' | 'all'>('content');
+
+  const [largeFileContentType, setLargeFileContentType] = useState<'all' | 'without_people' | 'with_people' | 'with_text'>('all');
+  const [largeFileGrouping, setLargeFileGrouping] = useState<'content' | 'month' | 'year' | 'all'>('content');
+
+  const [memeContentType, setMemeContentType] = useState<'all' | 'without_people' | 'with_people' | 'with_text'>('all');
+  const [memeGrouping, setMemeGrouping] = useState<'content' | 'week' | 'month' | 'year' | 'all'>('content');
+
+  const [duplicateFilter, setDuplicateFilter] = useState<'all' | 'without_people' | 'with_people'>('all');
+
   const [isCleaningPockets, setIsCleaningPockets] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isResolvingAll, setIsResolvingAll] = useState(false);
@@ -514,6 +557,11 @@ export default function TriagePage() {
       if (res.ok) {
         setStatusMessage('Rescued photo back to Personal Memories!');
         setScreenshots((prev) => prev.filter((s) => s.id !== mediaId));
+        setWallpapers((prev) => prev.filter((w) => w.id !== mediaId));
+        setMemes((prev) => prev.filter((m) => m.id !== mediaId));
+        setLargeFiles((prev) => prev.filter((l) => l.id !== mediaId));
+        setBills((prev) => prev.filter((b) => b.id !== mediaId));
+        setBlurryPhotos((prev) => prev.filter((b) => b.id !== mediaId));
         fetchOverview();
         setTimeout(() => setStatusMessage(null), 3000);
       }
@@ -532,7 +580,13 @@ export default function TriagePage() {
       });
       if (res.ok) {
         setStatusMessage(`Rescued ${mediaIds.length} personal photos with human faces to Personal Memories!`);
-        setScreenshots((prev) => prev.filter((s) => !mediaIds.includes(s.id)));
+        const idSet = new Set(mediaIds);
+        setScreenshots((prev) => prev.filter((s) => !idSet.has(s.id)));
+        setWallpapers((prev) => prev.filter((w) => !idSet.has(w.id)));
+        setMemes((prev) => prev.filter((m) => !idSet.has(m.id)));
+        setLargeFiles((prev) => prev.filter((l) => !idSet.has(l.id)));
+        setBills((prev) => prev.filter((b) => !idSet.has(b.id)));
+        setBlurryPhotos((prev) => prev.filter((b) => !idSet.has(b.id)));
         fetchOverview();
         setTimeout(() => setStatusMessage(null), 4000);
       }
@@ -564,14 +618,22 @@ export default function TriagePage() {
     else if (activeTab === 'memes') fetchMemes();
   }, [activeTab, fetchScreenshots, fetchWallpapers, fetchBills, fetchDuplicates, fetchBlurry, fetchLargeFiles, fetchMemes]);
 
-  // Filtered bills by OCR search
+  // Filtered bills by OCR search and People vs Document content type
   const filteredBills = useMemo(() => {
-    if (!billSearchQuery.trim()) return bills;
-    const q = billSearchQuery.toLowerCase();
-    return bills.filter(
-      (b) => b.filename.toLowerCase().includes(q) || (b.extracted_text && b.extracted_text.toLowerCase().includes(q))
-    );
-  }, [bills, billSearchQuery]);
+    let list = bills;
+    if (billSearchQuery.trim()) {
+      const q = billSearchQuery.toLowerCase();
+      list = list.filter(
+        (b) => b.filename.toLowerCase().includes(q) || (b.extracted_text && b.extracted_text.toLowerCase().includes(q))
+      );
+    }
+    if (billContentType === 'with_people') {
+      list = list.filter((b) => Boolean(b.has_faces));
+    } else if (billContentType === 'without_people') {
+      list = list.filter((b) => !b.has_faces);
+    }
+    return list;
+  }, [bills, billSearchQuery, billContentType]);
 
   // Filtered screenshots by age, orientation, and content type (People vs Text)
   const filteredScreenshots = useMemo(() => {
@@ -593,19 +655,76 @@ export default function TriagePage() {
     return list;
   }, [screenshots, screenshotFilter, screenshotOrientation, screenshotContentType]);
 
+  // Filtered wallpapers by content type (Artwork/Scenery vs People vs Text)
+  const filteredWallpapers = useMemo(() => {
+    let list = wallpapers;
+    if (wallpaperContentType === 'with_people') {
+      list = list.filter((w) => Boolean(w.has_faces));
+    } else if (wallpaperContentType === 'without_people') {
+      list = list.filter((w) => !w.has_faces);
+    } else if (wallpaperContentType === 'with_text') {
+      list = list.filter((w) => Boolean(w.has_text));
+    }
+    return list;
+  }, [wallpapers, wallpaperContentType]);
+
+  // Filtered blurry photos by content type (People vs Scenery/Objects)
+  const filteredBlurry = useMemo(() => {
+    let list = blurryPhotos;
+    if (blurryContentType === 'with_people') {
+      list = list.filter((b) => Boolean(b.has_faces));
+    } else if (blurryContentType === 'without_people') {
+      list = list.filter((b) => !b.has_faces);
+    }
+    return list;
+  }, [blurryPhotos, blurryContentType]);
+
+  // Filtered large files by content type (People vs Non-People vs Text)
+  const filteredLargeFiles = useMemo(() => {
+    let list = largeFiles;
+    if (largeFileContentType === 'with_people') {
+      list = list.filter((l) => Boolean(l.has_faces));
+    } else if (largeFileContentType === 'without_people') {
+      list = list.filter((l) => !l.has_faces);
+    } else if (largeFileContentType === 'with_text') {
+      list = list.filter((l) => Boolean(l.has_text));
+    }
+    return list;
+  }, [largeFiles, largeFileContentType]);
+
+  // Filtered memes by content type (Graphics/Text vs People)
+  const filteredMemes = useMemo(() => {
+    let list = memes;
+    if (memeContentType === 'with_people') {
+      list = list.filter((m) => Boolean(m.has_faces));
+    } else if (memeContentType === 'without_people') {
+      list = list.filter((m) => !m.has_faces);
+    } else if (memeContentType === 'with_text') {
+      list = list.filter((m) => Boolean(m.has_text));
+    }
+    return list;
+  }, [memes, memeContentType]);
+
+  // Filtered duplicate clusters (People vs Non-People)
+  const filteredDuplicates = useMemo(() => {
+    if (duplicateFilter === 'all') return duplicates;
+    if (duplicateFilter === 'with_people') {
+      return duplicates.filter((c) => c.has_people || c.items.some((i) => i.has_faces));
+    }
+    return duplicates.filter((c) => !c.has_people && !c.items.some((i) => i.has_faces));
+  }, [duplicates, duplicateFilter]);
+
   // Current items for active tab selection
   const currentTabItemIds = useMemo(() => {
-    if (activeTab === 'screenshots') {
-      return filteredScreenshots.map((s) => s.id);
-    }
-    if (activeTab === 'wallpapers') return wallpapers.map((w) => w.id);
+    if (activeTab === 'screenshots') return filteredScreenshots.map((s) => s.id);
+    if (activeTab === 'wallpapers') return filteredWallpapers.map((w) => w.id);
     if (activeTab === 'bills') return filteredBills.map((b) => b.id);
-    if (activeTab === 'blurry') return blurryPhotos.map((b) => b.id);
-    if (activeTab === 'large_files') return largeFiles.map((l) => l.id);
-    if (activeTab === 'memes') return memes.map((m) => m.id);
-    if (activeTab === 'duplicates') return duplicates.flatMap((d) => d.items.map((i) => i.id));
+    if (activeTab === 'blurry') return filteredBlurry.map((b) => b.id);
+    if (activeTab === 'large_files') return filteredLargeFiles.map((l) => l.id);
+    if (activeTab === 'memes') return filteredMemes.map((m) => m.id);
+    if (activeTab === 'duplicates') return filteredDuplicates.flatMap((d) => d.items.map((i) => i.id));
     return [];
-  }, [activeTab, filteredScreenshots, filteredBills, wallpapers, blurryPhotos, largeFiles, memes, duplicates]);
+  }, [activeTab, filteredScreenshots, filteredWallpapers, filteredBills, filteredBlurry, filteredLargeFiles, filteredMemes, filteredDuplicates]);
 
   const isAllSelected = currentTabItemIds.length > 0 && currentTabItemIds.every((id) => selectedIds.includes(id));
 
@@ -806,11 +925,100 @@ export default function TriagePage() {
     }
   };
 
-  // Time-grouped collections for Week / Month / Year triage views
-  const memeGroups = useMemo(() => {
-    return groupItemsByTime(memes, timeGrouping);
-  }, [memes, timeGrouping]);
+  // Grouped collections for Wallpaper triage views
+  const wallpaperGroups = useMemo(() => {
+    if (wallpaperGrouping === 'content') {
+      const withPeople = filteredWallpapers.filter((w) => w.has_faces);
+      const withoutPeople = filteredWallpapers.filter((w) => !w.has_faces);
+      const groups: TriageTimeGroup<WallpaperItem>[] = [];
 
+      if (withPeople.length > 0) {
+        groups.push({
+          key: 'with_people',
+          label: '👥 Wallpapers & Artwork With Detected Human Faces',
+          items: withPeople,
+          totalBytes: withPeople.reduce((acc, w) => acc + (w.file_size || 0), 0),
+        });
+      }
+
+      if (withoutPeople.length > 0) {
+        groups.push({
+          key: 'without_people',
+          label: '🎨 Digital Artwork, Landscapes & Scenery (No People)',
+          items: withoutPeople,
+          totalBytes: withoutPeople.reduce((acc, w) => acc + (w.file_size || 0), 0),
+        });
+      }
+
+      return groups;
+    }
+
+    if (wallpaperGrouping === 'resolution') {
+      const map = new Map<string, WallpaperItem[]>();
+      map.set('4K UHD (≥3840w)', []);
+      map.set('2K QHD (2560–3839w)', []);
+      map.set('1080p FHD (1920w)', []);
+      map.set('Ultrawide (≥2.1:1)', []);
+      map.set('Other High-Res', []);
+
+      for (const w of filteredWallpapers) {
+        const ratio = w.width / (w.height || 1);
+        if (ratio >= 2.1) map.get('Ultrawide (≥2.1:1)')!.push(w);
+        else if (w.width >= 3840) map.get('4K UHD (≥3840w)')!.push(w);
+        else if (w.width >= 2560) map.get('2K QHD (2560–3839w)')!.push(w);
+        else if (w.width === 1920) map.get('1080p FHD (1920w)')!.push(w);
+        else map.get('Other High-Res')!.push(w);
+      }
+
+      const resGroups: TriageTimeGroup<WallpaperItem>[] = [];
+      map.forEach((items, label) => {
+        if (items.length > 0) {
+          resGroups.push({
+            key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+            label,
+            items,
+            totalBytes: items.reduce((acc, w) => acc + (w.file_size || 0), 0),
+          });
+        }
+      });
+      return resGroups;
+    }
+
+    return groupItemsByTime(filteredWallpapers, wallpaperGrouping as TimeGrouping);
+  }, [filteredWallpapers, wallpaperGrouping]);
+
+  // Grouped collections for Meme triage views
+  const memeGroups = useMemo(() => {
+    if (memeGrouping === 'content') {
+      const withPeople = filteredMemes.filter((m) => m.has_faces);
+      const withoutPeople = filteredMemes.filter((m) => !m.has_faces);
+      const groups: TriageTimeGroup<MemeItem>[] = [];
+
+      if (withPeople.length > 0) {
+        groups.push({
+          key: 'with_people',
+          label: '👥 Memes & Reaction Faces (With Detected People)',
+          items: withPeople,
+          totalBytes: withPeople.reduce((acc, m) => acc + (m.file_size || 0), 0),
+        });
+      }
+
+      if (withoutPeople.length > 0) {
+        groups.push({
+          key: 'without_people',
+          label: '📄 Graphic Memes, Quotes & Junk (No People)',
+          items: withoutPeople,
+          totalBytes: withoutPeople.reduce((acc, m) => acc + (m.file_size || 0), 0),
+        });
+      }
+
+      return groups;
+    }
+
+    return groupItemsByTime(filteredMemes, memeGrouping as TimeGrouping);
+  }, [filteredMemes, memeGrouping]);
+
+  // Grouped collections for Screenshot triage views
   const screenshotGroups = useMemo(() => {
     if (screenshotGrouping === 'content') {
       const textOnly = filteredScreenshots.filter((s) => !s.has_faces);
@@ -838,19 +1046,101 @@ export default function TriagePage() {
       return groups;
     }
 
-    return groupItemsByTime(filteredScreenshots, screenshotGrouping);
+    return groupItemsByTime(filteredScreenshots, screenshotGrouping as TimeGrouping);
   }, [filteredScreenshots, screenshotGrouping]);
 
+  // Grouped collections for Blurry triage views
   const blurryGroups = useMemo(() => {
-    return groupItemsByTime(blurryPhotos, timeGrouping);
-  }, [blurryPhotos, timeGrouping]);
+    if (blurryGrouping === 'content') {
+      const withPeople = filteredBlurry.filter((b) => b.has_faces);
+      const withoutPeople = filteredBlurry.filter((b) => !b.has_faces);
+      const groups: TriageTimeGroup<BlurryItem>[] = [];
 
+      if (withPeople.length > 0) {
+        groups.push({
+          key: 'with_people',
+          label: '👥 Blurry Photos of People (Important: Review Before Deleting!)',
+          items: withPeople,
+          totalBytes: withPeople.reduce((acc, b) => acc + (b.file_size || 0), 0),
+        });
+      }
+
+      if (withoutPeople.length > 0) {
+        groups.push({
+          key: 'without_people',
+          label: '📷 Blurry Objects, Documents & Scenery',
+          items: withoutPeople,
+          totalBytes: withoutPeople.reduce((acc, b) => acc + (b.file_size || 0), 0),
+        });
+      }
+
+      return groups;
+    }
+
+    if (blurryGrouping === 'blur_type') {
+      const map = new Map<string, BlurryItem[]>();
+      map.set('💨 Motion Shake', []);
+      map.set('🔍 Out of Focus', []);
+      map.set('🌑 Dark / Pocket', []);
+      map.set('Other Blurry', []);
+
+      for (const b of filteredBlurry) {
+        if (b.blur_type === 'motion_blur') map.get('💨 Motion Shake')!.push(b);
+        else if (b.blur_type === 'black_pocket') map.get('🌑 Dark / Pocket')!.push(b);
+        else if (b.blur_type === 'out_of_focus') map.get('🔍 Out of Focus')!.push(b);
+        else map.get('Other Blurry')!.push(b);
+      }
+
+      const groups: TriageTimeGroup<BlurryItem>[] = [];
+      map.forEach((items, label) => {
+        if (items.length > 0) {
+          groups.push({
+            key: label.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+            label,
+            items,
+            totalBytes: items.reduce((acc, b) => acc + (b.file_size || 0), 0),
+          });
+        }
+      });
+      return groups;
+    }
+
+    return groupItemsByTime(filteredBlurry, blurryGrouping as TimeGrouping);
+  }, [filteredBlurry, blurryGrouping]);
+
+  // Grouped collections for Large Files triage views
   const largeFileGroups = useMemo(() => {
-    return groupItemsByTime(largeFiles, timeGrouping);
-  }, [largeFiles, timeGrouping]);
+    if (largeFileGrouping === 'content') {
+      const withPeople = filteredLargeFiles.filter((l) => l.has_faces);
+      const withoutPeople = filteredLargeFiles.filter((l) => !l.has_faces);
+      const groups: TriageTimeGroup<LargeFileItem>[] = [];
+
+      if (withPeople.length > 0) {
+        groups.push({
+          key: 'with_people',
+          label: '👥 Large Photos of People (High-Resolution Memories)',
+          items: withPeople,
+          totalBytes: withPeople.reduce((acc, l) => acc + (l.file_size || 0), 0),
+        });
+      }
+
+      if (withoutPeople.length > 0) {
+        groups.push({
+          key: 'without_people',
+          label: '📁 Large Artwork, Scenery & Storage Hogs (>3MB)',
+          items: withoutPeople,
+          totalBytes: withoutPeople.reduce((acc, l) => acc + (l.file_size || 0), 0),
+        });
+      }
+
+      return groups;
+    }
+
+    return groupItemsByTime(filteredLargeFiles, largeFileGrouping as TimeGrouping);
+  }, [filteredLargeFiles, largeFileGrouping]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-16" onPointerDown={(e) => handlePointerDown(e)}>
+    <div className="w-full max-w-[2560px] mx-auto px-4 sm:px-6 md:px-8 space-y-6 pb-16" onPointerDown={(e) => handlePointerDown(e)}>
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-200/60 dark:border-amber-900/60 rounded-3xl p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -907,8 +1197,8 @@ export default function TriagePage() {
             {overview?.total_screenshots || 0}
           </p>
           <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
-            <span className="text-slate-500 font-medium">📄 {overview?.screenshots_text_only ?? 0}</span>
-            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.screenshots_with_people ?? 0}</span>
+            <span className="text-slate-500 font-medium">📄 {overview?.screenshots_text_only ?? screenshots.filter(s => !s.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.screenshots_with_people ?? screenshots.filter(s => s.has_faces).length}</span>
           </div>
         </button>
 
@@ -928,7 +1218,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {overview?.total_wallpapers !== undefined ? overview.total_wallpapers : wallpapers.length}
           </p>
-          <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium truncate">4K/2K Widescreen</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">🎨 {overview?.wallpapers_without_people ?? wallpapers.filter(w => !w.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.wallpapers_with_people ?? wallpapers.filter(w => w.has_faces).length}</span>
+          </div>
         </button>
 
         {/* Bills & Receipts Tab */}
@@ -947,7 +1240,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {overview?.total_bills_receipts || 0}
           </p>
-          <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">OCR Text Vault</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">📄 {bills.filter(b => !b.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {bills.filter(b => b.has_faces).length}</span>
+          </div>
         </button>
 
         {/* Duplicates & Bursts Tab */}
@@ -966,7 +1262,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {duplicates.length}
           </p>
-          <p className="text-[10px] text-purple-700 dark:text-purple-400 font-medium">AI Best Picked</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">🖼️ {duplicates.filter(c => !c.has_people && !c.items.some(i => i.has_faces)).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {duplicates.filter(c => c.has_people || c.items.some(i => i.has_faces)).length}</span>
+          </div>
         </button>
 
         {/* Blurry Tab */}
@@ -985,7 +1284,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {overview?.total_blurry || 0}
           </p>
-          <p className="text-[10px] text-amber-700 dark:text-amber-400 font-medium">Low Sharpness</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">📷 {overview?.blurry_without_people ?? blurryPhotos.filter(b => !b.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.blurry_with_people ?? blurryPhotos.filter(b => b.has_faces).length}</span>
+          </div>
         </button>
 
         {/* Large Files Tab */}
@@ -1004,7 +1306,10 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {largeFiles.length}
           </p>
-          <p className="text-[10px] text-red-700 dark:text-red-400 font-medium">Storage Hogs (&gt;3MB)</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">📁 {largeFiles.filter(l => !l.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {largeFiles.filter(l => l.has_faces).length}</span>
+          </div>
         </button>
 
         {/* Memes Tab */}
@@ -1023,13 +1328,16 @@ export default function TriagePage() {
           <p className="text-xl font-bold text-slate-900 dark:text-white mt-1">
             {overview?.total_memes || 0}
           </p>
-          <p className="text-[10px] text-pink-700 dark:text-pink-400 font-medium">Social Graphics</p>
+          <div className="flex items-center gap-1.5 text-[10px] mt-1 truncate">
+            <span className="text-slate-500 font-medium">📄 {overview?.memes_without_people ?? memes.filter(m => !m.has_faces).length}</span>
+            <span className="text-purple-600 dark:text-purple-400 font-bold">👥 {overview?.memes_with_people ?? memes.filter(m => m.has_faces).length}</span>
+          </div>
         </button>
       </div>
 
       {/* Selection Control & Batch Action Floating Bar */}
       {selectedIds.length > 0 && (
-        <div className="bg-slate-900 text-white rounded-2xl px-5 py-3 flex items-center justify-between shadow-2xl sticky top-4 z-20 animate-fadeIn">
+        <div className="sticky top-4 z-30 max-w-5xl mx-auto bg-slate-900/95 backdrop-blur-md text-white rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-2xl border border-slate-700/80 animate-fade-in">
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold bg-indigo-600 px-2.5 py-0.5 rounded-full">
               {selectedIds.length} Selected
@@ -1590,28 +1898,102 @@ export default function TriagePage() {
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+                <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
               <span className="text-xs text-slate-500 font-medium">
-                {wallpapers.length} widescreen wallpapers & artwork identified
+                {filteredWallpapers.length} widescreen wallpapers & artwork identified
+                {wallpaperGrouping !== 'all' && wallpaperGroups.length > 0 && (
+                  <span className="text-indigo-600 dark:text-indigo-400 font-semibold ml-1">
+                    ({wallpaperGroups.length} {wallpaperGrouping === 'resolution' ? 'resolutions' : wallpaperGrouping === 'content' ? 'sections' : wallpaperGrouping === 'month' ? 'months' : 'years'})
+                  </span>
+                )}
               </span>
             </div>
 
-            {/* Resolution Filter Chips */}
-            <div className="flex items-center gap-1">
-              {(['all', '4k', '2k', '1080p', 'ultrawide'] as const).map((res) => (
-                <button
-                  key={res}
-                  onClick={() => setWallpaperFilter(res)}
-                  className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition capitalize cursor-pointer ${
-                    wallpaperFilter === res
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
-                  }`}
-                >
-                  {res === 'all' ? 'All Resolutions' : res.toUpperCase()}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Content Type Filter: All vs Artwork & Scenery vs With People vs Text */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people', 'with_text'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setWallpaperContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      wallpaperContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : type === 'with_text'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All (${wallpapers.length})`
+                      : type === 'without_people'
+                      ? `🎨 Art & Scenery (${wallpapers.filter((w) => !w.has_faces).length})`
+                      : type === 'with_people'
+                      ? `👥 People (${wallpapers.filter((w) => w.has_faces).length})`
+                      : `📄 Text (${wallpapers.filter((w) => w.has_text).length})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Resolution Filter Chips */}
+              <div className="flex items-center gap-1">
+                {(['all', '4k', '2k', '1080p', 'ultrawide'] as const).map((res) => (
+                  <button
+                    key={res}
+                    onClick={() => setWallpaperFilter(res)}
+                    className={`px-2.5 py-1 rounded-xl text-xs font-semibold transition capitalize cursor-pointer ${
+                      wallpaperFilter === res
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                    }`}
+                  >
+                    {res === 'all' ? 'All Resolutions' : res.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
+              {/* Grouping Selector */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['content', 'resolution', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setWallpaperGrouping(mode)}
+                    className={`px-2 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      wallpaperGrouping === mode
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'content' ? '👥 People vs Art' : mode === 'resolution' ? '📐 Resolution' : mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
+
+              {wallpaperGrouping !== 'all' && wallpaperGroups.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => collapseAllGroups(wallpaperGroups.map((g) => g.key))}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Collapse all sections"
+                  >
+                    Collapse All
+                  </button>
+                  <button
+                    onClick={expandAllGroups}
+                    className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-medium transition cursor-pointer"
+                    title="Expand all sections"
+                  >
+                    Expand All
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1619,69 +2001,214 @@ export default function TriagePage() {
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
               Loading widescreen wallpapers...
             </div>
-          ) : wallpapers.length === 0 ? (
+          ) : filteredWallpapers.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No widescreen wallpapers or artwork match the selected resolution filter.
+              No widescreen wallpapers or artwork match the selected filter criteria.
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {wallpapers.map((w) => {
-                const isSelected = selectedIds.includes(w.id);
-                const is4K = w.width >= 3840;
-                const is2K = w.width >= 2560 && w.width < 3840;
-                const isUltrawide = (w.width / (w.height || 1)) >= 2.1;
+            <div className="space-y-4">
+              {wallpaperGroups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const groupIds = group.items.map((w) => w.id);
+                const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                const limit = expandedGroupLimits[group.key] || 48;
+                const visibleItems = wallpaperGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const hasMore = visibleItems.length < group.items.length;
 
                 return (
                   <div
-                    key={w.id}
-                    data-media-id={w.id}
-                    onPointerDown={(e) => handlePointerDown(e, w.id)}
-                    onClick={(e) => handleItemClick(w.id, e, currentTabItemIds)}
-                    onDoubleClick={(e) => handleItemDoubleClick(w.id, e)}
-                    title="Click to select/deselect • Double-click to view full image"
-                    className={`group relative aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
-                      isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent'
-                    }`}
+                    key={group.key}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    <img
-                      src={`${API_URL}${w.thumbnail_url}`}
-                      alt={w.filename}
-                      className="w-full h-full object-cover select-none pointer-events-none"
-                      loading="lazy"
-                      draggable={false}
-                    />
-
-                    {/* Top Overlay Badge & Selection */}
-                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md bg-black/60 text-white shadow-sm">
-                        {isUltrawide ? 'Ultrawide' : is4K ? '4K UHD' : is2K ? '2K QHD' : `${w.width}×${w.height}`}
-                      </span>
-                      <button
-                        type="button"
-                        data-selection-checkbox="true"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(w.id, e);
-                        }}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-indigo-600 border-white text-white shadow-md scale-110'
-                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                    {/* Header */}
+                    {wallpaperGrouping !== 'all' && (
+                      <div
+                        onClick={() => toggleGroupCollapse(group.key)}
+                        className={`flex items-center justify-between p-3.5 border-b cursor-pointer transition ${
+                          group.key === 'with_people'
+                            ? 'bg-purple-50/80 dark:bg-purple-950/30 border-purple-200/60 dark:border-purple-900/40 hover:bg-purple-100/70'
+                            : 'bg-indigo-50/60 dark:bg-indigo-950/30 border-indigo-200/60 dark:border-indigo-900/40 hover:bg-indigo-100/60'
                         }`}
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {group.key === 'with_people' ? (
+                              <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            ) : (
+                              <Layers className="w-4 h-4 text-indigo-500" />
+                            )}
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
+                          </div>
+                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                            group.key === 'with_people'
+                              ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'
+                              : 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300'
+                          }`}>
+                            {group.items.length} {group.items.length === 1 ? 'item' : 'items'}
+                          </span>
+                          {group.totalBytes > 0 && (
+                            <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                              {(group.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          )}
+                        </div>
 
-                    {/* Bottom Vignette */}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                      <p className="text-[11px] font-semibold truncate leading-tight">{w.filename}</p>
-                      <div className="flex items-center justify-between text-[9px] text-slate-300 font-mono mt-0.5">
-                        <span>{((w.file_size || 0) / 1024).toFixed(0)} KB</span>
-                        <span>{w.width} × {w.height}</span>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick Rescue Button for People wallpapers group */}
+                          {group.key === 'with_people' && (
+                            <button
+                              onClick={() => handleRescueGroup(groupIds)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-xs"
+                              title="Rescue all personal memories with people in this group to Personal Memories"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Rescue All People ({group.items.length})</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => toggleSelectGroup(groupIds)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                              isGroupAllSelected
+                                ? 'bg-indigo-600 text-white'
+                                : groupSelectedCount > 0
+                                ? 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-300 dark:border-indigo-800'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                            <span>
+                              {isGroupAllSelected ? 'Deselect Group' : 'Select Group'} ({group.items.length})
+                            </span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
+
+                    {/* Cards Grid */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                          {visibleItems.map((w) => {
+                            const isSelected = selectedIds.includes(w.id);
+                            const is4K = w.width >= 3840;
+                            const is2K = w.width >= 2560 && w.width < 3840;
+                            const isUltrawide = (w.width / (w.height || 1)) >= 2.1;
+
+                            return (
+                              <div
+                                key={w.id}
+                                data-media-id={w.id}
+                                onPointerDown={(e) => handlePointerDown(e, w.id)}
+                                onClick={(e) => handleItemClick(w.id, e, currentTabItemIds)}
+                                onDoubleClick={(e) => handleItemDoubleClick(w.id, e)}
+                                title="Click to select/deselect • Double-click to view full image"
+                                className={`group relative aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                                  isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={`${API_URL}${w.thumbnail_url}`}
+                                  alt={w.filename}
+                                  className="w-full h-full object-cover select-none pointer-events-none"
+                                  loading="lazy"
+                                  draggable={false}
+                                />
+
+                                {/* Top Badges & Checkbox */}
+                                <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full backdrop-blur-md bg-black/60 text-white shadow-sm">
+                                      {isUltrawide ? 'Ultrawide' : is4K ? '4K UHD' : is2K ? '2K QHD' : `${w.width}×${w.height}`}
+                                    </span>
+                                    {w.has_faces && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-purple-600/90 text-white shadow-sm flex items-center gap-1">
+                                        <Users className="w-2.5 h-2.5" />
+                                        <span>{w.face_count && w.face_count > 1 ? `${w.face_count} Faces` : 'People'}</span>
+                                      </span>
+                                    )}
+                                    {w.has_text && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-amber-600/90 text-white shadow-sm flex items-center gap-1">
+                                        <FileText className="w-2.5 h-2.5" />
+                                        <span>Text</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    data-selection-checkbox="true"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelect(w.id, e);
+                                    }}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-indigo-600 border-white text-white shadow-md scale-110'
+                                        : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                {/* Bottom Vignette */}
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <p className="text-[11px] font-semibold truncate leading-tight">{w.filename}</p>
+                                  <div className="flex items-center justify-between text-[9px] text-slate-300 font-mono mt-0.5">
+                                    <span>{((w.file_size || 0) / 1024).toFixed(0)} KB</span>
+                                    <span>{w.width} × {w.height}</span>
+                                  </div>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRescueSingle(w.id);
+                                    }}
+                                    className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow-xs transition pointer-events-auto"
+                                    title="Not artwork: Move to Personal Memories"
+                                  >
+                                    <BookmarkCheck className="w-3 h-3" />
+                                    <span>{w.has_faces ? 'Rescue to Memories' : 'Keep as Memory'}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Show More */}
+                        {hasMore && (
+                          <div className="pt-2 text-center flex items-center justify-center gap-2">
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: (prev[group.key] || 48) + 96,
+                                }))
+                              }
+                              className="px-4 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:border-indigo-800 rounded-xl text-xs font-semibold transition cursor-pointer"
+                            >
+                              Show more in {group.label} ({group.items.length - visibleItems.length} remaining)
+                            </button>
+                            <button
+                              onClick={() =>
+                                setExpandedGroupLimits((prev) => ({
+                                  ...prev,
+                                  [group.key]: group.items.length,
+                                }))
+                              }
+                              className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 underline cursor-pointer"
+                            >
+                              Show all ({group.items.length})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1693,36 +2220,61 @@ export default function TriagePage() {
       {/* Tab 3: Bills & Receipts Vault */}
       {activeTab === 'bills' && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-emerald-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+                <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-slate-500 font-medium">
                 {filteredBills.length} documents identified
               </span>
             </div>
 
-            {/* OCR Search Bar */}
-            <div className="relative w-full sm:w-72">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search vendor, amount, or OCR text..."
-                value={billSearchQuery}
-                onChange={(e) => setBillSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:border-emerald-500"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Content Type Filter: All vs Receipts/Docs vs With People */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setBillContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      billContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All (${bills.length})`
+                      : type === 'without_people'
+                      ? `📄 Documents (${bills.filter((b) => !b.has_faces).length})`
+                      : `👥 With People (${bills.filter((b) => b.has_faces).length})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* OCR Search Bar */}
+              <div className="relative w-full sm:w-72">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search vendor, amount, or OCR text..."
+                  value={billSearchQuery}
+                  onChange={(e) => setBillSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:border-emerald-500"
+                />
+              </div>
             </div>
           </div>
 
           {filteredBills.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No bills or receipts matched your query.
+              No bills or receipts matched your filter or search query.
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -1751,11 +2303,19 @@ export default function TriagePage() {
                       draggable={false}
                     />
 
-                    {/* Top Checkbox & Receipt Badge */}
+                    {/* Top Checkbox & Badges */}
                     <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span className="bg-emerald-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                        Receipt
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="bg-emerald-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
+                          Receipt
+                        </span>
+                        {b.has_faces && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-purple-600/90 text-white shadow-sm flex items-center gap-1">
+                            <Users className="w-2.5 h-2.5" />
+                            <span>{b.face_count && b.face_count > 1 ? `${b.face_count}` : 'People'}</span>
+                          </span>
+                        )}
+                      </div>
                       <button
                         type="button"
                         data-selection-checkbox="true"
@@ -1780,9 +2340,23 @@ export default function TriagePage() {
                       <p className="text-[10px] text-slate-300 mt-0.5">
                         {new Date(b.captured_at).toLocaleDateString()}
                       </p>
-                      <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-300 font-semibold group-hover:underline">
-                        <span>Inspect OCR Text</span>
-                        <ArrowRight className="w-3 h-3" />
+                      <div className="mt-1 flex items-center justify-between text-[10px]">
+                        <div className="flex items-center gap-1 text-emerald-300 font-semibold group-hover:underline">
+                          <span>Inspect OCR</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </div>
+                        {b.has_faces && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRescueSingle(b.id);
+                            }}
+                            className="px-1.5 py-0.5 bg-purple-600/90 hover:bg-purple-500 text-white rounded text-[9px] font-bold transition"
+                            title="Move to Personal Memories"
+                          >
+                            Rescue
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1796,14 +2370,39 @@ export default function TriagePage() {
       {/* Tab 3: Duplicate Clusters & Bursts */}
       {activeTab === 'duplicates' && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div>
-              <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                Duplicate & Burst Clusters ({duplicates.length})
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Exact or near-identical photos grouped by perceptual hash (pHash).
-              </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                  Duplicate & Burst Clusters ({filteredDuplicates.length})
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Exact or near-identical photos grouped by perceptual hash (pHash).
+                </p>
+              </div>
+
+              {/* People vs Non-People Filter Chips for Duplicates */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setDuplicateFilter(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      duplicateFilter === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'bg-purple-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All Clusters (${duplicates.length})`
+                      : type === 'without_people'
+                      ? `🖼️ Non-People (${duplicates.filter((c) => !c.has_people && !c.items.some((i) => i.has_faces)).length})`
+                      : `👥 With People (${duplicates.filter((c) => c.has_people || c.items.some((i) => i.has_faces)).length})`}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {duplicates.length > 0 && (
@@ -1818,13 +2417,15 @@ export default function TriagePage() {
             )}
           </div>
 
-          {duplicates.length === 0 ? (
+          {filteredDuplicates.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No duplicate clusters detected in your library!
+              No duplicate clusters match your filter criteria!
             </div>
           ) : (
             <div className="space-y-4">
-              {duplicates.map((cluster, idx) => (
+              {filteredDuplicates.map((cluster, idx) => {
+                const clusterHasPeople = cluster.has_people || cluster.items.some((i) => i.has_faces);
+                return (
                 <div
                   key={idx}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 space-y-4 shadow-sm"
@@ -1838,6 +2439,12 @@ export default function TriagePage() {
                         <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-700">
                           {cluster.count} shots
                         </span>
+                        {clusterHasPeople && (
+                          <span className="text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Users className="w-3 h-3" />
+                            <span>With People</span>
+                          </span>
+                        )}
                         {cluster.duration_seconds !== undefined && cluster.duration_seconds > 0 && (
                           <span className="text-xs text-slate-400">
                             ({cluster.duration_seconds}s interval)
@@ -1898,6 +2505,13 @@ export default function TriagePage() {
                             </div>
                           </div>
 
+                          {item.has_faces && (
+                            <div className="absolute top-2 left-9 bg-purple-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-0.5 z-10">
+                              <Users className="w-2.5 h-2.5" />
+                              <span>People</span>
+                            </div>
+                          )}
+
                           {item.is_best_shot && (
                             <div className="absolute top-1.5 right-1.5 bg-amber-500 text-slate-950 text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-md flex items-center gap-0.5 z-10">
                               <Award className="w-2.5 h-2.5" />
@@ -1912,7 +2526,8 @@ export default function TriagePage() {
                     })}
                   </div>
                 </div>
-              ))}
+              );
+            })}
             </div>
           )}
         </div>
@@ -1939,133 +2554,293 @@ export default function TriagePage() {
             )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+                <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
+              <span className="text-xs text-slate-500 font-medium">
+                {filteredBlurry.length} photos flagged
+                {blurryGrouping !== 'all' && blurryGroups.length > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400 font-semibold ml-1">
+                    ({blurryGroups.length} sections)
+                  </span>
+                )}
+              </span>
+            </div>
 
-              {/* Sub-Filters */}
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Content Type Filter: All vs People vs Scenery/Objects */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setBlurryContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      blurryContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All (${blurryPhotos.length})`
+                      : type === 'without_people'
+                      ? `📷 Objects/Scenery (${blurryPhotos.filter((b) => !b.has_faces).length})`
+                      : `👥 With People (${blurryPhotos.filter((b) => b.has_faces).length})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Quality Sub-Filters */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl">
                 <button
                   onClick={() => setBlurFilter('all')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     blurFilter === 'all'
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  All ({blurryPhotos.length})
+                  All Types
                 </button>
                 <button
                   onClick={() => setBlurFilter('motion_blur')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     blurFilter === 'motion_blur'
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  💨 Motion Shake
+                  💨 Motion
                 </button>
                 <button
                   onClick={() => setBlurFilter('out_of_focus')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     blurFilter === 'out_of_focus'
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  🔍 Out of Focus
+                  🔍 Focus
                 </button>
                 <button
                   onClick={() => setBlurFilter('black_pocket')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                  className={`px-2 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
                     blurFilter === 'black_pocket'
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  🌑 Dark / Pocket
+                  🌑 Dark
                 </button>
               </div>
-            </div>
 
-            {/* Quick 1-Click Action for accidental pocket shots */}
-            {overview && (overview.total_pocket_shots ?? 0) > 0 && (
-              <button
-                onClick={handleCleanPocketShots}
-                disabled={isCleaningPockets}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-semibold border border-rose-500/30 transition shadow-sm"
-                title="1-Click Soft Delete of pitch-black pocket / lens-cap shots"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Clean {overview.total_pocket_shots} Dark Pocket Shots</span>
-              </button>
-            )}
-          </div>
-
-          {blurryPhotos.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No photos found matching this quality filter! All images meet sharpness thresholds.
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {blurryPhotos.map((b) => {
-                const isSelected = selectedIds.includes(b.id);
-                return (
-                  <div
-                    key={b.id}
-                    data-media-id={b.id}
-                    onPointerDown={(e) => handlePointerDown(e, b.id)}
-                    onClick={(e) => handleItemClick(b.id, e, currentTabItemIds)}
-                    onDoubleClick={(e) => handleItemDoubleClick(b.id, e)}
-                    title="Click to select/deselect • Double-click to view full image"
-                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
-                      isSelected ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-transparent'
+              {/* Grouping Selector */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['content', 'blur_type', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setBlurryGrouping(mode)}
+                    className={`px-2 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      blurryGrouping === mode
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    <img
-                      src={`${API_URL}${b.thumbnail_url}`}
-                      alt={b.filename}
-                      className="w-full h-full object-cover select-none pointer-events-none"
-                      loading="lazy"
-                      draggable={false}
-                    />
+                    {mode === 'content' ? '👥 People vs Scenery' : mode === 'blur_type' ? '🔍 Blur Type' : mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
 
-                    {/* Sharpness Badge & Checkbox */}
-                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span className="bg-amber-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
-                        {b.blur_type === 'motion_blur'
-                          ? '💨 Motion Shake'
-                          : b.blur_type === 'black_pocket'
-                          ? '🌑 Dark Shot'
-                          : `Sharpness: ${b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}`}
-                      </span>
-                      <button
-                        type="button"
-                        data-selection-checkbox="true"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(b.id, e);
-                        }}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-amber-600 border-white text-white shadow-md scale-110'
-                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+              {/* Quick 1-Click Action for accidental pocket shots */}
+              {overview && (overview.total_pocket_shots ?? 0) > 0 && (
+                <button
+                  onClick={handleCleanPocketShots}
+                  disabled={isCleaningPockets}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-semibold border border-rose-500/30 transition shadow-sm cursor-pointer"
+                  title="1-Click Soft Delete of pitch-black pocket / lens-cap shots"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clean {overview.total_pocket_shots} Dark</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {filteredBlurry.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
+              No photos found matching this filter! All images meet quality thresholds.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {blurryGroups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const groupIds = group.items.map((b) => b.id);
+                const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                const limit = expandedGroupLimits[group.key] || 48;
+                const visibleItems = blurryGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const hasMore = visibleItems.length < group.items.length;
+
+                return (
+                  <div
+                    key={group.key}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
+                  >
+                    {/* Header */}
+                    {blurryGrouping !== 'all' && (
+                      <div
+                        onClick={() => toggleGroupCollapse(group.key)}
+                        className={`flex items-center justify-between p-3.5 border-b cursor-pointer transition ${
+                          group.key === 'with_people'
+                            ? 'bg-purple-50/80 dark:bg-purple-950/30 border-purple-200/60 dark:border-purple-900/40 hover:bg-purple-100/70'
+                            : 'bg-amber-50/60 dark:bg-amber-950/30 border-amber-200/60 dark:border-amber-900/40 hover:bg-amber-100/60'
                         }`}
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {group.key === 'with_people' ? (
+                              <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            ) : (
+                              <EyeOff className="w-4 h-4 text-amber-500" />
+                            )}
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
+                          </div>
+                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                            group.key === 'with_people'
+                              ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'
+                              : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                          }`}>
+                            {group.items.length} {group.items.length === 1 ? 'photo' : 'photos'}
+                          </span>
+                        </div>
 
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                      <p className="text-[11px] font-semibold truncate">{b.filename}</p>
-                    </div>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick Keep / Rescue Button for People in blurry group */}
+                          {group.key === 'with_people' && (
+                            <button
+                              onClick={() => handleRescueGroup(groupIds)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-xs"
+                              title="Keep all photos with people safely in Personal Memories"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Keep All People ({group.items.length})</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => toggleSelectGroup(groupIds)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                              isGroupAllSelected
+                                ? 'bg-amber-600 text-white'
+                                : groupSelectedCount > 0
+                                ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-800'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                            <span>
+                              {isGroupAllSelected ? 'Deselect Group' : 'Select Group'} ({group.items.length})
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cards Grid */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {visibleItems.map((b) => {
+                            const isSelected = selectedIds.includes(b.id);
+                            return (
+                              <div
+                                key={b.id}
+                                data-media-id={b.id}
+                                onPointerDown={(e) => handlePointerDown(e, b.id)}
+                                onClick={(e) => handleItemClick(b.id, e, currentTabItemIds)}
+                                onDoubleClick={(e) => handleItemDoubleClick(b.id, e)}
+                                title="Click to select/deselect • Double-click to view full image"
+                                className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                                  isSelected ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={`${API_URL}${b.thumbnail_url}`}
+                                  alt={b.filename}
+                                  className="w-full h-full object-cover select-none pointer-events-none"
+                                  loading="lazy"
+                                  draggable={false}
+                                />
+
+                                {/* Badges & Checkbox */}
+                                <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                                  <div className="flex items-center gap-1">
+                                    <span className="bg-amber-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-sm">
+                                      {b.blur_type === 'motion_blur'
+                                        ? '💨 Motion'
+                                        : b.blur_type === 'black_pocket'
+                                        ? '🌑 Dark'
+                                        : `Sharpness: ${b.blurriness_score ? b.blurriness_score.toFixed(0) : 'Low'}`}
+                                    </span>
+                                    {b.has_faces && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-purple-600/90 text-white shadow-sm flex items-center gap-0.5">
+                                        <Users className="w-2.5 h-2.5" />
+                                        <span>{b.face_count && b.face_count > 1 ? `${b.face_count}` : 'People'}</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    data-selection-checkbox="true"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelect(b.id, e);
+                                    }}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-amber-600 border-white text-white shadow-md scale-110'
+                                        : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <p className="text-[11px] font-semibold truncate leading-tight">{b.filename}</p>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRescueSingle(b.id);
+                                    }}
+                                    className="mt-1 w-full flex items-center justify-center gap-1 py-0.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded text-[10px] font-bold shadow-xs transition pointer-events-auto"
+                                    title="Not blurry / keep as memory"
+                                  >
+                                    <BookmarkCheck className="w-3 h-3" />
+                                    <span>Keep in Memories</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2077,78 +2852,250 @@ export default function TriagePage() {
       {/* Tab 5: Large Files / Storage Hogs */}
       {activeTab === 'large_files' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-red-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+                <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
-              <span className="text-xs text-slate-500">
-                {largeFiles.length} photos exceeding 3 MB
+              <span className="text-xs text-slate-500 font-medium">
+                {filteredLargeFiles.length} photos exceeding 3 MB
+                {largeFileGrouping !== 'all' && largeFileGroups.length > 0 && (
+                  <span className="text-red-600 dark:text-red-400 font-semibold ml-1">
+                    ({largeFileGroups.length} sections)
+                  </span>
+                )}
               </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Content Type Filter: All vs Media vs With People vs Text */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people', 'with_text'] as const).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setLargeFileContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      largeFileContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : type === 'with_text'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-red-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {type === 'all'
+                      ? `All (${largeFiles.length})`
+                      : type === 'without_people'
+                      ? `📁 Media/Scenery (${largeFiles.filter((l) => !l.has_faces).length})`
+                      : type === 'with_people'
+                      ? `👥 People (${largeFiles.filter((l) => l.has_faces).length})`
+                      : `📄 Text (${largeFiles.filter((l) => l.has_text).length})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Grouping Selector */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['content', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setLargeFileGrouping(mode)}
+                    className={`px-2 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      largeFileGrouping === mode
+                        ? 'bg-red-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'content' ? '👥 People vs Files' : mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {largeFiles.length === 0 ? (
+          {filteredLargeFiles.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
-              No oversized files detected!
+              No oversized files match your filter criteria!
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {largeFiles.map((l) => {
-                const isSelected = selectedIds.includes(l.id);
+            <div className="space-y-4">
+              {largeFileGroups.map((group) => {
+                const isCollapsed = collapsedGroupKeys.has(group.key);
+                const groupIds = group.items.map((l) => l.id);
+                const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
+                const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
+                const limit = expandedGroupLimits[group.key] || 48;
+                const visibleItems = largeFileGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const hasMore = visibleItems.length < group.items.length;
+
                 return (
                   <div
-                    key={l.id}
-                    data-media-id={l.id}
-                    onPointerDown={(e) => handlePointerDown(e, l.id)}
-                    onClick={(e) => handleItemClick(l.id, e, currentTabItemIds)}
-                    onDoubleClick={(e) => handleItemDoubleClick(l.id, e)}
-                    title="Click to select/deselect • Double-click to view full image"
-                    className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
-                      isSelected ? 'border-red-500 ring-2 ring-red-500/30' : 'border-transparent'
-                    }`}
+                    key={group.key}
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    <img
-                      src={`${API_URL}${l.thumbnail_url}`}
-                      alt={l.filename}
-                      className="w-full h-full object-cover select-none pointer-events-none"
-                      loading="lazy"
-                      draggable={false}
-                    />
-
-                    {/* File Size Badge & Checkbox */}
-                    <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                      <span className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                        {l.file_size_mb} MB
-                      </span>
-                      <button
-                        type="button"
-                        data-selection-checkbox="true"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(l.id, e);
-                        }}
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-red-600 border-white text-white shadow-md scale-110'
-                            : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                    {/* Header */}
+                    {largeFileGrouping !== 'all' && (
+                      <div
+                        onClick={() => toggleGroupCollapse(group.key)}
+                        className={`flex items-center justify-between p-3.5 border-b cursor-pointer transition ${
+                          group.key === 'with_people'
+                            ? 'bg-purple-50/80 dark:bg-purple-950/30 border-purple-200/60 dark:border-purple-900/40 hover:bg-purple-100/70'
+                            : 'bg-red-50/60 dark:bg-red-950/30 border-red-200/60 dark:border-red-900/40 hover:bg-red-100/60'
                         }`}
                       >
-                        <Check className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
+                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {group.key === 'with_people' ? (
+                              <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            ) : (
+                              <HardDrive className="w-4 h-4 text-red-500" />
+                            )}
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
+                          </div>
+                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                            group.key === 'with_people'
+                              ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'
+                              : 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300'
+                          }`}>
+                            {group.items.length} {group.items.length === 1 ? 'file' : 'files'}
+                          </span>
+                          {group.totalBytes > 0 && (
+                            <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                              {(group.totalBytes / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          )}
+                        </div>
 
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">
-                      <p className="text-[11px] font-semibold truncate leading-tight">{l.filename}</p>
-                      <p className="text-[9px] text-slate-300 font-mono mt-0.5">
-                        {l.width} x {l.height} px
-                      </p>
-                    </div>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick Keep / Rescue Button for People in large files group */}
+                          {group.key === 'with_people' && (
+                            <button
+                              onClick={() => handleRescueGroup(groupIds)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-xs"
+                              title="Keep all high-resolution photos with people safely in Personal Memories"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Keep All People ({group.items.length})</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => toggleSelectGroup(groupIds)}
+                            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                              isGroupAllSelected
+                                ? 'bg-red-600 text-white'
+                                : groupSelectedCount > 0
+                                ? 'bg-red-100 dark:bg-red-950/60 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                            <span>
+                              {isGroupAllSelected ? 'Deselect Group' : 'Select Group'} ({group.items.length})
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cards Grid */}
+                    {!isCollapsed && (
+                      <div className="p-3.5 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                          {visibleItems.map((l) => {
+                            const isSelected = selectedIds.includes(l.id);
+                            return (
+                              <div
+                                key={l.id}
+                                data-media-id={l.id}
+                                onPointerDown={(e) => handlePointerDown(e, l.id)}
+                                onClick={(e) => handleItemClick(l.id, e, currentTabItemIds)}
+                                onDoubleClick={(e) => handleItemDoubleClick(l.id, e)}
+                                title="Click to select/deselect • Double-click to view full image"
+                                className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
+                                  isSelected ? 'border-red-500 ring-2 ring-red-500/30' : 'border-transparent'
+                                }`}
+                              >
+                                <img
+                                  src={`${API_URL}${l.thumbnail_url}`}
+                                  alt={l.filename}
+                                  className="w-full h-full object-cover select-none pointer-events-none"
+                                  loading="lazy"
+                                  draggable={false}
+                                />
+
+                                {/* Badges & Checkbox */}
+                                <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
+                                  <div className="flex items-center gap-1">
+                                    <span className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
+                                      {l.file_size_mb} MB
+                                    </span>
+                                    {l.has_faces && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-purple-600/90 text-white shadow-sm flex items-center gap-0.5">
+                                        <Users className="w-2.5 h-2.5" />
+                                        <span>{l.face_count && l.face_count > 1 ? `${l.face_count}` : 'People'}</span>
+                                      </span>
+                                    )}
+                                    {l.has_text && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-amber-600/90 text-white shadow-sm flex items-center gap-0.5">
+                                        <FileText className="w-2.5 h-2.5" />
+                                        <span>Text</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    data-selection-checkbox="true"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleSelect(l.id, e);
+                                    }}
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center border transition-all cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-red-600 border-white text-white shadow-md scale-110'
+                                        : 'bg-black/40 border-white/60 text-transparent hover:bg-black/60'
+                                    }`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <p className="text-[11px] font-semibold truncate leading-tight">{l.filename}</p>
+                                  <p className="text-[9px] text-slate-300 font-mono mt-0.5">
+                                    {l.width} x {l.height} px
+                                  </p>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRescueSingle(l.id);
+                                    }}
+                                    className="mt-1 w-full flex items-center justify-center gap-1 py-0.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded text-[10px] font-bold shadow-xs transition pointer-events-auto"
+                                    title="Keep in Memories"
+                                  >
+                                    <BookmarkCheck className="w-3 h-3" />
+                                    <span>Keep in Memories</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2160,48 +3107,76 @@ export default function TriagePage() {
       {/* Tab 6: Memes & Social Graphics */}
       {activeTab === 'memes' && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs">
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={toggleSelectAll}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold transition cursor-pointer"
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-pink-600" /> : <Square className="w-4 h-4 text-slate-400" />}
-                <span>{isAllSelected ? 'Deselect All' : 'Select All'}</span>
+                <span>{isAllSelected ? 'Deselect All' : 'Select All In View'}</span>
               </button>
               <span className="text-xs text-slate-500 font-medium">
-                {memes.length} memes & graphics detected
-                {timeGrouping !== 'all' && memeGroups.length > 0 && (
+                {filteredMemes.length} memes & social graphics detected
+                {memeGrouping !== 'all' && memeGroups.length > 0 && (
                   <span className="text-pink-600 dark:text-pink-400 font-semibold ml-1">
-                    ({memeGroups.length} {timeGrouping === 'week' ? 'weeks' : timeGrouping === 'year' ? 'years' : 'months'})
+                    ({memeGroups.length} {memeGrouping === 'content' ? 'sections' : memeGrouping === 'week' ? 'weeks' : memeGrouping === 'year' ? 'years' : 'months'})
                   </span>
                 )}
               </span>
             </div>
 
-            {/* Time Grouping & Collapse Controls */}
+            {/* Content Filter, Grouping & Collapse Controls */}
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
-                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-400" />
-                  Group:
-                </span>
-                {(['week', 'month', 'year', 'all'] as const).map((mode) => (
+              {/* Content Type Filter: All vs Graphics/Text vs People vs Text */}
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                {(['all', 'without_people', 'with_people', 'with_text'] as const).map((type) => (
                   <button
-                    key={mode}
-                    onClick={() => setTimeGrouping(mode)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
-                      timeGrouping === mode
-                        ? 'bg-pink-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    key={type}
+                    onClick={() => setMemeContentType(type)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                      memeContentType === type
+                        ? type === 'with_people'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : type === 'with_text'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-pink-600 text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    {mode === 'all' ? 'All (Flat)' : mode}
+                    {type === 'all'
+                      ? `All (${memes.length})`
+                      : type === 'without_people'
+                      ? `📄 Graphics & Text (${memes.filter((m) => !m.has_faces).length})`
+                      : type === 'with_people'
+                      ? `👥 People (${memes.filter((m) => m.has_faces).length})`
+                      : `📄 Text (${memes.filter((m) => m.has_text).length})`}
                   </button>
                 ))}
               </div>
 
-              {timeGrouping !== 'all' && memeGroups.length > 0 && (
+              {/* Grouping Selector */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs">
+                <span className="px-2 py-1 text-[11px] font-medium text-slate-400 flex items-center gap-1">
+                  <Layers className="w-3 h-3 text-slate-400" />
+                  Group:
+                </span>
+                {(['content', 'week', 'month', 'year', 'all'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setMemeGrouping(mode)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition capitalize cursor-pointer ${
+                      memeGrouping === mode
+                        ? 'bg-pink-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'content' ? '👥 People vs Graphics' : mode === 'all' ? 'All (Flat)' : mode}
+                  </button>
+                ))}
+              </div>
+
+              {memeGrouping !== 'all' && memeGroups.length > 0 && (
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => collapseAllGroups(memeGroups.map((g) => g.key))}
@@ -2226,6 +3201,10 @@ export default function TriagePage() {
             <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
               No memes or junk graphics in your library.
             </div>
+          ) : filteredMemes.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 text-xs">
+              No memes match the selected filter criteria.
+            </div>
           ) : (
             <div className="space-y-4">
               {memeGroups.map((group) => {
@@ -2234,7 +3213,7 @@ export default function TriagePage() {
                 const isGroupAllSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.includes(id));
                 const groupSelectedCount = groupIds.filter((id) => selectedIds.includes(id)).length;
                 const limit = expandedGroupLimits[group.key] || 48;
-                const visibleItems = timeGrouping === 'all' ? group.items : group.items.slice(0, limit);
+                const visibleItems = memeGrouping === 'all' ? group.items : group.items.slice(0, limit);
                 const hasMore = visibleItems.length < group.items.length;
 
                 return (
@@ -2242,21 +3221,33 @@ export default function TriagePage() {
                     key={group.key}
                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs transition-all"
                   >
-                    {/* Time Group Header */}
-                    {timeGrouping !== 'all' && (
+                    {/* Header */}
+                    {memeGrouping !== 'all' && (
                       <div
                         onClick={() => toggleGroupCollapse(group.key)}
-                        className="flex items-center justify-between p-3.5 bg-slate-50/70 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800 cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-800/70 transition"
+                        className={`flex items-center justify-between p-3.5 border-b cursor-pointer transition ${
+                          group.key === 'with_people'
+                            ? 'bg-purple-50/80 dark:bg-purple-950/30 border-purple-200/60 dark:border-purple-900/40 hover:bg-purple-100/70'
+                            : 'bg-pink-50/60 dark:bg-pink-950/30 border-pink-200/60 dark:border-pink-900/40 hover:bg-pink-100/60'
+                        }`}
                       >
                         <div className="flex items-center gap-2.5">
                           <span className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition">
                             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                           </span>
                           <div className="flex items-center gap-2">
-                            <Calendar className="w-4 h-4 text-pink-500" />
+                            {group.key === 'with_people' ? (
+                              <Users className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            ) : (
+                              <Smile className="w-4 h-4 text-pink-500" />
+                            )}
                             <span className="text-sm font-bold text-slate-900 dark:text-white">{group.label}</span>
                           </div>
-                          <span className="text-[11px] font-semibold bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300 px-2.5 py-0.5 rounded-full">
+                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${
+                            group.key === 'with_people'
+                              ? 'bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300'
+                              : 'bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300'
+                          }`}>
                             {group.items.length} {group.items.length === 1 ? 'item' : 'items'}
                           </span>
                           {group.totalBytes > 0 && (
@@ -2267,6 +3258,18 @@ export default function TriagePage() {
                         </div>
 
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick Rescue Button for People in Memes */}
+                          {group.key === 'with_people' && (
+                            <button
+                              onClick={() => handleRescueGroup(groupIds)}
+                              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition cursor-pointer shadow-xs"
+                              title="Rescue all personal photos with people misclassified as memes to Personal Memories"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Rescue All People ({group.items.length})</span>
+                            </button>
+                          )}
+
                           <button
                             onClick={() => toggleSelectGroup(groupIds)}
                             className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
@@ -2280,8 +3283,8 @@ export default function TriagePage() {
                             {isGroupAllSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
                             <span>
                               {isGroupAllSelected
-                                ? `Deselect ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`
-                                : `Select ${timeGrouping === 'week' ? 'Week' : timeGrouping === 'year' ? 'Year' : 'Month'}`}{' '}
+                                ? `Deselect ${memeGrouping === 'content' ? 'Section' : memeGrouping === 'week' ? 'Week' : memeGrouping === 'year' ? 'Year' : 'Month'}`
+                                : `Select ${memeGrouping === 'content' ? 'Section' : memeGrouping === 'week' ? 'Week' : memeGrouping === 'year' ? 'Year' : 'Month'}`}{' '}
                               ({group.items.length})
                             </span>
                           </button>
@@ -2316,9 +3319,28 @@ export default function TriagePage() {
                                 />
 
                                 <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
-                                  <span className="bg-pink-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
-                                    Meme
-                                  </span>
+                                  <div className="flex items-center gap-1">
+                                    <span className="bg-pink-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
+                                      Meme
+                                    </span>
+                                    {m.has_faces ? (
+                                      <span
+                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md shadow-sm bg-purple-600 text-white flex items-center gap-0.5"
+                                        title={`${m.face_count || 1} face(s) detected - Possible Personal Photo`}
+                                      >
+                                        <Users className="w-2.5 h-2.5" />
+                                        <span>{m.face_count || 1} {m.face_count === 1 ? 'Person' : 'People'}</span>
+                                      </span>
+                                    ) : m.has_text ? (
+                                      <span
+                                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md shadow-sm bg-amber-600 text-white flex items-center gap-0.5"
+                                        title="Text overlay detected"
+                                      >
+                                        <FileText className="w-2.5 h-2.5" />
+                                        <span>Text</span>
+                                      </span>
+                                    ) : null}
+                                  </div>
                                   <button
                                     type="button"
                                     data-selection-checkbox="true"
@@ -2339,6 +3361,19 @@ export default function TriagePage() {
 
                                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-white">
                                   <p className="text-[11px] font-semibold truncate leading-tight">{m.filename}</p>
+                                  {m.has_faces && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRescueSingle(m.id);
+                                      }}
+                                      className="mt-1.5 w-full flex items-center justify-center gap-1 py-1 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold shadow-xs transition pointer-events-auto"
+                                      title="Keep this photo: Move to Personal Memories"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                      <span>Keep as Memory</span>
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             );

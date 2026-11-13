@@ -36,6 +36,8 @@ export interface DuplicateItem {
   composite_score?: number;
   is_smiling?: boolean;
   is_best_shot?: boolean;
+  has_faces?: boolean;
+  has_text?: boolean;
 }
 
 export interface DuplicateCluster {
@@ -46,6 +48,7 @@ export interface DuplicateCluster {
   duration_seconds?: number;
   best_shot_id?: number;
   reclaimable_mb?: number;
+  has_people?: boolean;
   items: DuplicateItem[];
 }
 
