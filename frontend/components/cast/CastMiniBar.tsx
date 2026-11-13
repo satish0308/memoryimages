@@ -25,7 +25,7 @@ export const CastMiniBar: React.FC = () => {
   const isPlaying = activeSession.slideshow_state?.is_playing;
 
   return (
-    <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-md w-[92%] sm:w-auto animate-slideUp">
+    <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 z-40 max-w-md w-[92%] sm:w-auto animate-slideUp">
       <div className="bg-slate-900/90 dark:bg-neutral-900/95 border border-slate-700/80 dark:border-neutral-700 text-white backdrop-blur-xl rounded-2xl p-2.5 sm:px-4 sm:py-2.5 shadow-2xl flex items-center justify-between gap-3 sm:gap-5">
         {/* Left Side: Thumbnail & TV Name */}
         <div

@@ -59,6 +59,15 @@ body {
   background: rgba(100, 116, 139, 0.7);
 }
 
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Ken Burns Smooth Cinematic Pan & Zoom for TV Lounge */
 @keyframes kenBurns1 {
   0% { transform: scale(1) translate(0, 0); }

@@ -67,10 +67,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
 }) => {
   const { castPlaylist } = useCast();
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
-  const [showAlbumMenu, setShowAlbumMenu] = useState(false);
-  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
-  const [showLocationModal, setShowLocationModal] = useState(false);
-  const [showEnhanceMenu, setShowEnhanceMenu] = useState(false);
+  const [activeMenu, setActiveMenu] = useState<'album' | 'category' | 'location' | 'enhance' | 'timeshift' | null>(null);
   const [customLocName, setCustomLocName] = useState('');
   const [customLat, setCustomLat] = useState('');
   const [customLon, setCustomLon] = useState('');
@@ -88,11 +85,29 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const [showHighlightReelModal, setShowHighlightReelModal] = useState(false);
 
   // Batch Time Shifter State
-  const [showTimeShiftModal, setShowTimeShiftModal] = useState(false);
   const [shiftHours, setShiftHours] = useState<number>(0);
   const [shiftDays, setShiftDays] = useState<number>(0);
   const [exactDatetime, setExactDatetime] = useState<string>('');
   const [timeShiftMode, setTimeShiftMode] = useState<'relative' | 'exact'>('relative');
+
+  // Fetch albums when selection begins
+  useEffect(() => {
+    if (selectedIds && selectedIds.length > 0 && albums.length === 0) {
+      fetch(`${apiUrl}/api/v1/albums`)
+        .then((res) => (res.ok ? res.json() : []))
+        .then((data) => setAlbums(data))
+        .catch((e) => console.error(e));
+    }
+  }, [selectedIds, albums.length, apiUrl]);
+
+  // Early return if no photos selected
+  if (!selectedIds || selectedIds.length === 0) {
+    return null;
+  }
+
+  const toggleMenu = (menu: 'album' | 'category' | 'location' | 'enhance' | 'timeshift') => {
+    setActiveMenu((prev) => (prev === menu ? null : menu));
+  };
 
   const handleBatchTimeShift = async () => {
     try {
@@ -112,7 +127,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
       });
 
       if (res.ok) {
-        setShowTimeShiftModal(false);
+        setActiveMenu(null);
         setShiftHours(0);
         setShiftDays(0);
         setExactDatetime('');
@@ -125,16 +140,6 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
       setLoadingAction(null);
     }
   };
-
-  useEffect(() => {
-    // Only fetch albums once when selection begins rather than spamming on every photo click
-    if (selectedIds.length > 0 && albums.length === 0) {
-      fetch(`${apiUrl}/api/v1/albums`)
-        .then((res) => (res.ok ? res.json() : []))
-        .then((data) => setAlbums(data))
-        .catch((e) => console.error(e));
-    }
-  }, [selectedIds.length > 0, albums.length, apiUrl]);
 
   const handleBatchLocation = async (locName: string, lat?: number, lon?: number) => {
     try {
@@ -150,7 +155,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         }),
       });
       if (res.ok) {
-        setShowLocationModal(false);
+        setActiveMenu(null);
         setCustomLocName('');
         setCustomLat('');
         setCustomLon('');
@@ -173,7 +178,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         body: JSON.stringify({ max_gap_hours: 4.0 }),
       });
       if (res.ok) {
-        setShowLocationModal(false);
+        setActiveMenu(null);
         onClearSelection();
         if (onBatchLocationUpdated) onBatchLocationUpdated();
       }
@@ -183,8 +188,6 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
       setLoadingAction(null);
     }
   };
-
-  if (selectedIds.length === 0) return null;
 
   // Bulk Add to Existing Album
   const handleAddPhotosToAlbum = async (albumId: number) => {
@@ -196,7 +199,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         body: JSON.stringify({ media_ids: selectedIds }),
       });
       if (res.ok) {
-        setShowAlbumMenu(false);
+        setActiveMenu(null);
         onClearSelection();
         if (onAlbumAdded) onAlbumAdded();
       }
@@ -230,7 +233,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     }
   };
 
-  // Bulk Download ZIP of Selected Photos (Bulk copy/export)
+  // Bulk Download ZIP
   const handleBulkDownload = async () => {
     try {
       setLoadingAction('download');
@@ -266,7 +269,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   const handleBatchEnhance = async (preset: string = 'auto_magic') => {
     try {
       setLoadingAction('enhance');
-      setShowEnhanceMenu(false);
+      setActiveMenu(null);
       const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -302,7 +305,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         body: JSON.stringify({ media_ids: selectedIds, category }),
       });
       if (res.ok) {
-        setShowCategoryMenu(false);
+        setActiveMenu(null);
         if (onBatchCategoryUpdated) onBatchCategoryUpdated();
       }
     } catch (e) {
@@ -346,24 +349,73 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   };
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white px-3 sm:px-5 py-2 sm:py-3 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center gap-2 sm:gap-3 max-w-[96vw] animate-slideUp overflow-x-auto no-scrollbar">
-      {/* Selected Counter */}
-      <div className="flex items-center gap-2 pr-2.5 sm:pr-3 border-r border-slate-700 shrink-0">
-        <span className="w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center text-xs font-bold">
-          {selectedIds.length}
-        </span>
-        <span className="text-xs font-semibold text-slate-200 hidden sm:inline">
-          Selected
-        </span>
-      </div>
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[96vw] w-max animate-slideUp">
+      {/* =========================================================================
+          MAIN FLOATING ACTION BAR PILL (Centrally Aligned & Responsive)
+         ========================================================================= */}
+      <div className="bg-slate-900/95 dark:bg-neutral-900/95 backdrop-blur-xl text-white px-2.5 sm:px-4 py-2 rounded-2xl sm:rounded-full shadow-2xl border border-slate-700/80 flex items-center justify-center gap-1.5 sm:gap-2 max-w-[96vw] overflow-x-auto no-scrollbar momentum-scroll">
+        
+        {/* Selection Count Badge & Clear (X) Button */}
+        <div className="flex items-center gap-1.5 pr-2 sm:pr-3 border-r border-slate-700/80 shrink-0">
+          <span className="w-6 h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-xs">
+            {selectedIds.length}
+          </span>
+          <span className="text-xs font-semibold text-slate-200 hidden sm:inline">
+            Selected
+          </span>
+          <button
+            onClick={onClearSelection}
+            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition ml-0.5"
+            title="Deselect All (Esc)"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
 
-      {/* Action Buttons */}
-      <div className="flex items-center gap-1.5 sm:gap-2 relative flex-nowrap md:flex-wrap shrink-0">
-        {/* Bulk Share */}
+        {/* =========================================================================
+            CORE HERO ACTION BUTTONS (Delete, Favorite, Backup, Share, Cast, Export)
+           ========================================================================= */}
+        
+        {/* 1. Delete (Danger Action - High Priority Front Placement) */}
+        <button
+          onClick={onBatchDelete}
+          disabled={loadingAction !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-sm hover:scale-[1.02] shrink-0"
+          title="Move Selected to Trash"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>Delete</span>
+        </button>
+
+        {/* 2. Favorite All */}
+        <button
+          onClick={onBatchFavorite}
+          disabled={loadingAction !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition shrink-0"
+          title="Favorite All Selected"
+        >
+          <Heart className="w-3.5 h-3.5 text-rose-400" />
+          <span className="hidden sm:inline">Favorite</span>
+        </button>
+
+        {/* 3. Google Drive Bulk Backup */}
+        {onBatchBackupToDrive && (
+          <button
+            onClick={() => onBatchBackupToDrive(selectedIds)}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
+            title="Backup selected photos to Google Drive"
+          >
+            <Cloud className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Backup</span>
+          </button>
+        )}
+
+        {/* 4. Instant Share Link */}
         <button
           onClick={handleBatchShare}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
           title="Share selected photos via an instant public link & QR code"
         >
           {loadingAction === 'share' ? (
@@ -374,6 +426,119 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           <span>Share</span>
         </button>
 
+        {/* 5. Cast Slideshow to Smart TV Lounge */}
+        <button
+          onClick={() => castPlaylist(selectedIds)}
+          disabled={loadingAction !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-sm transition shrink-0"
+          title="Cast selected photos to Smart TV Lounge as a live slideshow"
+        >
+          <Tv className="w-3.5 h-3.5 text-blue-200" />
+          <span>Cast</span>
+        </button>
+
+        {/* 6. Export ZIP Archive */}
+        <button
+          onClick={handleBulkDownload}
+          disabled={loadingAction !== null}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 shrink-0"
+          title="Download all selected photos as a ZIP archive"
+        >
+          {loadingAction === 'download' ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Download className="w-3.5 h-3.5 text-indigo-400" />
+          )}
+          <span className="hidden sm:inline">Export</span>
+        </button>
+
+        {/* Divider between core actions and organization tools */}
+        <div className="w-px h-5 bg-slate-700/80 mx-0.5 shrink-0" />
+
+        {/* =========================================================================
+            ORGANIZATION & EDIT DROPDOWN TRIGGERS
+           ========================================================================= */}
+
+        {/* Album Dropdown Trigger */}
+        <button
+          onClick={() => toggleMenu('album')}
+          disabled={loadingAction !== null}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu === 'album'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          }`}
+          title="Add to Album"
+        >
+          <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Album</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'album' ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Category Dropdown Trigger */}
+        <button
+          onClick={() => toggleMenu('category')}
+          disabled={loadingAction !== null}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu === 'category'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          }`}
+          title="Change Category"
+        >
+          <Tag className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Category</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'category' ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* AI Enhance Dropdown Trigger */}
+        <button
+          onClick={() => toggleMenu('enhance')}
+          disabled={loadingAction !== null}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu === 'enhance'
+              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          }`}
+          title="AI Image Enhancement"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+          <span>Enhance</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'enhance' ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Location Dropdown Trigger */}
+        <button
+          onClick={() => toggleMenu('location')}
+          disabled={loadingAction !== null}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu === 'location'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          }`}
+          title="Assign Location or Propagate Geotags"
+        >
+          <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Location</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'location' ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Time Shift Dropdown Trigger */}
+        <button
+          onClick={() => toggleMenu('timeshift')}
+          disabled={loadingAction !== null}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu === 'timeshift'
+              ? 'bg-cyan-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          }`}
+          title="Adjust Captured Date or Camera Clock Drift"
+        >
+          <Clock className="w-3.5 h-3.5 text-cyan-400" />
+          <span>Time Shift</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'timeshift' ? 'rotate-180' : ''}`} />
+        </button>
+
         {/* 1-Click Creative Collage & Print Studio */}
         {selectedIds.length >= 2 && selectedIds.length <= 16 && (
           <button
@@ -382,14 +547,11 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
               window.open(url, '_blank') || window.location.assign(url);
             }}
             disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
-            title="Open Creative Collage & Print Studio in dedicated full page / tab"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105 shrink-0"
+            title="Open Creative Collage & Print Studio in dedicated full page"
           >
             <Layout className="w-3.5 h-3.5 text-pink-200" />
-            <span>Collage Studio</span>
-            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
-              {selectedIds.length}
-            </span>
+            <span>Collage</span>
           </button>
         )}
 
@@ -398,46 +560,11 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           <button
             onClick={() => setShowHighlightReelModal(true)}
             disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105 shrink-0"
             title="Create Cinematic Highlight Reel with Ken Burns motion & soundtrack"
           >
             <Film className="w-3.5 h-3.5 text-indigo-200" />
-            <span>Highlight Reel</span>
-            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
-              {selectedIds.length}
-            </span>
-          </button>
-        )}
-
-        {/* Cast Slideshow to Smart TV Lounge */}
-        {selectedIds.length > 0 && (
-          <button
-            onClick={() => castPlaylist(selectedIds)}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
-            title="Cast selected photos to Smart TV Lounge as a live slideshow"
-          >
-            <Tv className="w-3.5 h-3.5 text-blue-200" />
-            <span>Cast Slideshow</span>
-            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
-              {selectedIds.length}
-            </span>
-          </button>
-        )}
-
-        {/* Google Drive Bulk Backup */}
-        {onBatchBackupToDrive && (
-          <button
-            onClick={() => onBatchBackupToDrive(selectedIds)}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/80 hover:bg-indigo-900/90 text-indigo-300 hover:text-white border border-indigo-700/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
-            title="Backup selected photos to Google Drive with lossless quality"
-          >
-            <Cloud className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Backup to Drive</span>
-            <span className="text-[10px] bg-indigo-800 text-indigo-200 px-1.5 py-0.2 rounded-full font-bold">
-              {selectedIds.length}
-            </span>
+            <span>Reel</span>
           </button>
         )}
 
@@ -446,506 +573,390 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           <button
             onClick={onOpenGooglePhotosHelper}
             disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/60 hover:bg-indigo-800/80 text-indigo-200 hover:text-white border border-indigo-600/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 hover:text-white border border-indigo-600/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
             title="Search and trash selected photos in Google Photos cloud"
           >
             <Search className="w-3.5 h-3.5 text-indigo-300" />
-            <span>Google Photos Query</span>
-            <span className="text-[10px] bg-indigo-700 text-indigo-100 px-1.5 py-0.2 rounded-full font-bold">
-              {selectedIds.length}
-            </span>
+            <span>GPhotos</span>
           </button>
         )}
 
-        {/* Bulk Download (ZIP) */}
-        <button
-          onClick={handleBulkDownload}
-          disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50"
-          title="Download all selected photos as a ZIP archive"
-        >
-          {loadingAction === 'download' ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Download className="w-3.5 h-3.5 text-indigo-400" />
-          )}
-          <span>Export ZIP</span>
-        </button>
-
-        {/* Bulk AI Enhance Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowEnhanceMenu(!showEnhanceMenu);
-              setShowAlbumMenu(false);
-              setShowCategoryMenu(false);
-              setShowLocationModal(false);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50"
-            title="Auto-enhance lighting, shadows, and clarity across selected photos"
-          >
-            {loadingAction === 'enhance' ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            )}
-            <span>AI Enhance</span>
-            <ChevronUp className={`w-3 h-3 transition-transform ${showEnhanceMenu ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showEnhanceMenu && (
-            <div className="absolute bottom-full mb-2 left-0 w-60 bg-slate-800 border border-slate-700 rounded-xl p-2 shadow-2xl space-y-1 z-50 animate-fadeIn">
-              <p className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
-                AI Enhancement ({selectedIds.length} photos)
-              </p>
-              <button
-                onClick={() => handleBatchEnhance('auto_magic')}
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
-              >
-                <span>🪄</span>
-                <div>
-                  <p className="font-semibold text-slate-200">Auto Magic Balance</p>
-                  <p className="text-[10px] text-slate-400">Gray-World AWB + CLAHE contrast</p>
-                </div>
-              </button>
-              <button
-                onClick={() => handleBatchEnhance('shadow_lift')}
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
-              >
-                <span>☀️</span>
-                <div>
-                  <p className="font-semibold text-slate-200">Shadow Recovery</p>
-                  <p className="text-[10px] text-slate-400">Brightens backlit & dark faces</p>
-                </div>
-              </button>
-              <button
-                onClick={() => handleBatchEnhance('dehaze')}
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2 transition"
-              >
-                <span>🌫️</span>
-                <div>
-                  <p className="font-semibold text-slate-200">De-Haze & Clear Sky</p>
-                  <p className="text-[10px] text-slate-400">Removes atmospheric fog</p>
-                </div>
-              </button>
-              <div className="h-px bg-slate-700 my-1" />
-              <button
-                onClick={() => handleBatchEnhance('revert')}
-                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-rose-300 flex items-center gap-2 transition"
-              >
-                <span>↩️</span>
-                <span>Revert to Original (Reset)</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Add to Album Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowAlbumMenu(!showAlbumMenu);
-              setShowCategoryMenu(false);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-sm transition"
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-            <span>Album</span>
-            <ChevronUp className={`w-3 h-3 transition-transform ${showAlbumMenu ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showAlbumMenu && (
-            <div className="absolute bottom-full mb-2 left-0 w-56 bg-slate-800 border border-slate-700 rounded-xl p-2 shadow-2xl space-y-1.5 z-50">
-              <div className="flex items-center justify-between px-2 py-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400">
-                  Add to Album
-                </span>
-                <button
-                  onClick={() => setShowNewAlbumInput(!showNewAlbumInput)}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>New</span>
-                </button>
-              </div>
-
-              {showNewAlbumInput && (
-                <form onSubmit={handleCreateNewAlbum} className="px-2 py-1 space-y-1">
-                  <input
-                    type="text"
-                    value={newAlbumName}
-                    onChange={(e) => setNewAlbumName(e.target.value)}
-                    placeholder="New album title..."
-                    className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-indigo-500"
-                    autoFocus
-                  />
-                  <button
-                    type="submit"
-                    className="w-full py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-semibold"
-                  >
-                    Create & Add
-                  </button>
-                </form>
-              )}
-
-              <div className="max-h-40 overflow-y-auto space-y-0.5">
-                {albums.length === 0 ? (
-                  <p className="text-xs text-slate-400 px-2 py-1">No albums found</p>
-                ) : (
-                  albums.map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={() => handleAddPhotosToAlbum(a.id)}
-                      className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white truncate transition flex items-center justify-between"
-                    >
-                      <span className="truncate">{a.name}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Change Category / Organize Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowCategoryMenu(!showCategoryMenu);
-              setShowAlbumMenu(false);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
-            title="Bulk reorganize category"
-          >
-            <Tag className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Category</span>
-            <ChevronUp className={`w-3 h-3 transition-transform ${showCategoryMenu ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showCategoryMenu && (
-            <div className="absolute bottom-full mb-2 left-0 w-48 bg-slate-800 border border-slate-700 rounded-xl p-2 shadow-2xl space-y-1 z-50">
-              <p className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">
-                Move to Category
-              </p>
-              <button
-                onClick={() => handleBatchCategory('memory')}
-                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2"
-              >
-                <span>📸</span> <span>Memories</span>
-              </button>
-              <button
-                onClick={() => handleBatchCategory('screenshot')}
-                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2"
-              >
-                <span>📱</span> <span>Screenshots</span>
-              </button>
-              <button
-                onClick={() => handleBatchCategory('document_bill')}
-                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2"
-              >
-                <span>🧾</span> <span>Bills & Docs</span>
-              </button>
-              <button
-                onClick={() => handleBatchCategory('meme_junk')}
-                className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-slate-700 text-xs text-white flex items-center gap-2"
-              >
-                <span>💬</span> <span>Memes / Clutter</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Location & Places Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowLocationModal(!showLocationModal);
-              setShowCategoryMenu(false);
-              setShowAlbumMenu(false);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
-            title="Bulk assign location or propagate geotags"
-          >
-            <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Location</span>
-            <ChevronUp className={`w-3 h-3 transition-transform ${showLocationModal ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showLocationModal && (
-            <div className="absolute bottom-full mb-2 left-0 w-72 bg-slate-800 border border-slate-700 rounded-xl p-3 shadow-2xl space-y-3 z-50">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] uppercase font-bold text-slate-400">
-                  Assign Location ({selectedIds.length} photos)
-                </p>
-                <button
-                  onClick={() => setShowLocationModal(false)}
-                  className="text-slate-400 hover:text-white p-0.5"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-
-              {/* Quick Trip Place Presets */}
-              <div className="space-y-1">
-                <p className="text-[10px] text-slate-400">Trip & Outing Presets:</p>
-                <button
-                  type="button"
-                  onClick={() => handleBatchLocation('Pottalkulam, Tamil Nadu, India', 8.077913, 77.551231)}
-                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-emerald-300 font-medium flex items-center justify-between"
-                >
-                  <span>📍 Kanyakumari / Pottalkulam</span>
-                  <span className="text-[9px] text-slate-400">Sunrise</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleBatchLocation('Bengaluru, Karnataka, India', 12.931643, 77.545616)}
-                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-indigo-300 font-medium flex items-center justify-between"
-                >
-                  <span>📍 Bengaluru, Karnataka</span>
-                  <span className="text-[9px] text-slate-400">Sept 22</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleBatchLocation('Thalaiyuthu, Tamil Nadu, India', 8.727996, 77.686714)}
-                  className="w-full text-left px-2 py-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-[11px] text-amber-300 font-medium flex items-center justify-between"
-                >
-                  <span>📍 Thalaiyuthu / Tirunelveli</span>
-                  <span className="text-[9px] text-slate-400">Oct 24</span>
-                </button>
-              </div>
-
-              {/* Custom Place Input */}
-              <div className="space-y-1.5 pt-1 border-t border-slate-700/60">
-                <input
-                  type="text"
-                  placeholder="Custom city or place name..."
-                  value={customLocName}
-                  onChange={(e) => setCustomLocName(e.target.value)}
-                  className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500"
-                />
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    placeholder="Lat (opt)"
-                    value={customLat}
-                    onChange={(e) => setCustomLat(e.target.value)}
-                    className="w-1/2 px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500 font-mono text-[10px]"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Lon (opt)"
-                    value={customLon}
-                    onChange={(e) => setCustomLon(e.target.value)}
-                    className="w-1/2 px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-emerald-500 font-mono text-[10px]"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleBatchLocation(customLocName, customLat ? parseFloat(customLat) : undefined, customLon ? parseFloat(customLon) : undefined)}
-                  disabled={!customLocName.trim() && (!customLat || !customLon)}
-                  className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold transition"
-                >
-                  Apply Custom Location
-                </button>
-              </div>
-
-              {/* 1-Click Outing Propagation */}
-              <div className="pt-1 border-t border-slate-700/60">
-                <button
-                  type="button"
-                  onClick={handlePropagateLocations}
-                  className="w-full py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded text-[11px] font-medium flex items-center justify-center gap-1.5 transition"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Auto-Link Outing Geotags</span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Time Shifter Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => {
-              setShowTimeShiftModal(!showTimeShiftModal);
-              setShowLocationModal(false);
-              setShowCategoryMenu(false);
-              setShowAlbumMenu(false);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
-            title="Adjust captured date or fix camera clock drift"
-          >
-            <Clock className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Time Shift</span>
-            <ChevronUp className={`w-3 h-3 transition-transform ${showTimeShiftModal ? 'rotate-180' : ''}`} />
-          </button>
-
-          {showTimeShiftModal && (
-            <div className="absolute bottom-full mb-2 left-0 w-80 bg-slate-800 border border-slate-700 rounded-xl p-3.5 shadow-2xl space-y-3 z-50">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] uppercase font-bold text-slate-400">
-                  Batch Time Shifter ({selectedIds.length} photos)
-                </p>
-                <button
-                  onClick={() => setShowTimeShiftModal(false)}
-                  className="text-slate-400 hover:text-white p-0.5"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-
-              {/* Mode switch */}
-              <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setTimeShiftMode('relative')}
-                  className={`flex-1 py-1 rounded text-[11px] font-semibold transition ${
-                    timeShiftMode === 'relative' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Relative Shift (±)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTimeShiftMode('exact')}
-                  className={`flex-1 py-1 rounded text-[11px] font-semibold transition ${
-                    timeShiftMode === 'exact' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Exact Date
-                </button>
-              </div>
-
-              {timeShiftMode === 'relative' ? (
-                <div className="space-y-2">
-                  <p className="text-[10px] text-slate-400">Quick Clock Drift Presets:</p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setShiftHours((h) => h + 1)}
-                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-cyan-300 font-mono text-center"
-                    >
-                      +1 Hour
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShiftHours((h) => h - 1)}
-                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-cyan-300 font-mono text-center"
-                    >
-                      -1 Hour
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShiftDays((d) => d + 1)}
-                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-indigo-300 font-mono text-center"
-                    >
-                      +1 Day
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShiftDays((d) => d - 1)}
-                      className="px-2 py-1 bg-slate-900 hover:bg-slate-700 rounded text-[11px] text-indigo-300 font-mono text-center"
-                    >
-                      -1 Day
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-0.5">Shift Hours</label>
-                      <input
-                        type="number"
-                        value={shiftHours}
-                        onChange={(e) => setShiftHours(parseFloat(e.target.value) || 0)}
-                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-0.5">Shift Days</label>
-                      <input
-                        type="number"
-                        value={shiftDays}
-                        onChange={(e) => setShiftDays(parseInt(e.target.value, 10) || 0)}
-                        className="w-full px-2 py-1 text-xs bg-slate-900 border border-slate-700 rounded text-white font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] text-slate-400">Target Timestamp</label>
-                  <input
-                    type="datetime-local"
-                    value={exactDatetime}
-                    onChange={(e) => setExactDatetime(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded text-white"
-                  />
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={handleBatchTimeShift}
-                disabled={loadingAction === 'timeshift' || (timeShiftMode === 'relative' && shiftHours === 0 && shiftDays === 0) || (timeShiftMode === 'exact' && !exactDatetime)}
-                className="w-full py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded text-[11px] font-semibold transition flex items-center justify-center gap-1.5"
-              >
-                {loadingAction === 'timeshift' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />}
-                <span>Apply Time Shift</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Remove from Person / Not this person */}
+        {/* Remove from Person / Not This Person */}
         {onRemoveFromPerson && (
           <button
             onClick={onRemoveFromPerson}
             disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/90 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold transition shadow-xs"
-            title="Remove selected photos from this person (keeps photos in library)"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/90 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold transition shadow-xs shrink-0"
+            title="Remove selected photos from this person"
           >
             <X className="w-3.5 h-3.5 text-amber-200" />
             <span>{removeFromPersonLabel || 'Not This Person'}</span>
           </button>
         )}
-
-        {/* Favorite All */}
-        <button
-          onClick={onBatchFavorite}
-          disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition"
-          title="Favorite All Selected"
-        >
-          <Heart className="w-3.5 h-3.5 text-red-400" />
-          <span className="hidden sm:inline">Favorite</span>
-        </button>
-
-        {/* Delete Selected (Safe confirmation) */}
-        <button
-          onClick={onBatchDelete}
-          disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/90 hover:bg-red-700 text-white rounded-xl text-xs font-semibold transition"
-          title="Move Selected to Trash"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>Delete</span>
-        </button>
-
-        {/* Clear Selection */}
-        <button
-          onClick={onClearSelection}
-          className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition"
-          title="Deselect All"
-        >
-          <X className="w-4 h-4" />
-        </button>
       </div>
+
+      {/* =========================================================================
+          POPOVER MENUS (Rendered Outside the Scrollable Track to Eliminate Clipping)
+         ========================================================================= */}
+      {activeMenu && (
+        <>
+          {/* Backdrop to close menu on outside click */}
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs transition-opacity"
+            onClick={() => setActiveMenu(null)}
+          />
+
+          {/* Floating Centered Menu Container */}
+          <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+8.5rem)] md:bottom-20 left-1/2 -translate-x-1/2 z-50 w-[92vw] sm:w-auto min-w-[300px] max-w-sm bg-slate-900 border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white animate-fadeIn">
+            
+            {/* Header with Title and Close Button */}
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                {activeMenu === 'album' && 'Add to Album'}
+                {activeMenu === 'category' && 'Move to Category'}
+                {activeMenu === 'enhance' && 'AI Image Enhancement'}
+                {activeMenu === 'location' && 'Assign Location'}
+                {activeMenu === 'timeshift' && 'Batch Time Shifter'}
+              </span>
+              <button
+                onClick={() => setActiveMenu(null)}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* 1. Album Menu Content */}
+            {activeMenu === 'album' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[11px] text-slate-400">Select an album or create new:</span>
+                  <button
+                    onClick={() => setShowNewAlbumInput(!showNewAlbumInput)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>New Album</span>
+                  </button>
+                </div>
+
+                {showNewAlbumInput && (
+                  <form onSubmit={handleCreateNewAlbum} className="space-y-1.5 p-2 bg-slate-950/60 rounded-xl border border-slate-800">
+                    <input
+                      type="text"
+                      value={newAlbumName}
+                      onChange={(e) => setNewAlbumName(e.target.value)}
+                      placeholder="New album title..."
+                      className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+                      autoFocus
+                    />
+                    <button
+                      type="submit"
+                      disabled={!newAlbumName.trim()}
+                      className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition"
+                    >
+                      Create & Add {selectedIds.length} Photos
+                    </button>
+                  </form>
+                )}
+
+                <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                  {albums.length === 0 ? (
+                    <p className="text-xs text-slate-400 p-2 text-center">No albums found</p>
+                  ) : (
+                    albums.map((a) => (
+                      <button
+                        key={a.id}
+                        onClick={() => handleAddPhotosToAlbum(a.id)}
+                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white truncate transition flex items-center justify-between border border-transparent hover:border-slate-700"
+                      >
+                        <span className="truncate font-medium">{a.name}</span>
+                        <Plus className="w-3.5 h-3.5 text-indigo-400 shrink-0 ml-2" />
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 2. Category Menu Content */}
+            {activeMenu === 'category' && (
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => handleBatchCategory('memory')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">📸</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Memories</p>
+                    <p className="text-[10px] text-slate-400">Regular camera photos & family moments</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchCategory('screenshot')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">📱</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Screenshots</p>
+                    <p className="text-[10px] text-slate-400">App captures & screen recordings</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchCategory('document_bill')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">🧾</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Bills & Documents</p>
+                    <p className="text-[10px] text-slate-400">Receipts, bills, and OCR documents</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchCategory('meme_junk')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">💬</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Memes / Clutter</p>
+                    <p className="text-[10px] text-slate-400">Forwarded graphics & jokes</p>
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* 3. AI Enhance Menu Content */}
+            {activeMenu === 'enhance' && (
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => handleBatchEnhance('auto_magic')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">🪄</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Auto Magic Balance</p>
+                    <p className="text-[10px] text-slate-400">Gray-World AWB + CLAHE contrast boost</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchEnhance('shadow_lift')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">☀️</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Shadow Recovery</p>
+                    <p className="text-[10px] text-slate-400">Brightens backlit & dark faces</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchEnhance('dehaze')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">🌫️</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">De-Haze & Clear Sky</p>
+                    <p className="text-[10px] text-slate-400">Removes atmospheric haze & fog</p>
+                  </div>
+                </button>
+                <div className="h-px bg-slate-800 my-1" />
+                <button
+                  onClick={() => handleBatchEnhance('revert')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-rose-300 flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
+                  <span className="text-base">↩️</span>
+                  <div>
+                    <p className="font-semibold text-rose-300">Revert to Original</p>
+                    <p className="text-[10px] text-slate-400">Reset adjustments back to masters</p>
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* 4. Location Menu Content */}
+            {activeMenu === 'location' && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Quick Place Presets:</p>
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => handleBatchLocation('Pottalkulam, Tamil Nadu, India', 8.077913, 77.551231)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-emerald-300 font-medium flex items-center justify-between transition"
+                    >
+                      <span>📍 Kanyakumari / Pottalkulam</span>
+                      <span className="text-[10px] text-slate-400">Sunrise</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBatchLocation('Bengaluru, Karnataka, India', 12.931643, 77.545616)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-indigo-300 font-medium flex items-center justify-between transition"
+                    >
+                      <span>📍 Bengaluru, Karnataka</span>
+                      <span className="text-[10px] text-slate-400">Tech Hub</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBatchLocation('Thalaiyuthu, Tamil Nadu, India', 8.727996, 77.686714)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-amber-300 font-medium flex items-center justify-between transition"
+                    >
+                      <span>📍 Thalaiyuthu / Tirunelveli</span>
+                      <span className="text-[10px] text-slate-400">Heritage</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <input
+                    type="text"
+                    placeholder="Custom city or location name..."
+                    value={customLocName}
+                    onChange={(e) => setCustomLocName(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Lat (e.g. 12.97)"
+                      value={customLat}
+                      onChange={(e) => setCustomLat(e.target.value)}
+                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono text-[11px]"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Lon (e.g. 77.59)"
+                      value={customLon}
+                      onChange={(e) => setCustomLon(e.target.value)}
+                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono text-[11px]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleBatchLocation(customLocName, customLat ? parseFloat(customLat) : undefined, customLon ? parseFloat(customLon) : undefined)}
+                    disabled={!customLocName.trim() && (!customLat || !customLon)}
+                    className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-xs"
+                  >
+                    Apply Custom Location
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={handlePropagateLocations}
+                    className="w-full py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Auto-Link Outing Geotags</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 5. Time Shifter Menu Content */}
+            {activeMenu === 'timeshift' && (
+              <div className="space-y-3">
+                <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setTimeShiftMode('relative')}
+                    className={`flex-1 py-1 rounded-lg text-xs font-semibold transition ${
+                      timeShiftMode === 'relative' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Relative Shift (±)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimeShiftMode('exact')}
+                    className={`flex-1 py-1 rounded-lg text-xs font-semibold transition ${
+                      timeShiftMode === 'exact' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Exact Date
+                  </button>
+                </div>
+
+                {timeShiftMode === 'relative' ? (
+                  <div className="space-y-2">
+                    <p className="text-[10px] uppercase font-bold text-slate-400">Quick Clock Drift Presets:</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setShiftHours((h) => h + 1)}
+                        className="px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-xs text-cyan-300 font-mono text-center transition"
+                      >
+                        +1 Hour
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShiftHours((h) => h - 1)}
+                        className="px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-xs text-cyan-300 font-mono text-center transition"
+                      >
+                        -1 Hour
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShiftDays((d) => d + 1)}
+                        className="px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-xs text-indigo-300 font-mono text-center transition"
+                      >
+                        +1 Day
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShiftDays((d) => d - 1)}
+                        className="px-2 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-xs text-indigo-300 font-mono text-center transition"
+                      >
+                        -1 Day
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Shift Hours</label>
+                        <input
+                          type="number"
+                          value={shiftHours}
+                          onChange={(e) => setShiftHours(parseFloat(e.target.value) || 0)}
+                          className="w-full px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Shift Days</label>
+                        <input
+                          type="number"
+                          value={shiftDays}
+                          onChange={(e) => setShiftDays(parseInt(e.target.value, 10) || 0)}
+                          className="w-full px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] text-slate-400">Target Timestamp</label>
+                    <input
+                      type="datetime-local"
+                      value={exactDatetime}
+                      onChange={(e) => setExactDatetime(e.target.value)}
+                      className="w-full px-2.5 py-2 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleBatchTimeShift}
+                  disabled={loadingAction === 'timeshift' || (timeShiftMode === 'relative' && shiftHours === 0 && shiftDays === 0) || (timeShiftMode === 'exact' && !exactDatetime)}
+                  className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  {loadingAction === 'timeshift' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />}
+                  <span>Apply Time Shift</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Instant Bundle Share Modal */}
       <ShareEventModal
