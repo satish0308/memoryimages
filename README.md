@@ -48,6 +48,19 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Pinch-to-Zoom Timeline Scaling**: Switch seamlessly between **Day**, **Month**, and **Year** chronological zoom levels.
 - **Dynamic Density Scaling**: Adjust grid density from a 10-column compact bird's-eye view to a 4-column detailed card layout.
 - **People Presence Sub-Grouping & With/Without People Mode**: Segregate your library into **Photos with People** (portraits, family memories, selfies, gatherings) and **Photos without People** (nature, landscapes, scenery, travel vistas, architecture, receipts & objects). Includes 1-click filter pills (`All`, `👤 With People`, `🌿 Without People`), dynamic count badges, an optional dual-section split view (**"Group by People"**), and individual face count badges on cards (`👤 2`).
+
+### 📺 Universal Smart TV Lounge Mode & Phone Remote Control (`/tv`)
+- **100% Universal Web Casting**: Cast photos and videos to **any Smart TV** with a built-in browser (Samsung Tizen, LG webOS, Android TV, Google TV, Sony Bravia, Apple TV, Amazon Fire TV Stick, or smart displays). Zero proprietary hardware, zero Chromecast/AirPlay lock-in, and zero external cloud tracking.
+- **Standby Pairing Hub (`/tv`)**: Displays an ambient, dark 10-foot lounge display with:
+  - High-visibility **4-digit pairing PIN** (e.g. `[ 4 ] [ 8 ] [ 2 ] [ 1 ]`).
+  - Dynamic **SVG QR code** pointing directly to `http://<your-lan-ip>:3000/?pair=<pin>`.
+  - Live clock, full date, ambient glow backdrop, and keepalive heartbeat connection indicators.
+- **Sub-50ms Real-Time Remote Control**: Phone or laptop acts as an instant remote control via bidirectional WebSockets and Redis Pub/Sub (`/api/v1/cast/*`). Tapping any photo on your phone updates the TV in pristine 4K resolution with imperceptible latency (<50ms).
+- **Cinematic Ken Burns Pan & Zoom**: Automated smooth pan and zoom transitions on high-resolution photos, toggleable directly from the phone remote or by pressing **M** on the TV remote.
+- **Multi-Photo Cast Slideshows**: Select any photos or an entire album using the timeline multi-selection bar and tap **"📺 Cast Slideshow"** to stream an ambient presentation with adjustable speeds (4s, 6s, 10s, 15s).
+- **Native 4K Video Playback**: Automatically plays high-definition video files on the TV screen with audio support, looping, and auto-advancing to the next slide upon video completion.
+- **Floating Cast Mini-Bar**: When casting, a discreet floating player pill appears at the bottom of your phone, allowing you to pause, skip, or disconnect while freely browsing other sections of your library.
+- **TV Remote Navigation**: Supports standard Smart TV hardware remotes out-of-the-box (`Left/Right Arrow` to skip, `Space / OK / Enter` to play/pause, `F` for fullscreen, `M` to toggle Ken Burns motion, `Esc` to return to standby).
 - **Universal 2D Drag-and-Select & Quick Sweeps**: Click and drag across any photo grid to draw a 2D selection marquee. Includes synchronous pointer release flushing for lightning-fast sweeps, row & column linear sweep auto-selection, single-click select/deselect toggle, and double-click to immediately open full-screen Lightbox.
 - **Group & Batch Multi-Selection**: Select entire months, years, or custom batches with 1-click selection headers and a floating bulk action dock (Favorite, Recategorize, Location Tagging, AI Enhance, Parallel ZIP Export, Google Photos Query Export).
 
@@ -372,9 +385,40 @@ docker compose up -d --build
 
 Access the application in your browser:
 - **Frontend Web UI**: [http://localhost:3000](http://localhost:3000)
+- **Smart TV Lounge Mode**: [http://localhost:3000/tv](http://localhost:3000/tv)
 - **Discovery Explorer**: [http://localhost:3000/similar?id=1](http://localhost:3000/similar?id=1)
 - **Interactive OpenAPI Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Backend Health Check**: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+
+### 📺 Step-by-Step: How to Use Smart TV Lounge Mode
+
+1. **Open TV Lounge on Your Smart TV**:
+   - Turn on your Smart TV (Samsung, LG, Sony, Android TV, Fire TV, Apple TV, etc.).
+   - Launch the TV's built-in web browser app.
+   - Navigate to your MyMemoryPics address with `/tv` at the end:
+     ```
+     http://<your-server-ip>:3000/tv
+     ```
+     *(Example: `http://192.168.1.50:3000/tv`)*
+   - The TV screen enters **Standby Mode**, showing a bold **4-digit PIN** (e.g., `4821`), a dynamic **QR Code**, and a live clock.
+
+2. **Connect from Your Phone, Tablet, or Laptop**:
+   - **Method A (Fastest - Scan QR Code)**: Point your smartphone's camera at the QR code on the TV screen. Tap the link to open MyMemoryPics — your phone pairs automatically with zero typing!
+   - **Method B (1-Click LAN Discovery or PIN)**:
+     - Open MyMemoryPics in your phone or laptop browser.
+     - Tap the **📺 Cast** button in the top navigation bar, photo viewer, or mobile dock.
+     - Discovered TVs on your local Wi-Fi appear with a **Connect** button, or simply enter the 4-digit PIN displayed on your TV.
+
+3. **Control the Big Screen in Real-Time**:
+   - **Browse & Cast**: Tap any photo or video in your timeline or lightbox — it displays instantly on the TV in 4K resolution!
+   - **Start a Slideshow**: Select multiple photos on your phone and tap **"📺 Cast Slideshow"** in the action bar.
+   - **Remote Controls**: Use the phone's remote popup or floating bottom mini-bar to:
+     - Skip Next / Previous (`◀` / `▶`)
+     - Play / Pause Slideshow (`▶` / `⏸`)
+     - Change Slide Duration (`4s`, `6s`, `10s`, `15s`)
+     - Toggle Ken Burns Pan & Zoom Motion (`ON` / `OFF`)
+     - Disconnect when finished.
+   - **TV Remote Control**: You can also use the TV's physical remote: `Left/Right Arrow` to skip, `OK / Enter` to play/pause, `M` to toggle motion, and `F` for fullscreen!
 
 ---
 
@@ -461,6 +505,13 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/system/backups/{file}/download`| Downloads `.db.gz` compressed database backup archive |
 | `GET` | `/api/v1/system/database/status` | Real-time dual-db status, dialect, table counts, HNSW index |
 | `POST` | `/api/v1/system/database/migrate` | 1-click reflection migration between SQLite and PostgreSQL |
+| `POST` | `/api/v1/cast/session/create` | Allocates new Cast session for TV receiver with 4-digit PIN and 300s TTL |
+| `GET` | `/api/v1/cast/sessions` | Lists active TV sessions on local network for 1-click discovery |
+| `GET` | `/api/v1/cast/session/{id}` | Gets playback state and current media details of a Cast session |
+| `POST` | `/api/v1/cast/session/pair` | Pairs phone remote controller with TV receiver using 4-digit PIN |
+| `POST` | `/api/v1/cast/session/{id}/heartbeat`| Refreshes session TTL to keep TV display active |
+| `POST` | `/api/v1/cast/session/{id}/command` | Dispatches playback commands (`cast_media`, `cast_playlist`, `next`, `prev`, `play`, `pause`, `set_interval`, `toggle_motion`, `disconnect`) |
+| `GET` | `/api/v1/cast/ws/{id}` | Bidirectional WebSocket stream for real-time sub-50ms TV synchronization |
 | `POST` | `/api/v1/tasks/dispatch` | Enqueues background worker tasks to Redis task broker |
 | `GET` | `/api/v1/tasks/ws` | Full-duplex WebSocket stream for real-time background task progress |
 | `POST` | `/api/v1/auth/login` | JWT user login |
@@ -487,7 +538,7 @@ MyMemoryPics implements the **9drive In-Memory Architecture**:
 mymemorypics/
 ├── backend/
 │   ├── app/
-│   │   ├── api/             # FastAPI REST routers (media, search, people, albums, triage, sync, tasks, auth, s3_storage, backups)
+│   │   ├── api/             # FastAPI REST routers (media, search, people, albums, triage, sync, tasks, auth, s3_storage, backups, cast)
 │   │   ├── models/          # SQLAlchemy models (media, person, album, user, sync)
 │   │   ├── services/        # AI & Core services (similarity_engine, event_clustering, enhancement_engine, task_queue, quality_engine, clip_engine, face_engine)
 │   │   ├── config.py        # Environment configuration
@@ -497,11 +548,14 @@ mymemorypics/
 │   ├── Dockerfile           # Backend container definition
 │   └── requirements.txt     # Python dependencies (FastAPI, ONNX, FastEmbed, Pillow, PyJWT, redis, psycopg2, boto3)
 ├── frontend/
-│   ├── app/                 # Next.js App Router (/albums, /collage, /edit, /similar, /triage, /map, /people, /sync, /settings)
-│   ├── components/          # Reusable UI modules (Timeline, Lightbox, BulkActionBar, AmbientSlideshow, Triage)
-│   ├── utils/               # Frontend utilities (thumbnailCache.ts for IndexedDB 0ms caching)
+│   ├── app/                 # Next.js App Router (/albums, /collage, /edit, /similar, /triage, /map, /people, /sync, /settings, /tv, /kiosk)
+│   ├── components/          # Reusable UI modules (Timeline, Lightbox, BulkActionBar, AmbientSlideshow, Triage, Cast)
+│   ├── context/             # Global React Contexts (AuthContext, TaskQueueContext, UploadContext, CastContext)
+│   ├── utils/               # Frontend utilities (thumbnailCache.ts for IndexedDB 0ms caching, qr.ts for standalone SVG QR)
 │   ├── Dockerfile           # Multi-stage production Next.js container definition
 │   └── package.json         # Frontend dependencies (React, Tailwind, Lucide, Leaflet)
+├── manager/                 # Minimalist Server Controller Daemon (server.py, dark-mode sleep/wake UI on port 8080)
+├── server-ctl.sh            # CLI helper to start/stop/status the server and Docker stack
 ├── data/                    # Persistent volume mounts (ignored by git)
 │   ├── db/                  # SQLite database file & models
 │   ├── backups/             # Local compressed WAL database snapshots
@@ -516,6 +570,7 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **📺 Universal Smart TV Lounge Mode & Phone Remote Control (`/tv`)**: Dedicated 10-foot TV receiver page with glowing 4-digit PIN, dynamic SVG QR code, 4K photo canvas, video player, Ken Burns pan/zoom motion, sub-50ms WebSocket & Redis Pub/Sub synchronization, and phone remote control.
 - [x] **🪄 In-Browser Non-Destructive Photo Editing Studio (`/edit`)**: Dedicated full-screen studio, parametric sliders (exposure, contrast, shadows, warmth, sharpness, vignette), crop/rotate/flip presets, color presets, live split before/after slider, and recipe persistence.
 - [x] **🎞️ AI Highlight Reels ("Moments in Motion")**: High-definition Ken Burns animated reels with atmospheric synthesized ambient soundtrack, customizable pacing, title cards, and 1080p WebM/MP4 export to library and download.
 - [x] **⭐ AI Aesthetics & "Best Shot" Selector**: Multi-metric evaluation (Laplacian sharpness, exposure balance, facial smiles/open eyes, resolution), gold `👑 BEST SHOT` crown badge, Lightbox sequence switcher, and blurry photo cleanup.
