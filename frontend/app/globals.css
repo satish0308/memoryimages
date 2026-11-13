@@ -90,3 +90,55 @@ body {
 .animate-ken-burns-2 {
   animation: kenBurns2 24s ease-in-out infinite alternate;
 }
+
+/* =========================================================================
+   DYNAMIC FLUID AUTO-FILL PHOTO GRIDS (Responsive on Resize & Zoom In/Out)
+   ========================================================================= */
+
+.photo-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(95px, 1fr));
+  gap: 0.25rem;
+}
+@media (min-width: 640px) {
+  .photo-grid-compact {
+    grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
+    gap: 0.375rem;
+  }
+}
+
+.photo-grid-normal {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
+  gap: 0.375rem;
+}
+@media (min-width: 640px) {
+  .photo-grid-normal {
+    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+    gap: 0.5rem;
+  }
+}
+
+.photo-grid-large {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .photo-grid-large {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.75rem;
+  }
+}
+
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .people-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+}

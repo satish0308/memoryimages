@@ -1025,7 +1025,7 @@ export default function PeoplePage() {
   }, [visiblePeopleCount, filteredPeople.length]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-24">
+    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-24">
       {/* ========================================================
           VIEW MODE A: BIG-SCREEN PERSON LIFE TIMELINE
           ======================================================== */}
@@ -1729,7 +1729,7 @@ export default function PeoplePage() {
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <div className="people-grid">
                   {displayedPeople.map((person) => {
                     const avatarSrc = person.avatar_url
                       ? buildMediaUrl(person.avatar_url)
@@ -1891,7 +1891,7 @@ export default function PeoplePage() {
                   All detected faces are assigned to named people!
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <div className="people-grid">
                   {unnamedFaces.map((face) => (
                     <div
                       key={face.id}

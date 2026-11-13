@@ -470,7 +470,7 @@ export default function PhotosPage() {
   });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-20" onPointerDown={handlePointerDown}>
+    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-20" onPointerDown={handlePointerDown}>
       {/* Search Bar with AI Semantic Toggle */}
       <div className="flex items-center gap-2 max-w-2xl">
         <div className="relative flex-1">
@@ -750,7 +750,7 @@ export default function PhotosPage() {
               No photos found matching &quot;{searchQuery}&quot;.
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className={density === 'compact' ? 'photo-grid-compact' : density === 'large' ? 'photo-grid-large' : 'photo-grid-normal'}>
               {searchResults.map((item) => (
                 <PhotoCard
                   key={item.id}
