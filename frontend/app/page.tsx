@@ -984,7 +984,7 @@ export default function PhotosPage() {
 
       {/* Active Line-Drag Selection Floating Pill */}
       {isDragSelecting && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+        <div className="fixed bottom-20 left-0 right-0 md:left-64 md:right-0 mx-auto w-max z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
           <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
           <span className="text-xs font-bold tracking-wide">
             {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}

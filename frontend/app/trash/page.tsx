@@ -396,7 +396,7 @@ export default function TrashGalleryPage() {
 
       {/* Active Line-Drag Selection Floating Pill */}
       {isDragSelecting && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
+        <div className="fixed bottom-20 left-0 right-0 md:left-64 md:right-0 mx-auto w-max z-50 bg-slate-900/95 text-white backdrop-blur-md px-5 py-2.5 rounded-full shadow-2xl border border-indigo-500/50 flex items-center gap-3 animate-pulse pointer-events-none">
           <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
           <span className="text-xs font-bold tracking-wide">
             {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}
@@ -853,7 +853,7 @@ export default function TrashGalleryPage() {
 
       {/* Floating Bottom Bulk Action Toolbar */}
       {selectedIds.length > 0 && (
-        <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-40 bg-slate-900/95 text-white backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl px-4 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3 animate-fadeIn max-w-[94vw]">
+        <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-0 right-0 md:left-64 md:right-0 mx-auto z-40 bg-slate-900/95 text-white backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl px-4 sm:px-5 py-2.5 sm:py-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3 animate-fadeIn w-max max-w-[94vw]">
           <div className="flex items-center gap-2 pr-3 border-r border-slate-700">
             <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
             <span className="text-xs font-bold whitespace-nowrap">

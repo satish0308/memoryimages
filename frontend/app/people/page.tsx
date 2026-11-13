@@ -1962,7 +1962,7 @@ export default function PeoplePage() {
 
       {/* Floating Drag Status Pill */}
       {isDragSelecting && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 bg-slate-900/95 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-2xl backdrop-blur-md border border-slate-700/80 flex items-center gap-2 pointer-events-none animate-fadeIn">
+        <div className="fixed bottom-20 left-0 right-0 md:left-64 md:right-0 mx-auto w-max z-50 bg-slate-900/95 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-2xl backdrop-blur-md border border-slate-700/80 flex items-center gap-2 pointer-events-none animate-fadeIn">
           <div className={`w-2.5 h-2.5 rounded-full ${dragMode === 'select' ? 'bg-indigo-400' : 'bg-rose-400'}`} />
           <span>
             {dragMode === 'select' ? '✨ Dragging across photos to SELECT' : '🧹 Dragging across photos to DESELECT'}

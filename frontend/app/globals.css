@@ -30,12 +30,14 @@ body {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Slide up animation for mobile bottom drawer */
+/* Slide up animation for bottom modals and floating bars */
 @keyframes slideUp {
   from {
-    transform: translateY(100%);
+    opacity: 0;
+    transform: translateY(16px);
   }
   to {
+    opacity: 1;
     transform: translateY(0);
   }
 }

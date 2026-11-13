@@ -351,7 +351,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   };
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 pointer-events-none w-max max-w-[96vw] animate-slideUp">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-0 right-0 md:left-64 md:right-0 mx-auto z-50 pointer-events-none w-max max-w-[96vw] animate-slideUp">
       {/* =========================================================================
           MAIN FLOATING ACTION BAR PILL (Centrally Aligned & Responsive)
          ========================================================================= */}
@@ -502,7 +502,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           />
 
           {/* Floating Centered Menu Container */}
-          <div className="pointer-events-auto fixed bottom-[calc(env(safe-area-inset-bottom,0px)+8.5rem)] md:bottom-20 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 w-[92vw] sm:w-[380px] max-w-sm max-h-[75vh] overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl text-white animate-fadeIn">
+          <div className="pointer-events-auto fixed bottom-[calc(env(safe-area-inset-bottom,0px)+8.5rem)] md:bottom-20 left-0 right-0 md:left-64 md:right-0 mx-auto z-50 w-[92vw] sm:w-[380px] max-w-sm max-h-[75vh] overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl text-white animate-fadeIn">
             
             {/* Header with Title and Close Button */}
             <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-800">
