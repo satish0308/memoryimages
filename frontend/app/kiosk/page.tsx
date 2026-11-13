@@ -412,6 +412,14 @@ export default function KioskPage() {
             <ArrowLeft className="w-4 h-4" />
           </Link>
 
+          <Link
+            href="/tv"
+            className="px-2.5 py-1 rounded-full bg-blue-600/30 border border-blue-500/40 text-[11px] font-semibold text-blue-300 hover:text-white hover:bg-blue-600 transition"
+            title="Switch to Smart TV Lounge & Phone Remote Mode"
+          >
+            TV Lounge
+          </Link>
+
           <div className="h-4 w-px bg-white/20" />
 
           {/* Prev */}

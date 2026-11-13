@@ -126,6 +126,15 @@ export const MobileBottomNav: React.FC = () => {
         ]
       : []),
     {
+      href: '/tv',
+      label: 'Smart TV Lounge',
+      description: 'Cast & control big screen photos',
+      icon: Tv,
+      color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/40',
+      external: true,
+      badge: 'Cast',
+    },
+    {
       href: '/kiosk',
       label: 'Kiosk Ambient Frame',
       description: 'Fullscreen TV digital photo frame',

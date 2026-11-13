@@ -19,11 +19,13 @@ import {
   Film,
   Cloud,
   Search,
-  Clock
+  Clock,
+  Tv
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
 import { HighlightReelModal } from '../studio/HighlightReelModal';
 import { MediaItem } from './PhotoCard';
+import { useCast } from '@/context/CastContext';
 
 interface AlbumOption {
   id: number;
@@ -63,6 +65,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   onRemoveFromPerson,
   removeFromPersonLabel,
 }) => {
+  const { castPlaylist } = useCast();
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [showAlbumMenu, setShowAlbumMenu] = useState(false);
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
@@ -400,6 +403,22 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           >
             <Film className="w-3.5 h-3.5 text-indigo-200" />
             <span>Highlight Reel</span>
+            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
+              {selectedIds.length}
+            </span>
+          </button>
+        )}
+
+        {/* Cast Slideshow to Smart TV Lounge */}
+        {selectedIds.length > 0 && (
+          <button
+            onClick={() => castPlaylist(selectedIds)}
+            disabled={loadingAction !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105"
+            title="Cast selected photos to Smart TV Lounge as a live slideshow"
+          >
+            <Tv className="w-3.5 h-3.5 text-blue-200" />
+            <span>Cast Slideshow</span>
             <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.2 rounded-full font-bold">
               {selectedIds.length}
             </span>

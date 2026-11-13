@@ -24,14 +24,16 @@ import { MainContentWrapper } from '@/components/layout/MainContentWrapper';
 import { GlobalDropzoneOverlay } from '@/components/upload/GlobalDropzoneOverlay';
 import { UploadStagingModal } from '@/components/upload/UploadStagingModal';
 import { UploadProgressDock } from '@/components/upload/UploadProgressDock';
+import { CastModal } from '@/components/cast/CastModal';
+import { CastMiniBar } from '@/components/cast/CastMiniBar';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isAuthenticated, isLoading, user } = useAuth();
 
-  const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/') || pathname === '/kiosk';
-  const isKioskRoute = pathname === '/kiosk';
+  const isPublicRoute = pathname === '/login' || pathname === '/register' || pathname.startsWith('/share/') || pathname === '/kiosk' || pathname === '/tv';
+  const isFullscreenDisplayRoute = pathname === '/kiosk' || pathname === '/tv';
 
   useEffect(() => {
     if (!isLoading) {
@@ -43,8 +45,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isAuthenticated, isPublicRoute, pathname, router]);
 
-  // Standalone Fullscreen Kiosk Mode (no sidebar or header)
-  if (isKioskRoute) {
+  // Standalone Fullscreen Kiosk / TV Lounge Receiver Mode (no sidebar or header)
+  if (isFullscreenDisplayRoute) {
     return (
       <div className="h-screen w-screen overflow-hidden bg-black text-white">
         {children}
@@ -280,6 +282,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
 
             <Link
+              href="/tv"
+              target="_blank"
+              className="flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-blue-600 transition-colors"
+              title="Open Smart TV Lounge Display & Cast Receiver"
+            >
+              <div className="flex items-center gap-3">
+                <Tv className="w-4 h-4 text-blue-500" />
+                <span>TV Lounge</span>
+              </div>
+              <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                Cast ↗
+              </span>
+            </Link>
+
+            <Link
               href="/kiosk"
               target="_blank"
               className="flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
@@ -323,6 +340,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <GlobalDropzoneOverlay />
       <UploadStagingModal />
       <UploadProgressDock />
+
+      {/* Smart TV Cast Modal & Floating Active Cast Mini-Bar */}
+      <CastModal />
+      <CastMiniBar />
 
       {/* Native Mobile Bottom Navigation Dock (Visible on Mobile only) */}
       <MobileBottomNav />

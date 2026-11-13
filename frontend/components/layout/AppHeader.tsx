@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Search, Upload, FolderUp, Cpu, Loader2, Sparkles, ChevronDown } from 'lucide-react';
+import { Search, Upload, FolderUp, Cpu, Loader2, Sparkles, ChevronDown, Tv } from 'lucide-react';
 import { UserNavMenu } from '@/components/auth/UserNavMenu';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { useTaskQueue } from '@/context/TaskQueueContext';
 import { useUpload } from '@/context/UploadContext';
+import { useCast } from '@/context/CastContext';
 import { TaskQueueDrawer } from '@/components/tasks/TaskQueueDrawer';
 
 export const AppHeader: React.FC = () => {
@@ -17,6 +18,7 @@ export const AppHeader: React.FC = () => {
 
   const { runningTask, openDrawer } = useTaskQueue();
   const { selectFiles, isUploading, overallProgress } = useUpload();
+  const { isCasting, activeSession, setCastModalOpen } = useCast();
 
   const handleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -86,6 +88,22 @@ export const AppHeader: React.FC = () => {
               <span className="text-xs font-semibold hidden md:inline">AI Tasks</span>
             </button>
           )}
+
+          {/* Smart TV Cast Button */}
+          <button
+            onClick={() => setCastModalOpen(true)}
+            className={`p-2 rounded-xl transition-all flex items-center gap-1.5 border ${
+              isCasting
+                ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-500/20'
+                : 'text-slate-600 hover:text-blue-600 hover:bg-slate-100 border-slate-200/60'
+            }`}
+            title={isCasting ? `Casting to ${activeSession?.tv_name || 'TV'} (Click for remote)` : 'Cast to Smart TV / Big Screen'}
+          >
+            <Tv className={`w-4 h-4 ${isCasting ? 'animate-pulse text-white' : 'text-blue-600'}`} />
+            <span className="text-xs font-semibold hidden md:inline">
+              {isCasting ? (activeSession?.tv_name || 'Casting') : 'Cast'}
+            </span>
+          </button>
 
           {/* Upload Button & Dropdown */}
           <div className="relative">

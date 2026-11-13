@@ -35,11 +35,13 @@ import {
   AlertTriangle,
   FileText,
   Copy,
-  ScanText
+  ScanText,
+  Tv
 } from 'lucide-react';
 import { MediaItem } from './PhotoCard';
 import { SharePhotoModal } from './SharePhotoModal';
 import { SearchPersonModal } from '@/components/people/SearchPersonModal';
+import { useCast } from '@/context/CastContext';
 
 interface FaceData {
   id: number;
@@ -87,6 +89,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const { isCasting, activeSession, castMedia } = useCast();
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
   const [currentDisplaySrc, setCurrentDisplaySrc] = useState<string>('');
   const [showSidebar, setShowSidebar] = useState(false);
@@ -975,6 +978,21 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <span>Edit</span>
             </a>
           )}
+          <button
+            onClick={() => castMedia(photo)}
+            className={`p-2.5 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer ${
+              isCasting && activeSession?.current_media?.id === photo.id
+                ? 'bg-blue-600 text-white ring-2 ring-blue-400/50 shadow-blue-500/30'
+                : 'bg-black/60 text-white hover:bg-black/90 hover:text-blue-400'
+            }`}
+            title={
+              isCasting && activeSession?.current_media?.id === photo.id
+                ? `Currently casting to ${activeSession?.tv_name || 'TV'}`
+                : 'Cast this photo to Smart TV Lounge'
+            }
+          >
+            <Tv className={`w-4 h-4 ${isCasting && activeSession?.current_media?.id === photo.id ? 'animate-pulse' : ''}`} />
+          </button>
           <button
             onClick={() => setShowShareModal(true)}
             className="p-2.5 bg-black/60 text-white hover:bg-black/90 rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer hover:text-indigo-400"
