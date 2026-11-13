@@ -470,7 +470,7 @@ export default function PhotosPage() {
   });
 
   return (
-    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-20" onPointerDown={handlePointerDown}>
+    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-20 md:pr-12 lg:pr-14" onPointerDown={handlePointerDown}>
       {/* Search Bar with AI Semantic Toggle */}
       <div className="flex items-center gap-2 max-w-2xl">
         <div className="relative flex-1">

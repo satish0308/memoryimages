@@ -1025,7 +1025,7 @@ export default function PeoplePage() {
   }, [visiblePeopleCount, filteredPeople.length]);
 
   return (
-    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-24">
+    <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-24 md:pr-12 lg:pr-14">
       {/* ========================================================
           VIEW MODE A: BIG-SCREEN PERSON LIFE TIMELINE
           ======================================================== */}
