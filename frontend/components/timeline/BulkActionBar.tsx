@@ -7,6 +7,7 @@ import {
   Trash2, 
   X, 
   ChevronUp, 
+  ChevronLeft,
   Download, 
   Tag, 
   Plus, 
@@ -20,7 +21,8 @@ import {
   Cloud,
   Search,
   Clock,
-  Tv
+  Tv,
+  MoreHorizontal
 } from 'lucide-react';
 import { ShareEventModal } from '../albums/ShareEventModal';
 import { HighlightReelModal } from '../studio/HighlightReelModal';
@@ -67,7 +69,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
 }) => {
   const { castPlaylist } = useCast();
   const [albums, setAlbums] = useState<AlbumOption[]>([]);
-  const [activeMenu, setActiveMenu] = useState<'album' | 'category' | 'location' | 'enhance' | 'timeshift' | null>(null);
+  const [activeMenu, setActiveMenu] = useState<'album' | 'category' | 'location' | 'enhance' | 'timeshift' | 'more' | null>(null);
   const [customLocName, setCustomLocName] = useState('');
   const [customLat, setCustomLat] = useState('');
   const [customLon, setCustomLon] = useState('');
@@ -105,7 +107,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
     return null;
   }
 
-  const toggleMenu = (menu: 'album' | 'category' | 'location' | 'enhance' | 'timeshift') => {
+  const toggleMenu = (menu: 'album' | 'category' | 'location' | 'enhance' | 'timeshift' | 'more') => {
     setActiveMenu((prev) => (prev === menu ? null : menu));
   };
 
@@ -349,23 +351,23 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
   };
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[96vw] w-max animate-slideUp">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 pointer-events-none w-max max-w-[96vw] animate-slideUp">
       {/* =========================================================================
           MAIN FLOATING ACTION BAR PILL (Centrally Aligned & Responsive)
          ========================================================================= */}
-      <div className="bg-slate-900/95 dark:bg-neutral-900/95 backdrop-blur-xl text-white px-2.5 sm:px-4 py-2 rounded-2xl sm:rounded-full shadow-2xl border border-slate-700/80 flex items-center justify-center gap-1.5 sm:gap-2 max-w-[96vw] overflow-x-auto no-scrollbar momentum-scroll">
+      <div className="pointer-events-auto bg-slate-900/95 dark:bg-neutral-900/95 backdrop-blur-xl text-white px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center justify-center gap-1.5 sm:gap-2 mx-auto">
         
         {/* Selection Count Badge & Clear (X) Button */}
-        <div className="flex items-center gap-1.5 pr-2 sm:pr-3 border-r border-slate-700/80 shrink-0">
-          <span className="w-6 h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center text-xs font-bold shadow-xs">
+        <div className="flex items-center gap-1.5 pr-1.5 sm:pr-2.5 border-r border-slate-700/80 shrink-0">
+          <span className="w-5 h-5 sm:w-6 sm:h-6 bg-indigo-600 text-white rounded-full flex items-center justify-center text-[11px] sm:text-xs font-bold shadow-xs">
             {selectedIds.length}
           </span>
-          <span className="text-xs font-semibold text-slate-200 hidden sm:inline">
+          <span className="text-xs font-semibold text-slate-200 hidden md:inline">
             Selected
           </span>
           <button
             onClick={onClearSelection}
-            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition ml-0.5"
+            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
             title="Deselect All (Esc)"
           >
             <X className="w-3.5 h-3.5" />
@@ -373,14 +375,14 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         </div>
 
         {/* =========================================================================
-            CORE HERO ACTION BUTTONS (Delete, Favorite, Backup, Share, Cast, Export)
+            CORE HERO ACTION BUTTONS (Delete, Favorite, Backup, Share, Cast, Export, Album, Tools)
            ========================================================================= */}
         
         {/* 1. Delete (Danger Action - High Priority Front Placement) */}
         <button
           onClick={onBatchDelete}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-sm hover:scale-[1.02] shrink-0"
+          className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition shadow-sm hover:scale-[1.02] shrink-0"
           title="Move Selected to Trash"
         >
           <Trash2 className="w-3.5 h-3.5" />
@@ -391,7 +393,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         <button
           onClick={onBatchFavorite}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition shrink-0"
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition shrink-0"
           title="Favorite All Selected"
         >
           <Heart className="w-3.5 h-3.5 text-rose-400" />
@@ -403,11 +405,11 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           <button
             onClick={() => onBatchBackupToDrive(selectedIds)}
             disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/60 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
             title="Backup selected photos to Google Drive"
           >
             <Cloud className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Backup</span>
+            <span className="hidden sm:inline">Backup</span>
           </button>
         )}
 
@@ -415,7 +417,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
         <button
           onClick={handleBatchShare}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
           title="Share selected photos via an instant public link & QR code"
         >
           {loadingAction === 'share' ? (
@@ -423,25 +425,25 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           ) : (
             <Share2 className="w-3.5 h-3.5 text-white" />
           )}
-          <span>Share</span>
+          <span className="hidden sm:inline">Share</span>
         </button>
 
         {/* 5. Cast Slideshow to Smart TV Lounge */}
         <button
           onClick={() => castPlaylist(selectedIds)}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-sm transition shrink-0"
+          className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-sm transition shrink-0"
           title="Cast selected photos to Smart TV Lounge as a live slideshow"
         >
           <Tv className="w-3.5 h-3.5 text-blue-200" />
-          <span>Cast</span>
+          <span className="hidden sm:inline">Cast</span>
         </button>
 
-        {/* 6. Export ZIP Archive */}
+        {/* 6. Export ZIP Archive (Visible on Tablet and Desktop) */}
         <button
           onClick={handleBulkDownload}
           disabled={loadingAction !== null}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 shrink-0"
+          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 shrink-0"
           title="Download all selected photos as a ZIP archive"
         >
           {loadingAction === 'download' ? (
@@ -449,154 +451,47 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           ) : (
             <Download className="w-3.5 h-3.5 text-indigo-400" />
           )}
-          <span className="hidden sm:inline">Export</span>
+          <span>Export</span>
         </button>
 
-        {/* Divider between core actions and organization tools */}
-        <div className="w-px h-5 bg-slate-700/80 mx-0.5 shrink-0" />
-
-        {/* =========================================================================
-            ORGANIZATION & EDIT DROPDOWN TRIGGERS
-           ========================================================================= */}
-
-        {/* Album Dropdown Trigger */}
+        {/* 7. Album Trigger (Visible on Desktop) */}
         <button
           onClick={() => toggleMenu('album')}
           disabled={loadingAction !== null}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+          className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
             activeMenu === 'album'
               ? 'bg-indigo-600 text-white shadow-sm'
               : 'bg-slate-800 hover:bg-slate-700 text-white'
           }`}
-          title="Add to Album"
+          title="Add selected photos to an album"
         >
           <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
           <span>Album</span>
           <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'album' ? 'rotate-180' : ''}`} />
         </button>
 
-        {/* Category Dropdown Trigger */}
+        {/* Divider before Tools button */}
+        <div className="w-px h-5 bg-slate-700/80 mx-0.5 shrink-0" />
+
+        {/* 8. More Tools Trigger (Opens unified tools dialog: Album, Category, Enhance, Location, Time Shift, Collage, Reel, etc.) */}
         <button
-          onClick={() => toggleMenu('category')}
+          onClick={() => toggleMenu('more')}
           disabled={loadingAction !== null}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
-            activeMenu === 'category'
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-slate-800 hover:bg-slate-700 text-white'
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
+            activeMenu !== null && activeMenu !== 'album'
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white'
           }`}
-          title="Change Category"
+          title="More batch actions & smart tools"
         >
-          <Tag className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Category</span>
-          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'category' ? 'rotate-180' : ''}`} />
+          <MoreHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="hidden sm:inline">Tools</span>
+          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu ? 'rotate-180' : ''}`} />
         </button>
-
-        {/* AI Enhance Dropdown Trigger */}
-        <button
-          onClick={() => toggleMenu('enhance')}
-          disabled={loadingAction !== null}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
-            activeMenu === 'enhance'
-              ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm'
-              : 'bg-slate-800 hover:bg-slate-700 text-white'
-          }`}
-          title="AI Image Enhancement"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-          <span>Enhance</span>
-          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'enhance' ? 'rotate-180' : ''}`} />
-        </button>
-
-        {/* Location Dropdown Trigger */}
-        <button
-          onClick={() => toggleMenu('location')}
-          disabled={loadingAction !== null}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
-            activeMenu === 'location'
-              ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-slate-800 hover:bg-slate-700 text-white'
-          }`}
-          title="Assign Location or Propagate Geotags"
-        >
-          <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Location</span>
-          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'location' ? 'rotate-180' : ''}`} />
-        </button>
-
-        {/* Time Shift Dropdown Trigger */}
-        <button
-          onClick={() => toggleMenu('timeshift')}
-          disabled={loadingAction !== null}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition shrink-0 ${
-            activeMenu === 'timeshift'
-              ? 'bg-cyan-600 text-white shadow-sm'
-              : 'bg-slate-800 hover:bg-slate-700 text-white'
-          }`}
-          title="Adjust Captured Date or Camera Clock Drift"
-        >
-          <Clock className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Time Shift</span>
-          <ChevronUp className={`w-3 h-3 transition-transform ${activeMenu === 'timeshift' ? 'rotate-180' : ''}`} />
-        </button>
-
-        {/* 1-Click Creative Collage & Print Studio */}
-        {selectedIds.length >= 2 && selectedIds.length <= 16 && (
-          <button
-            onClick={() => {
-              const url = `/collage?ids=${selectedIds.join(',')}`;
-              window.open(url, '_blank') || window.location.assign(url);
-            }}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105 shrink-0"
-            title="Open Creative Collage & Print Studio in dedicated full page"
-          >
-            <Layout className="w-3.5 h-3.5 text-pink-200" />
-            <span>Collage</span>
-          </button>
-        )}
-
-        {/* 1-Click AI Highlight Reel */}
-        {selectedIds.length >= 2 && selectedIds.length <= 25 && (
-          <button
-            onClick={() => setShowHighlightReelModal(true)}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white rounded-xl text-xs font-semibold shadow-md transition hover:scale-105 shrink-0"
-            title="Create Cinematic Highlight Reel with Ken Burns motion & soundtrack"
-          >
-            <Film className="w-3.5 h-3.5 text-indigo-200" />
-            <span>Reel</span>
-          </button>
-        )}
-
-        {/* Google Photos Cloud Deletion Query Helper */}
-        {onOpenGooglePhotosHelper && (
-          <button
-            onClick={onOpenGooglePhotosHelper}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 hover:text-white border border-indigo-600/50 rounded-xl text-xs font-semibold shadow-sm transition disabled:opacity-50 shrink-0"
-            title="Search and trash selected photos in Google Photos cloud"
-          >
-            <Search className="w-3.5 h-3.5 text-indigo-300" />
-            <span>GPhotos</span>
-          </button>
-        )}
-
-        {/* Remove from Person / Not This Person */}
-        {onRemoveFromPerson && (
-          <button
-            onClick={onRemoveFromPerson}
-            disabled={loadingAction !== null}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/90 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold transition shadow-xs shrink-0"
-            title="Remove selected photos from this person"
-          >
-            <X className="w-3.5 h-3.5 text-amber-200" />
-            <span>{removeFromPersonLabel || 'Not This Person'}</span>
-          </button>
-        )}
       </div>
 
       {/* =========================================================================
-          POPOVER MENUS (Rendered Outside the Scrollable Track to Eliminate Clipping)
+          POPOVER MENUS (Rendered Outside the Toolbar to Eliminate Clipping)
          ========================================================================= */}
       {activeMenu && (
         <>
@@ -607,26 +502,221 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
           />
 
           {/* Floating Centered Menu Container */}
-          <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+8.5rem)] md:bottom-20 left-1/2 -translate-x-1/2 z-50 w-[92vw] sm:w-auto min-w-[300px] max-w-sm bg-slate-900 border border-slate-700/80 rounded-2xl p-3 shadow-2xl text-white animate-fadeIn">
+          <div className="pointer-events-auto fixed bottom-[calc(env(safe-area-inset-bottom,0px)+8.5rem)] md:bottom-20 left-1/2 -translate-x-1/2 md:left-[calc(50%+8rem)] z-50 w-[92vw] sm:w-[380px] max-w-sm max-h-[75vh] overflow-y-auto bg-slate-900 border border-slate-700/80 rounded-2xl p-3.5 shadow-2xl text-white animate-fadeIn">
             
             {/* Header with Title and Close Button */}
-            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                {activeMenu === 'album' && 'Add to Album'}
-                {activeMenu === 'category' && 'Move to Category'}
-                {activeMenu === 'enhance' && 'AI Image Enhancement'}
-                {activeMenu === 'location' && 'Assign Location'}
-                {activeMenu === 'timeshift' && 'Batch Time Shifter'}
-              </span>
+            <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                {activeMenu !== 'more' && (
+                  <button
+                    onClick={() => setActiveMenu('more')}
+                    className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                    title="Back to Tools"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                )}
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  {activeMenu === 'more' && 'Batch Tools & Actions'}
+                  {activeMenu === 'album' && 'Add to Album'}
+                  {activeMenu === 'category' && 'Move to Category'}
+                  {activeMenu === 'enhance' && 'AI Image Enhancement'}
+                  {activeMenu === 'location' && 'Assign Location'}
+                  {activeMenu === 'timeshift' && 'Batch Time Shifter'}
+                </span>
+              </div>
               <button
                 onClick={() => setActiveMenu(null)}
                 className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg transition"
+                title="Close"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            {/* 1. Album Menu Content */}
+            {/* =========================================================================
+                MAIN MORE TOOLS MENU
+               ========================================================================= */}
+            {activeMenu === 'more' && (
+              <div className="space-y-1.5">
+                {/* 1. Add to Album (visible on mobile where top button is hidden) */}
+                <button
+                  onClick={() => setActiveMenu('album')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <FolderPlus className="w-4 h-4 text-indigo-400" />
+                    <div>
+                      <p className="font-semibold text-slate-200">Add to Album</p>
+                      <p className="text-[10px] text-slate-400">Organize into an existing or new album</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5 text-slate-500 rotate-180" />
+                </button>
+
+                {/* 2. Change Category */}
+                <button
+                  onClick={() => setActiveMenu('category')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Tag className="w-4 h-4 text-emerald-400" />
+                    <div>
+                      <p className="font-semibold text-slate-200">Move Category</p>
+                      <p className="text-[10px] text-slate-400">Classify as Memory, Work, Document, or Meme</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5 text-slate-500 rotate-180" />
+                </button>
+
+                {/* 3. AI Enhancement */}
+                <button
+                  onClick={() => setActiveMenu('enhance')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <div>
+                      <p className="font-semibold text-slate-200">AI Enhancement</p>
+                      <p className="text-[10px] text-slate-400">Auto magic balance, shadow lift, dehaze</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5 text-slate-500 rotate-180" />
+                </button>
+
+                {/* 4. Assign Location */}
+                <button
+                  onClick={() => setActiveMenu('location')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <MapPin className="w-4 h-4 text-emerald-400" />
+                    <div>
+                      <p className="font-semibold text-slate-200">Assign Location</p>
+                      <p className="text-[10px] text-slate-400">Set place name, GPS coords, or auto-link outing</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5 text-slate-500 rotate-180" />
+                </button>
+
+                {/* 5. Batch Time Shifter */}
+                <button
+                  onClick={() => setActiveMenu('timeshift')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Clock className="w-4 h-4 text-cyan-400" />
+                    <div>
+                      <p className="font-semibold text-slate-200">Time Shift</p>
+                      <p className="text-[10px] text-slate-400">Fix camera clock drift or assign captured date</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-3.5 h-3.5 text-slate-500 rotate-180" />
+                </button>
+
+                {/* 6. Creative Collage Studio */}
+                {selectedIds.length >= 2 && selectedIds.length <= 16 && (
+                  <button
+                    onClick={() => {
+                      setActiveMenu(null);
+                      const url = `/collage?ids=${selectedIds.join(',')}`;
+                      window.open(url, '_blank') || window.location.assign(url);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl bg-gradient-to-r from-pink-600/30 to-purple-600/30 hover:from-pink-600/40 hover:to-purple-600/40 text-xs text-white flex items-center justify-between transition border border-pink-500/30"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Layout className="w-4 h-4 text-pink-300" />
+                      <div>
+                        <p className="font-semibold text-pink-200">Collage Studio ({selectedIds.length})</p>
+                        <p className="text-[10px] text-pink-300/80">Generate creative collage & print layout</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-pink-300">Open ↗</span>
+                  </button>
+                )}
+
+                {/* 7. AI Highlight Reel */}
+                {selectedIds.length >= 2 && selectedIds.length <= 25 && (
+                  <button
+                    onClick={() => {
+                      setActiveMenu(null);
+                      setShowHighlightReelModal(true);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-600/30 to-purple-600/30 hover:from-indigo-600/40 hover:to-purple-600/40 text-xs text-white flex items-center justify-between transition border border-indigo-500/30"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Film className="w-4 h-4 text-indigo-300" />
+                      <div>
+                        <p className="font-semibold text-indigo-200">Highlight Reel ({selectedIds.length})</p>
+                        <p className="text-[10px] text-indigo-300/80">Cinematic motion reel with soundtrack</p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-indigo-300">Play ▶</span>
+                  </button>
+                )}
+
+                {/* 8. Export ZIP Archive (Mobile quick-access) */}
+                <button
+                  onClick={() => {
+                    setActiveMenu(null);
+                    handleBulkDownload();
+                  }}
+                  className="sm:hidden w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Download className="w-4 h-4 text-indigo-400" />
+                    <div>
+                      <p className="font-semibold text-slate-200">Export ZIP Archive</p>
+                      <p className="text-[10px] text-slate-400">Download selected photos to device</p>
+                    </div>
+                  </div>
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+
+                {/* 9. Google Photos Cloud Deletion Query Helper */}
+                {onOpenGooglePhotosHelper && (
+                  <button
+                    onClick={() => {
+                      setActiveMenu(null);
+                      onOpenGooglePhotosHelper();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center justify-between transition border border-transparent hover:border-slate-700/60"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Search className="w-4 h-4 text-indigo-300" />
+                      <div>
+                        <p className="font-semibold text-slate-200">Google Photos Helper</p>
+                        <p className="text-[10px] text-slate-400">Query and trash duplicates in Google Photos</p>
+                      </div>
+                    </div>
+                    <Search className="w-3.5 h-3.5 text-slate-500" />
+                  </button>
+                )}
+
+                {/* 10. Remove from Person / Not This Person */}
+                {onRemoveFromPerson && (
+                  <button
+                    onClick={() => {
+                      setActiveMenu(null);
+                      onRemoveFromPerson();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl bg-amber-950/40 hover:bg-amber-900/60 text-xs text-amber-200 flex items-center justify-between transition border border-amber-800/40"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <X className="w-4 h-4 text-amber-300" />
+                      <div>
+                        <p className="font-semibold text-amber-200">{removeFromPersonLabel || 'Not This Person'}</p>
+                        <p className="text-[10px] text-amber-300/70">Remove selected photos from this face cluster</p>
+                      </div>
+                    </div>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* =========================================================================
+                1. ALBUM SUB-MENU CONTENT
+               ========================================================================= */}
             {activeMenu === 'album' && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between px-1">
@@ -653,25 +743,25 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                     <button
                       type="submit"
                       disabled={!newAlbumName.trim()}
-                      className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition"
+                      className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition"
                     >
                       Create & Add {selectedIds.length} Photos
                     </button>
                   </form>
                 )}
 
-                <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
                   {albums.length === 0 ? (
-                    <p className="text-xs text-slate-400 p-2 text-center">No albums found</p>
+                    <p className="text-xs text-slate-500 py-2 text-center">No albums found. Create one above!</p>
                   ) : (
                     albums.map((a) => (
                       <button
                         key={a.id}
                         onClick={() => handleAddPhotosToAlbum(a.id)}
-                        className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white truncate transition flex items-center justify-between border border-transparent hover:border-slate-700"
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-xs text-slate-200 hover:text-white flex items-center justify-between transition"
                       >
-                        <span className="truncate font-medium">{a.name}</span>
-                        <Plus className="w-3.5 h-3.5 text-indigo-400 shrink-0 ml-2" />
+                        <span className="truncate">{a.name}</span>
+                        <Plus className="w-3 h-3 text-slate-500" />
                       </button>
                     ))
                   )}
@@ -679,37 +769,39 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
               </div>
             )}
 
-            {/* 2. Category Menu Content */}
+            {/* =========================================================================
+                2. CATEGORY SUB-MENU CONTENT
+               ========================================================================= */}
             {activeMenu === 'category' && (
               <div className="space-y-1.5">
                 <button
                   onClick={() => handleBatchCategory('memory')}
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
                 >
+                  <span className="text-base">✨</span>
+                  <div>
+                    <p className="font-semibold text-slate-200">Main Memories</p>
+                    <p className="text-[10px] text-slate-400">Family moments & timeline highlights</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleBatchCategory('personal')}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
+                >
                   <span className="text-base">📸</span>
                   <div>
-                    <p className="font-semibold text-slate-200">Memories</p>
-                    <p className="text-[10px] text-slate-400">Regular camera photos & family moments</p>
+                    <p className="font-semibold text-slate-200">Personal / Day-to-Day</p>
+                    <p className="text-[10px] text-slate-400">Casual snapshots & selfies</p>
                   </div>
                 </button>
                 <button
-                  onClick={() => handleBatchCategory('screenshot')}
+                  onClick={() => handleBatchCategory('work_doc')}
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
                 >
-                  <span className="text-base">📱</span>
+                  <span className="text-base">📄</span>
                   <div>
-                    <p className="font-semibold text-slate-200">Screenshots</p>
-                    <p className="text-[10px] text-slate-400">App captures & screen recordings</p>
-                  </div>
-                </button>
-                <button
-                  onClick={() => handleBatchCategory('document_bill')}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white flex items-center gap-2.5 transition border border-transparent hover:border-slate-700"
-                >
-                  <span className="text-base">🧾</span>
-                  <div>
-                    <p className="font-semibold text-slate-200">Bills & Documents</p>
-                    <p className="text-[10px] text-slate-400">Receipts, bills, and OCR documents</p>
+                    <p className="font-semibold text-slate-200">Documents / Receipts</p>
+                    <p className="text-[10px] text-slate-400">Whiteboards, receipts, utility bills</p>
                   </div>
                 </button>
                 <button
@@ -718,14 +810,16 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                 >
                   <span className="text-base">💬</span>
                   <div>
-                    <p className="font-semibold text-slate-200">Memes / Clutter</p>
-                    <p className="text-[10px] text-slate-400">Forwarded graphics & jokes</p>
+                    <p className="font-semibold text-slate-200">Memes / WhatsApp Clutter</p>
+                    <p className="text-[10px] text-slate-400">Screenshots & forwarded viral junk</p>
                   </div>
                 </button>
               </div>
             )}
 
-            {/* 3. AI Enhance Menu Content */}
+            {/* =========================================================================
+                3. ENHANCE SUB-MENU CONTENT
+               ========================================================================= */}
             {activeMenu === 'enhance' && (
               <div className="space-y-1.5">
                 <button
@@ -735,7 +829,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <span className="text-base">🪄</span>
                   <div>
                     <p className="font-semibold text-slate-200">Auto Magic Balance</p>
-                    <p className="text-[10px] text-slate-400">Gray-World AWB + CLAHE contrast boost</p>
+                    <p className="text-[10px] text-slate-400">Gray-World AWB + adaptive CLAHE contrast</p>
                   </div>
                 </button>
                 <button
@@ -745,7 +839,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <span className="text-base">☀️</span>
                   <div>
                     <p className="font-semibold text-slate-200">Shadow Recovery</p>
-                    <p className="text-[10px] text-slate-400">Brightens backlit & dark faces</p>
+                    <p className="text-[10px] text-slate-400">Brightens backlit faces & underexposed photos</p>
                   </div>
                 </button>
                 <button
@@ -754,8 +848,8 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                 >
                   <span className="text-base">🌫️</span>
                   <div>
-                    <p className="font-semibold text-slate-200">De-Haze & Clear Sky</p>
-                    <p className="text-[10px] text-slate-400">Removes atmospheric haze & fog</p>
+                    <p className="font-semibold text-slate-200">Dehaze & Clarity</p>
+                    <p className="text-[10px] text-slate-400">Removes atmospheric haze & deepens colors</p>
                   </div>
                 </button>
                 <div className="h-px bg-slate-800 my-1" />
@@ -766,22 +860,24 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <span className="text-base">↩️</span>
                   <div>
                     <p className="font-semibold text-rose-300">Revert to Original</p>
-                    <p className="text-[10px] text-slate-400">Reset adjustments back to masters</p>
+                    <p className="text-[10px] text-rose-400/80">Restore unedited source camera capture</p>
                   </div>
                 </button>
               </div>
             )}
 
-            {/* 4. Location Menu Content */}
+            {/* =========================================================================
+                4. LOCATION SUB-MENU CONTENT
+               ========================================================================= */}
             {activeMenu === 'location' && (
               <div className="space-y-3">
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <p className="text-[10px] uppercase font-bold text-slate-400">Quick Place Presets:</p>
                   <div className="space-y-1">
                     <button
                       type="button"
                       onClick={() => handleBatchLocation('Pottalkulam, Tamil Nadu, India', 8.077913, 77.551231)}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-emerald-300 font-medium flex items-center justify-between transition"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-xs text-emerald-300 font-medium flex items-center justify-between transition"
                     >
                       <span>📍 Kanyakumari / Pottalkulam</span>
                       <span className="text-[10px] text-slate-400">Sunrise</span>
@@ -789,7 +885,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                     <button
                       type="button"
                       onClick={() => handleBatchLocation('Bengaluru, Karnataka, India', 12.931643, 77.545616)}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-indigo-300 font-medium flex items-center justify-between transition"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-xs text-indigo-300 font-medium flex items-center justify-between transition"
                     >
                       <span>📍 Bengaluru, Karnataka</span>
                       <span className="text-[10px] text-slate-400">Tech Hub</span>
@@ -797,7 +893,7 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                     <button
                       type="button"
                       onClick={() => handleBatchLocation('Thalaiyuthu, Tamil Nadu, India', 8.727996, 77.686714)}
-                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/60 hover:bg-slate-800 text-xs text-amber-300 font-medium flex items-center justify-between transition"
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-950/70 hover:bg-slate-800 text-xs text-amber-300 font-medium flex items-center justify-between transition"
                     >
                       <span>📍 Thalaiyuthu / Tirunelveli</span>
                       <span className="text-[10px] text-slate-400">Heritage</span>
@@ -805,10 +901,11 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   </div>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-slate-800">
+                <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Custom Place or GPS:</p>
                   <input
                     type="text"
-                    placeholder="Custom city or location name..."
+                    placeholder="City or landmark name..."
                     value={customLocName}
                     onChange={(e) => setCustomLocName(e.target.value)}
                     className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-emerald-500"
@@ -816,24 +913,24 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="Lat (e.g. 12.97)"
+                      placeholder="Latitude (opt)"
                       value={customLat}
                       onChange={(e) => setCustomLat(e.target.value)}
-                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono text-[11px]"
+                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono text-[11px]"
                     />
                     <input
                       type="text"
-                      placeholder="Lon (e.g. 77.59)"
+                      placeholder="Longitude (opt)"
                       value={customLon}
                       onChange={(e) => setCustomLon(e.target.value)}
-                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white font-mono text-[11px]"
+                      className="w-1/2 px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-emerald-500 font-mono text-[11px]"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => handleBatchLocation(customLocName, customLat ? parseFloat(customLat) : undefined, customLon ? parseFloat(customLon) : undefined)}
                     disabled={!customLocName.trim() && (!customLat || !customLon)}
-                    className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition shadow-xs"
+                    className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition"
                   >
                     Apply Custom Location
                   </button>
@@ -843,16 +940,18 @@ export const BulkActionBar: React.FC<BulkActionBarProps> = ({
                   <button
                     type="button"
                     onClick={handlePropagateLocations}
-                    className="w-full py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition"
+                    className="w-full py-2 bg-indigo-600/90 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition shadow-sm"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                    <span>Auto-Link Outing Geotags</span>
+                    <span>Auto-Link Outing Geotags (4h Window)</span>
                   </button>
                 </div>
               </div>
             )}
 
-            {/* 5. Time Shifter Menu Content */}
+            {/* =========================================================================
+                5. TIME SHIFTER SUB-MENU CONTENT
+               ========================================================================= */}
             {activeMenu === 'timeshift' && (
               <div className="space-y-3">
                 <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
