@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory TTL cache for Google Drive CDN thumbnail links (TTL: 45 minutes, modeled after 9drive)
 _DRIVE_THUMBNAIL_CACHE: Dict[str, Dict[str, Any]] = {}
+_DRIVE_SERVICE_CACHE: Dict[int, Any] = {}
 
 import requests
 import urllib3
@@ -51,25 +52,44 @@ def get_drive_service(db: Session, user_id: Optional[int] = None):
 
     try:
         creds_info = json.loads(source.oauth_tokens_json)
+        expiry_dt = None
+        if creds_info.get("expiry"):
+            try:
+                from datetime import datetime
+                expiry_dt = datetime.fromisoformat(creds_info["expiry"])
+            except Exception:
+                pass
+
         credentials = Credentials(
             token=creds_info.get("token"),
             refresh_token=creds_info.get("refresh_token"),
             token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
             client_id=creds_info.get("client_id"),
             client_secret=creds_info.get("client_secret"),
-            scopes=creds_info.get("scopes")
+            scopes=creds_info.get("scopes"),
+            expiry=expiry_dt
         )
-        if credentials.expired and credentials.refresh_token:
+        if (not credentials.valid or credentials.expired) and credentials.refresh_token:
             try:
                 import google.auth.transport.requests
                 req = google.auth.transport.requests.Request()
                 credentials.refresh(req)
                 creds_info["token"] = credentials.token
+                if credentials.expiry:
+                    creds_info["expiry"] = credentials.expiry.isoformat()
                 source.oauth_tokens_json = json.dumps(creds_info)
                 db.commit()
+                _DRIVE_SERVICE_CACHE.pop(source.id, None)
             except Exception as ref_err:
                 logger.warning(f"Failed to refresh Google Drive token: {ref_err}")
-        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+        cached_service = _DRIVE_SERVICE_CACHE.get(source.id)
+        if cached_service and credentials.valid:
+            return cached_service
+
+        service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        _DRIVE_SERVICE_CACHE[source.id] = service
+        return service
     except Exception as e:
         logger.error(f"Failed to build Google Drive client: {e}")
         return None

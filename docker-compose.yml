@@ -74,7 +74,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: memorypics-worker
+    # container_name: memorypics-worker (omitted to enable zero-downtime docker-rollout)
     command: python -m app.worker
     restart: unless-stopped
     environment:

@@ -448,7 +448,8 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         user_id = payload.get("user_id")
         query = db.query(Media).options(defer(Media.extracted_text)).filter(
             Media.is_deleted == False,
-            Media.thumbnail_1080_path == None
+            Media.thumbnail_1080_path == None,
+            ~Media.mime_type.ilike("video/%")
         )
         if user_id:
             query = query.filter(Media.user_id == user_id)
@@ -460,7 +461,8 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             TaskQueue.update_task(
                 task_id,
                 progress=100,
-                message="All photos already have 1080p renditions generated.",
+                status="completed",
+                message="All photos are already 100% up-to-date with 1080p renditions generated.",
                 result={"processed_count": 0, "total": 0}
             )
             return {"processed_count": 0, "total": 0}
@@ -542,11 +544,12 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         # Final commit for remaining batch
         db.commit()
 
+        msg = f"Successfully pre-generated {processed} 1080p renditions." if processed > 0 else "All photos are already 100% up-to-date with 1080p renditions."
         TaskQueue.update_task(
             task_id,
             progress=100,
             status="completed",
-            message=f"Successfully pre-generated {processed} 1080p renditions.",
+            message=msg,
             result={"processed_count": processed, "total": total}
         )
         return {"processed_count": processed, "total": total}
