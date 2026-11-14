@@ -585,6 +585,32 @@ export default function AppSettingsPage() {
     }
   };
 
+  const [pregenerating1080, setPregenerating1080] = useState(false);
+
+  const handlePregenerate1080 = async () => {
+    setPregenerating1080(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/media/pregenerate-thumbnails`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        setMessage({
+          type: 'success',
+          text: '1080p WebP pregeneration enqueued in background! Check active progress in the background tasks menu.',
+        });
+        setTimeout(() => setMessage(null), 5000);
+      } else {
+        setMessage({ type: 'error', text: 'Failed to start 1080p pregeneration task.' });
+      }
+    } catch (e) {
+      console.error(e);
+      setMessage({ type: 'error', text: 'Network error starting 1080p pregeneration.' });
+    } finally {
+      setPregenerating1080(false);
+    }
+  };
+
   // Backups Handlers
   const handleCreateBackup = async () => {
     setCreatingBackup(true);
@@ -2182,6 +2208,16 @@ export default function AppSettingsPage() {
           >
             <Trash2 className="w-3.5 h-3.5 text-amber-600" />
             <span>Purge Local WebP Thumbnails</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handlePregenerate1080}
+            disabled={pregenerating1080}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold transition disabled:opacity-50 border border-indigo-200"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-indigo-600 ${pregenerating1080 ? 'animate-spin' : ''}`} />
+            <span>Pre-generate 1080p HD Renditions</span>
           </button>
         </div>
       </div>
