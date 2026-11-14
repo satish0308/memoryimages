@@ -69,7 +69,9 @@ def _format_media_item(item, burst_count=1, burst_id=None, burst_media_ids=None,
         "latitude": item.latitude,
         "longitude": item.longitude,
         "location_name": item.location_name,
-        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+        "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=512",
+        "thumbnail_1080_url": f"/api/v1/media/{item.id}/thumbnail?size=1080",
+        "view_url": f"/api/v1/media/{item.id}/view",
         "mood": item.mood,
         "mood_score": item.mood_score,
         "is_smiling": item.is_smiling,
@@ -1374,6 +1376,30 @@ def get_thumbnail(
             )
             
     thumb_path = media.thumbnail_256_path if size in ("256", "512") else media.thumbnail_1080_path
+
+    # On-demand high-definition 1080p preview generation if missing for local images
+    if size in ("1080", "2048") and (not thumb_path or not os.path.isfile(thumb_path)):
+        if media.source_type == SourceType.LOCAL and media.original_path and os.path.isfile(media.original_path):
+            try:
+                from app.services.thumbnail import open_image_for_thumbnail
+                from PIL import ImageOps, Image
+                os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+                gen_1080_path = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{media.id}_1080.webp")
+                raw_img = open_image_for_thumbnail(media.original_path)
+                try:
+                    raw_img = ImageOps.exif_transpose(raw_img)
+                    if raw_img.mode != "RGB":
+                        raw_img = raw_img.convert("RGB")
+                    raw_img.thumbnail((2560, 2560), Image.Resampling.BICUBIC)
+                    raw_img.save(gen_1080_path, "WEBP", quality=88, method=2)
+                    media.thumbnail_1080_path = gen_1080_path
+                    db.commit()
+                    thumb_path = gen_1080_path
+                finally:
+                    raw_img.close()
+            except Exception as gen_err:
+                logger.warning(f"On-demand 1080 preview generation failed for media {media.id}: {gen_err}")
+
     if thumb_path:
         accept_header = request.headers.get("accept", "") if request else ""
         if "image/avif" in accept_header:

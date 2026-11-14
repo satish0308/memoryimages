@@ -631,6 +631,17 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
           setCurrentDisplaySrc(preview1080Url);
         }
       };
+      img1080.onerror = () => {
+        // Fallback: If 1080p thumbnail fails or is unavailable, attempt loading original master file directly
+        if (isMounted) {
+          const rawUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
+          const fallbackImg = new window.Image();
+          fallbackImg.src = rawUrl;
+          fallbackImg.onload = () => {
+            if (isMounted) setCurrentDisplaySrc(rawUrl);
+          };
+        }
+      };
     }
 
     // Step 3: Fetch detected faces for this photo

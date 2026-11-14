@@ -54,11 +54,21 @@ def get_drive_service(db: Session, user_id: Optional[int] = None):
         credentials = Credentials(
             token=creds_info.get("token"),
             refresh_token=creds_info.get("refresh_token"),
-            token_uri=creds_info.get("token_uri"),
+            token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
             client_id=creds_info.get("client_id"),
             client_secret=creds_info.get("client_secret"),
             scopes=creds_info.get("scopes")
         )
+        if credentials.expired and credentials.refresh_token:
+            try:
+                import google.auth.transport.requests
+                req = google.auth.transport.requests.Request()
+                credentials.refresh(req)
+                creds_info["token"] = credentials.token
+                source.oauth_tokens_json = json.dumps(creds_info)
+                db.commit()
+            except Exception as ref_err:
+                logger.warning(f"Failed to refresh Google Drive token: {ref_err}")
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
     except Exception as e:
         logger.error(f"Failed to build Google Drive client: {e}")
@@ -69,11 +79,13 @@ def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256, u
     Retrieves high-speed Google CDN thumbnail link from in-memory cache or Google Drive API.
     Directly leverages Google's dynamic resizing parameter (=s{size}) with zero local disk usage.
     """
+    # Enforce minimum 512px for grid display to ensure razor-sharp rendering on High-DPI / Retina screens
+    req_size = max(512, size) if size <= 512 else size
     now = time.time()
     cached = _DRIVE_THUMBNAIL_CACHE.get(file_id)
     if cached and cached.get("expires_at", 0) > now:
         base_url = cached["url"]
-        return re.sub(r"=s\d+", f"=s{size}", base_url) if "=s" in base_url else f"{base_url}=s{size}"
+        return re.sub(r"=s\d+", f"=s{req_size}", base_url) if "=s" in base_url else f"{base_url}=s{req_size}"
 
     service = get_drive_service(db, user_id=user_id)
     if not service:
@@ -92,7 +104,7 @@ def get_google_drive_thumbnail_url(file_id: str, db: Session, size: int = 256, u
                 "url": raw_url,
                 "expires_at": now + (45 * 60)
             }
-            return re.sub(r"=s\d+", f"=s{size}", raw_url) if "=s" in raw_url else f"{raw_url}=s{size}"
+            return re.sub(r"=s\d+", f"=s{req_size}", raw_url) if "=s" in raw_url else f"{raw_url}=s{req_size}"
     except Exception as e:
         logger.warning(f"[drive_cache] Failed to fetch thumbnailLink for {file_id}: {e}")
 

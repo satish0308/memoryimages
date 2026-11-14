@@ -28,6 +28,9 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     devices:
       - /dev/dri:/dev/dri
     volumes:
@@ -89,6 +92,9 @@ services:
       - S3_PUBLIC_URL=${S3_PUBLIC_URL:-http://localhost:${MINIO_PORT:-9000}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     devices:
       - /dev/dri:/dev/dri
     volumes:
