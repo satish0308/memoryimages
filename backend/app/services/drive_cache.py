@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 # In-memory TTL cache for Google Drive CDN thumbnail links (TTL: 45 minutes, modeled after 9drive)
 _DRIVE_THUMBNAIL_CACHE: Dict[str, Dict[str, Any]] = {}
-_DRIVE_SERVICE_CACHE: Dict[int, Any] = {}
+import threading
+_THREAD_LOCAL_DRIVE = threading.local()
 
 import requests
 import urllib3
@@ -31,7 +32,7 @@ def get_http_session() -> requests.Session:
     global _HTTP_SESSION
     if _HTTP_SESSION is None:
         s = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32)
         s.mount("http://", adapter)
         s.mount("https://", adapter)
         _HTTP_SESSION = s
@@ -79,16 +80,20 @@ def get_drive_service(db: Session, user_id: Optional[int] = None):
                     creds_info["expiry"] = credentials.expiry.isoformat()
                 source.oauth_tokens_json = json.dumps(creds_info)
                 db.commit()
-                _DRIVE_SERVICE_CACHE.pop(source.id, None)
+                if hasattr(_THREAD_LOCAL_DRIVE, "services"):
+                    _THREAD_LOCAL_DRIVE.services.pop(source.id, None)
             except Exception as ref_err:
                 logger.warning(f"Failed to refresh Google Drive token: {ref_err}")
 
-        cached_service = _DRIVE_SERVICE_CACHE.get(source.id)
+        if not hasattr(_THREAD_LOCAL_DRIVE, "services"):
+            _THREAD_LOCAL_DRIVE.services = {}
+
+        cached_service = _THREAD_LOCAL_DRIVE.services.get(source.id)
         if cached_service and credentials.valid:
             return cached_service
 
         service = build("drive", "v3", credentials=credentials, cache_discovery=False)
-        _DRIVE_SERVICE_CACHE[source.id] = service
+        _THREAD_LOCAL_DRIVE.services[source.id] = service
         return service
     except Exception as e:
         logger.error(f"Failed to build Google Drive client: {e}")

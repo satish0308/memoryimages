@@ -5,7 +5,7 @@ import sys
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple, List
 
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -436,17 +436,26 @@ def run_video_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"videos_processed": total, "keyframes": total_kfs}
 
 def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Pre-generates 1080p WebP renditions for photos that don't have them yet."""
+    """Pre-generates 1080p WebP renditions for photos using concurrent multi-threading."""
     import io
+    import time
+    import concurrent.futures
     from PIL import Image, ImageOps
     from app.models.media import Media, SourceType
-    from app.services.drive_cache import stream_google_drive_file
 
     os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
 
     with SessionLocal() as db:
         user_id = payload.get("user_id")
-        query = db.query(Media).options(defer(Media.extracted_text)).filter(
+        query = db.query(
+            Media.id,
+            Media.source_type,
+            Media.source_id,
+            Media.original_path,
+            Media.thumbnail_256_path,
+            Media.user_id,
+            Media.mime_type
+        ).filter(
             Media.is_deleted == False,
             Media.thumbnail_1080_path == None,
             ~Media.mime_type.ilike("video/%")
@@ -454,8 +463,8 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         if user_id:
             query = query.filter(Media.user_id == user_id)
 
-        items = query.all()
-        total = len(items)
+        rows = query.all()
+        total = len(rows)
 
         if total == 0:
             TaskQueue.update_task(
@@ -467,92 +476,131 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             )
             return {"processed_count": 0, "total": 0}
 
-        TaskQueue.update_task(
-            task_id,
-            total_steps=total,
-            current_step=0,
-            progress=0,
-            message=f"Starting 1080p WebP pre-generation for {total} photos..."
-        )
+        # Convert to lightweight dicts to free DB connection and memory
+        items_data = [
+            {
+                "id": r[0],
+                "source_type": r[1],
+                "source_id": r[2],
+                "original_path": r[3],
+                "thumbnail_256_path": r[4],
+                "user_id": r[5],
+                "mime_type": r[6]
+            }
+            for r in rows
+        ]
 
-        processed = 0
-        for i, item in enumerate(items):
+    TaskQueue.update_task(
+        task_id,
+        total_steps=total,
+        current_step=0,
+        progress=0,
+        message=f"Accelerated 1080p WebP pre-generation started for {total} photos (16 workers)..."
+    )
+
+    def process_single_item(item: dict) -> Optional[tuple]:
+        item_id = item["id"]
+        orig_path = item["original_path"]
+        thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{item_id}_1080.webp")
+
+        try:
+            # 1. Local disk photos: read directly, resize & save as WebP
+            if orig_path and os.path.isfile(orig_path):
+                with Image.open(orig_path) as img:
+                    img = ImageOps.exif_transpose(img)
+                    img_rgb = img.convert("RGB")
+                    img_1080 = img_rgb.copy()
+                    img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
+                    img_1080.save(thumb_1080_path, "WEBP", quality=90, method=2)
+                return (item_id, thumb_1080_path)
+
+            # 2. Google Drive photos: fast CDN fetch (multi-threaded connection pool)
+            elif item["source_type"] == SourceType.GOOGLE_DRIVE and item["source_id"]:
+                from app.services.drive_cache import fetch_google_drive_thumbnail_bytes
+                with SessionLocal() as thread_db:
+                    thumb_bytes = fetch_google_drive_thumbnail_bytes(
+                        item["source_id"], thread_db, size=1080, user_id=item["user_id"]
+                    )
+                if thumb_bytes:
+                    with open(thumb_1080_path, "wb") as f:
+                        f.write(thumb_bytes)
+                    return (item_id, thumb_1080_path)
+
+            # 3. Fallback: scale from existing 256 thumbnail
+            elif item["thumbnail_256_path"] and os.path.isfile(item["thumbnail_256_path"]):
+                with Image.open(item["thumbnail_256_path"]) as img:
+                    img = ImageOps.exif_transpose(img)
+                    img_rgb = img.convert("RGB")
+                    img_rgb.save(thumb_1080_path, "WEBP", quality=85)
+                return (item_id, thumb_1080_path)
+
+        except Exception as e:
+            logger.warning(f"Failed to generate 1080p rendition for #{item_id}: {e}")
+
+        return None
+
+    processed = 0
+    completed = 0
+    batch_updates = []
+    last_update_time = time.time()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_item = {executor.submit(process_single_item, it): it for it in items_data}
+
+        for future in concurrent.futures.as_completed(future_to_item):
             if _should_exit or TaskQueue.is_cancelled(task_id):
                 logger.info(f"Task {task_id} cancelled during 1080p pregeneration.")
-                return {"processed_count": processed, "cancelled": True}
+                for f in future_to_item:
+                    f.cancel()
+                break
 
-            is_video = (item.mime_type and item.mime_type.startswith("video/")) or (
-                item.original_path and os.path.splitext(item.original_path)[1].lower() in (
-                    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv',
-                    '.m4v', '.3gp', '.3g2', '.mpg', '.mpeg', '.ts', '.mts', '.m2ts', '.vob', '.ogv', '.asf'
-                )
-            )
-            if is_video:
-                continue
+            completed += 1
+            res = future.result()
+            if res:
+                batch_updates.append(res)
+                processed += 1
 
-            thumb_1080_rel = f"thumb_{item.id}_1080.webp"
-            thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, thumb_1080_rel)
+            # Batch DB commit every 20 items
+            if len(batch_updates) >= 20:
+                with SessionLocal() as db_batch:
+                    for mid, path in batch_updates:
+                        db_batch.query(Media).filter(Media.id == mid).update(
+                            {Media.thumbnail_1080_path: path}, synchronize_session=False
+                        )
+                    db_batch.commit()
+                batch_updates.clear()
 
-            try:
-                # 1. Local disk photos: read directly, resize & save as WebP
-                if item.original_path and os.path.isfile(item.original_path):
-                    with Image.open(item.original_path) as img:
-                        img = ImageOps.exif_transpose(img)
-                        img_rgb = img.convert("RGB")
-                        img_1080 = img_rgb.copy()
-                        img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
-                        img_1080.save(thumb_1080_path, "WEBP", quality=90, method=4)
-                    item.thumbnail_1080_path = thumb_1080_path
-                    processed += 1
-
-                # 2. Google Drive photos: fast CDN fetch (120 KB pre-rendered by Google instead of 25MB master stream)
-                elif item.source_type == SourceType.GOOGLE_DRIVE and item.source_id:
-                    from app.services.drive_cache import fetch_google_drive_thumbnail_bytes
-                    thumb_bytes = fetch_google_drive_thumbnail_bytes(item.source_id, db, size=1080)
-                    if thumb_bytes:
-                        with open(thumb_1080_path, "wb") as f:
-                            f.write(thumb_bytes)
-                        item.thumbnail_1080_path = thumb_1080_path
-                        processed += 1
-
-                # 3. Fallback: scale from existing 256 thumbnail if no master file exists
-                elif item.thumbnail_256_path and os.path.isfile(item.thumbnail_256_path):
-                    with Image.open(item.thumbnail_256_path) as img:
-                        img = ImageOps.exif_transpose(img)
-                        img_rgb = img.convert("RGB")
-                        img_rgb.save(thumb_1080_path, "WEBP", quality=85)
-                    item.thumbnail_1080_path = thumb_1080_path
-                    processed += 1
-
-                # Batch commit every 25 items to eliminate per-photo disk fsync thrashing
-                if processed > 0 and processed % 25 == 0:
-                    db.commit()
-
-            except Exception as e:
-                logger.warning(f"Failed to generate 1080p rendition for #{item.id}: {e}")
-
-            pct = int(((i + 1) / total) * 100)
-            if i % 10 == 0 or i == total - 1:
+            now = time.time()
+            if completed % 25 == 0 or (now - last_update_time) >= 1.0 or completed == total:
+                last_update_time = now
+                pct = int((completed / total) * 100)
                 TaskQueue.update_task(
                     task_id,
                     progress=pct,
-                    current_step=i + 1,
+                    current_step=completed,
                     total_steps=total,
-                    message=f"Generated 1080p WebP {i + 1}/{total} ({pct}%)"
+                    message=f"Generated 1080p WebP {processed}/{total} ({pct}%)"
                 )
 
-        # Final commit for remaining batch
-        db.commit()
+    # Commit any remaining updates
+    if batch_updates:
+        with SessionLocal() as db_batch:
+            for mid, path in batch_updates:
+                db_batch.query(Media).filter(Media.id == mid).update(
+                    {Media.thumbnail_1080_path: path}, synchronize_session=False
+                )
+            db_batch.commit()
+        batch_updates.clear()
 
-        msg = f"Successfully pre-generated {processed} 1080p renditions." if processed > 0 else "All photos are already 100% up-to-date with 1080p renditions."
-        TaskQueue.update_task(
-            task_id,
-            progress=100,
-            status="completed",
-            message=msg,
-            result={"processed_count": processed, "total": total}
-        )
-        return {"processed_count": processed, "total": total}
+    msg = f"Successfully pre-generated {processed} 1080p renditions." if processed > 0 else "All photos are already 100% up-to-date with 1080p renditions."
+    TaskQueue.update_task(
+        task_id,
+        progress=100,
+        status="completed",
+        message=msg,
+        result={"processed_count": processed, "total": total}
+    )
+    return {"processed_count": processed, "total": total}
 
 
 def run_pgvector_reindex_maintenance(task_id: str, payload: dict):
