@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import logging
 from datetime import datetime
 import io
 import json
@@ -8,6 +9,8 @@ import urllib.request
 from typing import Optional, Tuple, Dict, Any
 from PIL import Image, ExifTags, ImageFile
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("memorypics.scanner")
 
 # Prevent DecompressionBombWarning for ultra high-res / composite mobile photos
 Image.MAX_IMAGE_PIXELS = None
@@ -407,7 +410,14 @@ def scan_file(db: Session, file_path: str, source_type: SourceType = SourceType.
     stat = os.stat(file_path)
     file_size = stat.st_size
     file_hash = compute_file_hash(file_path)
-    
+
+    # Check if this file was permanently deleted by the user (tombstone)
+    from app.models.media import DeletedMediaTombstone
+    tombstone = db.query(DeletedMediaTombstone).filter(DeletedMediaTombstone.file_hash == file_hash).first()
+    if tombstone:
+        logger.info(f"Skipping permanently deleted tombstoned file: {file_path}")
+        return None
+
     # Check if duplicate hash exists
     duplicate_hash = db.query(Media).filter(Media.file_hash == file_hash).first()
     if duplicate_hash:

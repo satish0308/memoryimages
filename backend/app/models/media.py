@@ -142,3 +142,19 @@ class VideoKeyframe(Base):
     media = relationship("Media", back_populates="keyframes")
 
 
+class DeletedMediaTombstone(Base):
+    """
+    Tombstone record tracking SHA-256 hashes of permanently deleted media.
+    Prevents duplicate copies or rescanned files from ever being re-imported into the library.
+    """
+    __tablename__ = "deleted_media_tombstones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    file_hash = Column(String(64), nullable=False, unique=True, index=True)
+    filename = Column(String(255), nullable=True)
+    file_size = Column(BigInteger, default=0)
+    user_id = Column(Integer, nullable=True, index=True)
+    deleted_at = Column(DateTime, default=datetime.utcnow)
+
+
+

@@ -39,6 +39,7 @@ res = [
         "id": m.id,
         "filename": m.filename,
         "original_path": m.original_path,
+        "file_hash": m.file_hash,
         "file_size": m.file_size or 0,
         "marked_at": m.marked_for_deletion_at.isoformat() if m.marked_for_deletion_at else None
     }
@@ -61,14 +62,14 @@ print(json.dumps(res))
         return []
 
 def finalize_db_purge(media_ids: List[int], container_name: str = "memorypics-backend") -> Dict[str, Any]:
-    """Tells the backend to purge database records, face detections, thumbnails, embeddings, and clear Redis caches."""
+    """Tells the backend to purge database records, face detections, thumbnails, embeddings, record tombstones, and clear Redis caches."""
     if not media_ids:
         return {"purged": 0}
 
     python_code = f"""
 import json, os
 from app.database import SessionLocal
-from app.models.media import Media
+from app.models.media import Media, DeletedMediaTombstone
 
 db = SessionLocal()
 target_ids = {json.dumps(media_ids)}
@@ -78,6 +79,19 @@ user_ids = set()
 for item in items:
     if item.user_id:
         user_ids.add(item.user_id)
+    # Record permanent deletion tombstone to prevent duplicate/rescan reincarnations
+    if item.file_hash:
+        try:
+            existing_ts = db.query(DeletedMediaTombstone).filter(DeletedMediaTombstone.file_hash == item.file_hash).first()
+            if not existing_ts:
+                db.add(DeletedMediaTombstone(
+                    file_hash=item.file_hash,
+                    filename=item.filename,
+                    file_size=item.file_size or 0,
+                    user_id=item.user_id
+                ))
+        except Exception:
+            pass
     for thumb in [item.thumbnail_256_path, item.thumbnail_1080_path]:
         if thumb and os.path.isfile(thumb):
             try:
@@ -189,14 +203,14 @@ def main():
             print(f"      Marked At : {item['marked_at']}")
 
         if file_exists:
-            valid_files_to_delete.append((item["id"], host_path, size))
+            valid_files_to_delete.append((item["id"], host_path, size, item.get("filename")))
         else:
             # File is already gone on host; record can still be purged from DB
-            valid_files_to_delete.append((item["id"], None, size))
+            valid_files_to_delete.append((item["id"], None, size, item.get("filename")))
 
     print(f"\n📊 Total Space to Reclaim: {format_size(total_bytes)}")
-    print(f"   Files on Disk to Delete: {sum(1 for _, p, _ in valid_files_to_delete if p is not None)}")
-    print(f"   Stale DB Records to Clean: {sum(1 for _, p, _ in valid_files_to_delete if p is None)}")
+    print(f"   Files on Disk to Delete: {sum(1 for _, p, _, _ in valid_files_to_delete if p is not None)}")
+    print(f"   Stale DB Records to Clean: {sum(1 for _, p, _, _ in valid_files_to_delete if p is None)}")
 
     filenames = [item["filename"] for item in pending if item.get("filename")]
     if args.google_photos or args.save_query:
@@ -242,7 +256,7 @@ def main():
     deleted_ids = []
     reclaimed_bytes = 0
 
-    for m_id, host_path, size in valid_files_to_delete:
+    for m_id, host_path, size, fname in valid_files_to_delete:
         if host_path and os.path.isfile(host_path):
             try:
                 os.remove(host_path)
@@ -254,6 +268,25 @@ def main():
         else:
             deleted_ids.append(m_id)
             print(f"  ✓ Cleaned stale record: {m_id}")
+
+        # Scan for and purge duplicate copies across the host storage prefix
+        if fname and os.path.isdir(args.host_prefix):
+            try:
+                dup_cmd = ["find", args.host_prefix, "-name", fname]
+                dup_proc = subprocess.run(dup_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+                if dup_proc.returncode == 0:
+                    for dup_p in dup_proc.stdout.strip().split("\n"):
+                        dup_p = dup_p.strip()
+                        if dup_p and os.path.isfile(dup_p) and dup_p != host_path:
+                            try:
+                                d_size = os.path.getsize(dup_p)
+                                os.remove(dup_p)
+                                reclaimed_bytes += d_size
+                                print(f"  ✓ Purged duplicate copy: {dup_p} ({format_size(d_size)})")
+                            except Exception as ex:
+                                print(f"  ✗ Could not remove duplicate {dup_p}: {ex}", file=sys.stderr)
+            except Exception:
+                pass
 
     print(f"\n🔄 Updating MyMemoryPics database and clearing AI embeddings...")
     res = finalize_db_purge(deleted_ids, args.container)

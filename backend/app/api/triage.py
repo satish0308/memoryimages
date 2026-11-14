@@ -420,6 +420,20 @@ def batch_delete(
                 pass
 
         if req.permanent:
+            if item.file_hash:
+                try:
+                    from app.models.media import DeletedMediaTombstone
+                    existing_tombstone = db.query(DeletedMediaTombstone).filter(DeletedMediaTombstone.file_hash == item.file_hash).first()
+                    if not existing_tombstone:
+                        db.add(DeletedMediaTombstone(
+                            file_hash=item.file_hash,
+                            filename=item.filename,
+                            file_size=item.file_size or 0,
+                            user_id=current_user.id
+                        ))
+                except Exception:
+                    pass
+
             if item.source_type == SourceType.LOCAL and is_file_on_readonly_mount(item.original_path):
                 item.is_deleted = True
                 item.pending_disk_deletion = True

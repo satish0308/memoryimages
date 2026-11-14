@@ -2426,6 +2426,21 @@ def delete_media(
 
     is_readonly_mount = False
     if permanent:
+        # Record tombstone so file can never be re-scanned or re-imported
+        if media.file_hash:
+            try:
+                from app.models.media import DeletedMediaTombstone
+                existing_tombstone = db.query(DeletedMediaTombstone).filter(DeletedMediaTombstone.file_hash == media.file_hash).first()
+                if not existing_tombstone:
+                    db.add(DeletedMediaTombstone(
+                        file_hash=media.file_hash,
+                        filename=media.filename,
+                        file_size=media.file_size or 0,
+                        user_id=current_user.id
+                    ))
+            except Exception as e:
+                logger.warning(f"Failed to record tombstone for {media.id}: {e}")
+
         if media.source_type == SourceType.LOCAL and is_file_on_readonly_mount(media.original_path):
             is_readonly_mount = True
 
