@@ -49,6 +49,13 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
 - **Dynamic Density Scaling**: Adjust grid density from a 10-column compact bird's-eye view to a 4-column detailed card layout.
 - **People Presence Sub-Grouping & With/Without People Mode**: Segregate your library into **Photos with People** (portraits, family memories, selfies, gatherings) and **Photos without People** (nature, landscapes, scenery, travel vistas, architecture, receipts & objects). Includes 1-click filter pills (`All`, `👤 With People`, `🌿 Without People`), dynamic count badges, an optional dual-section split view (**"Group by People"**), and individual face count badges on cards (`👤 2`).
 
+### 🖼️ HD Image Quality & Anti-Blur 1080p WebP Engine
+- **Ultra-Crisp 512px Retina Grid Thumbnails**: Upgraded default photo grid thumbnails from 256px to 512px WebP with bicubic downsampling and P3 color space preservation, eliminating pixelation and micro-blur on Retina and High-DPI monitors.
+- **Dynamic On-Demand 1080p Previews**: When opening any photo in the Lightbox, the backend automatically generates an optimized 1080p WebP preview (2560x2560 bounding box at quality=88 WebP, ~200-300KB) on-the-fly and caches it permanently.
+- **Zero-Blur Lightbox Fallback**: If a 1080p preview is ever unavailable or encounters an error, the Lightbox automatically falls back to streaming the original master file directly (`/view`), guaranteeing photos are never stretched or blurry.
+- **14x Faster Parallel Pre-Generation**: Background worker pool utilizes thread-isolated Google Drive clients, expanded connection pooling, and bulk database updates, running at **~10 photos per second** (down from 5+ hours to under 20 minutes for 12,000+ photos).
+- **Live Coverage Metrics & Controls**: Prominently displayed in both the **Admin Portal** (`/admin`) and **App Settings** (`/settings`) with real-time coverage percentage progress bars and 1-click system-wide pregeneration triggers.
+
 ### 📺 Universal Smart TV Lounge Mode & Phone Remote Control (`/tv`)
 - **100% Universal Web Casting**: Cast photos and videos to **any Smart TV** with a built-in browser (Samsung Tizen, LG webOS, Android TV, Google TV, Sony Bravia, Apple TV, Amazon Fire TV Stick, or smart displays). Zero proprietary hardware, zero Chromecast/AirPlay lock-in, and zero external cloud tracking.
 - **Standby Pairing Hub (`/tv`)**: Displays an ambient, dark 10-foot lounge display with:
@@ -308,6 +315,7 @@ Modern smartphone cameras generate thousands of files: family vacations, rapid b
   - Automated WAL database backups.
 - **Redis 7 Task Broker**: Redis queue with PubSub event broadcasting, cancellation triggers, and resilient in-memory fallback.
 - **Sub-50ms Live WebSockets**: Full-duplex WebSocket stream (`/api/v1/tasks/ws`) broadcasting real-time progress percentages, step counters, and item logs.
+- **Zero-Downtime Deployments (`docker rollout`)**: Integrated support for the official `docker-rollout` plugin (`https://docker-rollout.wowu.dev`). Containers scale side-by-side during updates and only terminate the previous instance after health checks succeed (`docker rollout -w 5 <service>`), guaranteeing zero dropped connections.
 
 ---
 
@@ -570,6 +578,10 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **🖼️ 1080p HD Rendition Engine & Anti-Blur Lightbox (`v0.3.9`)**: Upgraded default grid thumbnails to 512px Retina display, dynamic on-demand 1080p WebP preview generation with automatic Lightbox master-view fallback, 14x faster parallel background worker pool with thread-isolated Google Drive clients, persistent token caching, and live coverage metrics in both Admin Portal and Settings.
+- [x] **🔄 Zero-Downtime Docker Rollouts (`v0.3.9`)**: Integrated `docker-rollout` CLI plugin with container-name decoupling for seamless side-by-side rolling container updates (`docker rollout -w 5 <service>`) with zero dropped connections.
+- [x] **🛡️ Tombstone Denylist & Deletion Hardening (`v0.3.9`)**: Persistent tombstone registry preventing deleted photos from being re-scanned or re-indexed, with automatic Redis timeline cache flushing on deletions.
+- [x] **📐 Responsive Dynamic Auto-Fill Timeline Grids (`v0.3.9`)**: Fluid photo grids that auto-scale with browser zoom and high-resolution monitors, right-gutter padding preventing scrubber collision, and centered non-clipping bulk action bar.
 - [x] **📺 Universal Smart TV Lounge Mode & Phone Remote Control (`/tv`)**: Dedicated 10-foot TV receiver page with glowing 4-digit PIN, dynamic SVG QR code, 4K photo canvas, video player, Ken Burns pan/zoom motion, sub-50ms WebSocket & Redis Pub/Sub synchronization, and phone remote control.
 - [x] **🪄 In-Browser Non-Destructive Photo Editing Studio (`/edit`)**: Dedicated full-screen studio, parametric sliders (exposure, contrast, shadows, warmth, sharpness, vignette), crop/rotate/flip presets, color presets, live split before/after slider, and recipe persistence.
 - [x] **🎞️ AI Highlight Reels ("Moments in Motion")**: High-definition Ken Burns animated reels with atmospheric synthesized ambient soundtrack, customizable pacing, title cards, and 1080p WebM/MP4 export to library and download.
