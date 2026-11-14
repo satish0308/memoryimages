@@ -61,7 +61,7 @@ print(json.dumps(res))
         return []
 
 def finalize_db_purge(media_ids: List[int], container_name: str = "memorypics-backend") -> Dict[str, Any]:
-    """Tells the backend to purge database records, face detections, thumbnails, and embeddings."""
+    """Tells the backend to purge database records, face detections, thumbnails, embeddings, and clear Redis caches."""
     if not media_ids:
         return {"purged": 0}
 
@@ -74,7 +74,10 @@ db = SessionLocal()
 target_ids = {json.dumps(media_ids)}
 items = db.query(Media).filter(Media.id.in_(target_ids)).all()
 purged_count = 0
+user_ids = set()
 for item in items:
+    if item.user_id:
+        user_ids.add(item.user_id)
     for thumb in [item.thumbnail_256_path, item.thumbnail_1080_path]:
         if thumb and os.path.isfile(thumb):
             try:
@@ -85,6 +88,17 @@ for item in items:
     purged_count += 1
 db.commit()
 db.close()
+
+# Invalidate Redis timeline, burst, and UI caches
+try:
+    from app.services.burst_engine import invalidate_burst_cache
+    from app.api.media import invalidate_timeline_cache
+    for uid in user_ids:
+        invalidate_timeline_cache(uid)
+        invalidate_burst_cache(uid)
+except Exception:
+    pass
+
 print(json.dumps({{"purged": purged_count}}))
 """
     cmd = ["docker", "exec", container_name, "python3", "-c", python_code]
@@ -120,6 +134,10 @@ def main():
         help=f"Host filesystem path mapping for {CONTAINER_MOUNT_PREFIX} (default: {DEFAULT_HOST_MOUNT_PREFIX})"
     )
     parser.add_argument(
+        "--filter", "--filename", type=str, default=None,
+        help="Filter pending deletions to only files matching a specific filename or substring."
+    )
+    parser.add_argument(
         "--container", default="memorypics-backend",
         help="Docker container name for backend API (default: memorypics-backend)"
     )
@@ -133,8 +151,17 @@ def main():
     print(f"🔍 Fetching items marked for permanent deletion from {args.container}...")
     pending = fetch_pending_items(args.container)
 
+    if args.filter:
+        orig_count = len(pending)
+        f_lower = args.filter.lower()
+        pending = [
+            item for item in pending
+            if f_lower in item.get("filename", "").lower() or f_lower in item.get("original_path", "").lower()
+        ]
+        print(f"🔎 Filter applied: '{args.filter}' (Matched {len(pending)} of {orig_count} items)")
+
     if not pending:
-        print("✅ No files are currently marked for permanent deletion. Everything is clean!\n")
+        print("✅ No files match the deletion criteria or are currently marked for permanent deletion. Everything is clean!\n")
         return
 
     print(f"📋 Found {len(pending)} file(s) marked for permanent deletion:\n")
