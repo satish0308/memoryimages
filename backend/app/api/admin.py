@@ -265,6 +265,12 @@ def get_system_metrics(
     people_count = db.query(func.count(Person.id)).scalar() or 0
     faces_count = db.query(func.count(FaceDetection.id)).scalar() or 0
 
+    previews_1080_count = db.query(func.count(Media.id)).filter(
+        Media.is_deleted == False,
+        Media.thumbnail_1080_path != None
+    ).scalar() or 0
+    thumbnails_coverage_pct = round((previews_1080_count / active_media_count * 100), 1) if active_media_count > 0 else 100.0
+
     total_storage_bytes = db.query(func.coalesce(func.sum(Media.file_size), 0)).filter(Media.is_deleted == False).scalar() or 0
 
     # 2. Host disk & memory metrics (pure standard library)
@@ -324,6 +330,12 @@ def get_system_metrics(
             "total_faces": faces_count,
             "total_storage_bytes": int(total_storage_bytes),
             "total_storage_gb": round(total_storage_bytes / (1024 ** 3), 2)
+        },
+        "thumbnails": {
+            "total_active": active_media_count,
+            "with_1080_count": previews_1080_count,
+            "missing_1080_count": max(0, active_media_count - previews_1080_count),
+            "coverage_percent": thumbnails_coverage_pct
         },
         "host": {
             "cpu_cores": cpu_cores,
@@ -549,3 +561,23 @@ def reindex_vector_embeddings(
         "task_id": task["id"],
         "message": "Vector index maintenance task enqueued successfully."
     }
+
+@router.post("/maintenance/pregenerate-1080p")
+def pregenerate_1080p_renditions_all(
+    admin_user: User = Depends(require_admin)
+):
+    """
+    Enqueues a background worker task to pre-generate missing 1080p WebP renditions
+    across the entire library.
+    """
+    task = TaskQueue.enqueue(
+        task_type="pregenerate_1080p_renditions",
+        payload={"triggered_by": admin_user.username, "user_id": None},
+        name="System-wide 1080p HD Rendition Pre-generation"
+    )
+    return {
+        "status": "queued",
+        "task_id": task["id"],
+        "message": "System-wide 1080p HD preview pre-generation enqueued successfully."
+    }
+

@@ -61,6 +61,12 @@ interface SystemMetrics {
     total_storage_bytes: number;
     total_storage_gb: number;
   };
+  thumbnails?: {
+    total_active: number;
+    with_1080_count: number;
+    missing_1080_count: number;
+    coverage_percent: number;
+  };
   host: {
     cpu_cores: number;
     cpu_usage_percent: number;
@@ -133,6 +139,7 @@ export default function AdminPortalPage() {
   } | null>(null);
   const [togglingService, setTogglingService] = useState<string | null>(null);
   const [reindexingVectors, setReindexingVectors] = useState(false);
+  const [pregenerating1080, setPregenerating1080] = useState(false);
 
   // Invite creation form state
   const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
@@ -302,6 +309,28 @@ export default function AdminPortalPage() {
       setStatusMessage({ type: 'error', text: e.message || 'Error triggering vector reindex' });
     } finally {
       setReindexingVectors(false);
+    }
+  };
+
+  const handlePregenerate1080 = async () => {
+    setPregenerating1080(true);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/admin/maintenance/pregenerate-1080p`, {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to trigger 1080p rendition pre-generation');
+      }
+      setStatusMessage({
+        type: 'success',
+        text: 'System-wide 1080p HD rendition task enqueued! Background worker is actively rendering previews.'
+      });
+      fetchAllAdminData();
+    } catch (e: any) {
+      setStatusMessage({ type: 'error', text: e.message || 'Error triggering 1080p rendition pre-generation' });
+    } finally {
+      setPregenerating1080(false);
     }
   };
 
@@ -726,6 +755,56 @@ export default function AdminPortalPage() {
               <RefreshCw className={`w-3.5 h-3.5 ${reindexingVectors ? 'animate-spin' : ''}`} />
               <span>{reindexingVectors ? 'Enqueuing...' : 'Reindex Vector Index Now'}</span>
             </button>
+          </div>
+
+          {/* HD 1080p Image Quality & Preview Rendition Engine */}
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-2 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Sparkles className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-bold text-slate-900">HD Image Quality & 1080p Rendition Engine</h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  {metrics.thumbnails ? `${metrics.thumbnails.coverage_percent}% HD Ready` : 'Dynamic On-Demand Active'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  Anti-Blur Lightbox
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
+                Prevents photo blur and pixelation. <strong>On-demand 1080p</strong> automatically generates and caches crisp WebP previews as users browse. Clicking below enqueues background worker pre-generation for all remaining photos so they open instantaneously without delay.
+              </p>
+
+              {metrics.thumbnails && (
+                <div className="pt-2 max-w-md space-y-1.5">
+                  <div className="flex justify-between text-xs text-slate-600">
+                    <span>1080p Pre-generation ({metrics.thumbnails.with_1080_count.toLocaleString()} of {metrics.thumbnails.total_active.toLocaleString()} photos)</span>
+                    <span className="font-semibold text-slate-900">{metrics.thumbnails.coverage_percent}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, Math.max(3, metrics.thumbnails.coverage_percent))}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[11px] text-slate-400">
+                    <span>{metrics.thumbnails.missing_1080_count.toLocaleString()} photos pending pre-generation</span>
+                    <span>Quality 88 WebP (Lanczos)</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                onClick={handlePregenerate1080}
+                disabled={pregenerating1080}
+                className="flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-500/20 transition cursor-pointer"
+              >
+                <Sparkles className={`w-4 h-4 ${pregenerating1080 ? 'animate-spin' : ''}`} />
+                <span>{pregenerating1080 ? 'Enqueuing Background Task...' : 'Pre-generate 1080p HD Renditions'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

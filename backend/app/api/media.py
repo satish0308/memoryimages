@@ -1903,13 +1903,17 @@ def batch_enhance_media(
 
 @router.post("/pregenerate-thumbnails")
 def trigger_pregenerate_thumbnails(
+    all_users: bool = False,
     current_user: User = Depends(get_current_user)
 ):
     """Enqueues a background worker task to pre-generate missing 1080p WebP renditions."""
     from app.services.task_queue import TaskQueue
+    payload = {}
+    if not (all_users and (current_user.is_admin or current_user.role == "admin")):
+        payload["user_id"] = current_user.id
     task = TaskQueue.enqueue(
         task_type="pregenerate_1080p_renditions",
-        payload={"user_id": current_user.id},
+        payload=payload,
         name="Pre-generate 1080p WebP Renditions"
     )
     return {"status": "enqueued", "task": task}

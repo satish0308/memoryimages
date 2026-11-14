@@ -528,7 +528,6 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
 
             except Exception as e:
                 logger.warning(f"Failed to generate 1080p rendition for #{item.id}: {e}")
-                db.rollback()
 
             pct = int(((i + 1) / total) * 100)
             if i % 10 == 0 or i == total - 1:

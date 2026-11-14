@@ -1196,6 +1196,32 @@ export default function AppSettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* HD 1080p Image Quality & Pre-generation Row */}
+        <div className="border-t border-slate-100 pt-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-600" />
+              <h4 className="text-xs font-bold text-slate-900">HD Image Quality & On-Demand 1080p Previews</h4>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                Active & Automatic
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
+              When viewing photos in Lightbox, the system dynamically streams crystal-clear 1080p WebP renditions on-the-fly. You can also trigger background pre-generation across your entire library so all photos open instantaneously without delay.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handlePregenerate1080}
+            disabled={pregenerating1080}
+            className="flex-shrink-0 flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer shadow-xs"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-indigo-600 ${pregenerating1080 ? 'animate-spin' : ''}`} />
+            <span>{pregenerating1080 ? 'Enqueuing Background Task...' : 'Pre-generate 1080p HD Renditions'}</span>
+          </button>
+        </div>
       </div>
 
       {/* AI VISION, FACE RECOGNITION & SMART TRIAGE PARAMETERS */}
