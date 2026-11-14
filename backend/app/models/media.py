@@ -74,7 +74,7 @@ class Media(Base):
     
     # Thumbnails
     thumbnail_256_path = Column(String(1024), nullable=True)
-    thumbnail_1080_path = Column(String(1024), nullable=True)
+    thumbnail_1080_path = Column(String(1024), nullable=True, index=True)
     
     # OCR Text (for bills, receipts, documents)
     extracted_text = Column(Text, nullable=True)

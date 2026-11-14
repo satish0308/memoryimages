@@ -7,8 +7,8 @@ from app.database import Base
 album_media = Table(
     "album_media",
     Base.metadata,
-    Column("album_id", Integer, ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True),
-    Column("media_id", Integer, ForeignKey("media.id", ondelete="CASCADE"), primary_key=True)
+    Column("album_id", Integer, ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True, index=True),
+    Column("media_id", Integer, ForeignKey("media.id", ondelete="CASCADE"), primary_key=True, index=True)
 )
 
 class Album(Base):
