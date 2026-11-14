@@ -19,15 +19,18 @@ logger = logging.getLogger("memorypics.cast_api")
 
 router = APIRouter()
 
-CAST_SESSION_TTL = 300  # 5 minutes
+CAST_SESSION_TTL = 120  # 2 minutes TTL, refreshed by 15s heartbeats
 REDIS_SESSION_PREFIX = "memorypics:cast:session:"
 REDIS_PIN_PREFIX = "memorypics:cast:pin:"
+REDIS_DEVICE_PREFIX = "memorypics:cast:device:"
 REDIS_ACTIVE_SESSIONS_SET = "memorypics:cast:active_sessions"
+REDIS_ACTIVE_SESSIONS_ZSET = "memorypics:cast:active_sessions_zset"
 REDIS_CAST_CHANNEL_PREFIX = "memorypics:events:cast:"
 
 # In-memory fallback storage
 _in_memory_sessions: Dict[str, Dict[str, Any]] = {}
 _in_memory_pins: Dict[str, str] = {}
+_in_memory_devices: Dict[str, str] = {}
 _in_memory_active_ws: Dict[str, List[WebSocket]] = {}
 
 
@@ -39,8 +42,11 @@ def _cleanup_in_memory():
     ]
     for sid in expired_ids:
         pin = _in_memory_sessions[sid].get("pin")
+        dev = _in_memory_sessions[sid].get("device_id")
         if pin and pin in _in_memory_pins:
             del _in_memory_pins[pin]
+        if dev and dev in _in_memory_devices:
+            del _in_memory_devices[dev]
         del _in_memory_sessions[sid]
 
 
@@ -109,11 +115,15 @@ def _generate_unique_pin(r=None) -> str:
 
 
 async def _save_session(session: Dict[str, Any]):
-    """Persists session in Redis or memory, refreshes TTL."""
+    """Persists session in Redis or memory, registers device & PIN, and updates ZSET for automatic pruning."""
     session_id = session["session_id"]
     pin = session.get("pin")
-    session["last_heartbeat_ts"] = time.time()
+    device_id = session.get("device_id")
+    now = time.time()
+    expire_at = now + CAST_SESSION_TTL
+    session["last_heartbeat_ts"] = now
     session["last_heartbeat"] = datetime.utcnow().isoformat()
+    session["expires_in"] = CAST_SESSION_TTL
 
     r = await get_async_redis_client()
     if r:
@@ -122,7 +132,14 @@ async def _save_session(session: Dict[str, Any]):
             await r.set(f"{REDIS_SESSION_PREFIX}{session_id}", payload, ex=CAST_SESSION_TTL)
             if pin:
                 await r.set(f"{REDIS_PIN_PREFIX}{pin}", session_id, ex=CAST_SESSION_TTL)
+            if device_id:
+                await r.set(f"{REDIS_DEVICE_PREFIX}{device_id}", session_id, ex=CAST_SESSION_TTL)
+            # Add to Sorted Set scored by expiration timestamp
+            await r.zadd(REDIS_ACTIVE_SESSIONS_ZSET, {session_id: expire_at})
+            # Also keep legacy set for backwards compatibility
             await r.sadd(REDIS_ACTIVE_SESSIONS_SET, session_id)
+            # Atomically prune any expired sessions from ZSET
+            await r.zremrangebyscore(REDIS_ACTIVE_SESSIONS_ZSET, 0, now)
             await r.close()
             return
         except Exception as e:
@@ -132,6 +149,8 @@ async def _save_session(session: Dict[str, Any]):
     _in_memory_sessions[session_id] = session
     if pin:
         _in_memory_pins[pin] = session_id
+    if device_id:
+        _in_memory_devices[device_id] = session_id
     _cleanup_in_memory()
 
 
@@ -180,6 +199,7 @@ async def _broadcast_cast_event(session_id: str, event_data: Dict[str, Any]):
 
 class CreateSessionRequest(BaseModel):
     tv_name: Optional[str] = "Smart TV"
+    device_id: Optional[str] = None
 
 
 class PairSessionRequest(BaseModel):
@@ -188,19 +208,54 @@ class PairSessionRequest(BaseModel):
 
 
 class CastCommandRequest(BaseModel):
-    command: str  # cast_media, cast_playlist, next, prev, play, pause, set_interval, toggle_motion, disconnect
+    command: str  # cast_media, cast_playlist, next, prev, play, pause, set_interval, toggle_motion, disconnect, video_seek, video_volume, video_sync, laser_pointer, set_privacy_shield
     media_id: Optional[int] = None
     media_ids: Optional[List[int]] = None
     interval_sec: Optional[int] = None
     ken_burns: Optional[bool] = None
+    # Video remote controls
+    time_sec: Optional[float] = None
+    volume: Optional[float] = None
+    is_muted: Optional[bool] = None
+    is_paused: Optional[bool] = None
+    duration_sec: Optional[float] = None
+    # Virtual laser pointer & trackpad
+    laser_x: Optional[float] = None  # 0.0 - 1.0 normalized
+    laser_y: Optional[float] = None  # 0.0 - 1.0 normalized
+    laser_active: Optional[bool] = None
+    # Privacy shield
+    privacy_shield: Optional[bool] = None
 
 
 @router.post("/session/create")
 async def create_cast_session(req: CreateSessionRequest):
     """
-    Creates a new Cast session for a TV / display receiver.
-    Allocates a 4-digit pairing PIN, initializes standby state, and sets 5-minute TTL.
+    Creates or resumes a Cast session for a TV / display receiver.
+    If device_id is provided and an existing active session exists, resumes it
+    with the same PIN to prevent duplicate sessions on page reload.
     """
+    # 1. Check for existing session by persistent device_id to avoid duplicate sessions on reload
+    if req.device_id:
+        existing_sid = None
+        r = await get_async_redis_client()
+        if r:
+            try:
+                existing_sid = await r.get(f"{REDIS_DEVICE_PREFIX}{req.device_id}")
+                await r.close()
+            except Exception:
+                pass
+        if not existing_sid:
+            existing_sid = _in_memory_devices.get(req.device_id)
+
+        if existing_sid:
+            existing_session = await _get_session(existing_sid)
+            if existing_session and existing_session.get("status") != "closed":
+                if req.tv_name:
+                    existing_session["tv_name"] = req.tv_name
+                await _save_session(existing_session)
+                logger.info(f"Resumed existing Cast session {existing_sid} for device {req.device_id} (PIN {existing_session.get('pin')})")
+                return existing_session
+
     session_id = f"tv_{secrets.token_hex(6)}"
     sync_r = get_redis_client()
     pin = _generate_unique_pin(sync_r)
@@ -212,6 +267,7 @@ async def create_cast_session(req: CreateSessionRequest):
 
     session_data = {
         "session_id": session_id,
+        "device_id": req.device_id,
         "pin": pin,
         "tv_name": req.tv_name or "Smart TV Lounge",
         "created_at": datetime.utcnow().isoformat(),
@@ -219,6 +275,14 @@ async def create_cast_session(req: CreateSessionRequest):
         "status": "waiting",  # "waiting" | "connected" | "idle"
         "controller_name": None,
         "current_media": None,
+        "privacy_shield": False,
+        "video_state": {
+            "current_time": 0,
+            "duration_sec": 0,
+            "volume": 1.0,
+            "is_muted": False,
+            "is_paused": False,
+        },
         "slideshow_state": {
             "is_playing": False,
             "interval_sec": 6,
@@ -231,7 +295,7 @@ async def create_cast_session(req: CreateSessionRequest):
     }
 
     await _save_session(session_data)
-    logger.info(f"Created Cast session {session_id} with PIN {pin} for '{session_data['tv_name']}'")
+    logger.info(f"Created Cast session {session_id} with PIN {pin} for '{session_data['tv_name']}' (device {req.device_id})")
     return session_data
 
 
@@ -239,25 +303,30 @@ async def create_cast_session(req: CreateSessionRequest):
 async def list_active_cast_sessions():
     """
     Returns active Cast sessions on the local network for 1-click discovery.
+    Utilizes Redis ZSET with automatic timestamp pruning.
     """
     sessions = []
+    now = time.time()
     r = await get_async_redis_client()
     if r:
         try:
-            session_ids = await r.smembers(REDIS_ACTIVE_SESSIONS_SET)
-            for sid in list(session_ids):
+            # Atomic cleanup of expired sessions from ZSET
+            await r.zremrangebyscore(REDIS_ACTIVE_SESSIONS_ZSET, 0, now)
+            active_sids = await r.zrange(REDIS_ACTIVE_SESSIONS_ZSET, 0, -1)
+            for sid in active_sids:
                 raw = await r.get(f"{REDIS_SESSION_PREFIX}{sid}")
                 if raw:
                     s = json.loads(raw)
                     sessions.append({
                         "session_id": s["session_id"],
+                        "device_id": s.get("device_id"),
                         "tv_name": s.get("tv_name", "Smart TV"),
                         "status": s.get("status", "waiting"),
                         "controller_name": s.get("controller_name"),
                         "has_current_media": bool(s.get("current_media")),
                     })
                 else:
-                    # Clean up expired session ID
+                    await r.zrem(REDIS_ACTIVE_SESSIONS_ZSET, sid)
                     await r.srem(REDIS_ACTIVE_SESSIONS_SET, sid)
             await r.close()
             return {"sessions": sessions}
@@ -268,6 +337,7 @@ async def list_active_cast_sessions():
     for sid, s in _in_memory_sessions.items():
         sessions.append({
             "session_id": s["session_id"],
+            "device_id": s.get("device_id"),
             "tv_name": s.get("tv_name", "Smart TV"),
             "status": s.get("status", "waiting"),
             "controller_name": s.get("controller_name"),
@@ -454,9 +524,117 @@ async def handle_cast_command(session_id: str, req: CastCommandRequest, db: Sess
         session["slideshow_state"]["is_playing"] = False
         event_payload = {"event": "disconnected", "session": session}
 
+    elif cmd == "video_seek":
+        if req.time_sec is not None:
+            if "video_state" not in session:
+                session["video_state"] = {}
+            session["video_state"]["current_time"] = req.time_sec
+            event_payload = {
+                "event": "video_seek",
+                "time_sec": req.time_sec,
+                "session": session,
+            }
+
+    elif cmd == "video_volume":
+        if "video_state" not in session:
+            session["video_state"] = {}
+        if req.volume is not None:
+            session["video_state"]["volume"] = max(0.0, min(1.0, req.volume))
+        if req.is_muted is not None:
+            session["video_state"]["is_muted"] = req.is_muted
+        event_payload = {
+            "event": "video_volume",
+            "volume": session["video_state"].get("volume", 1.0),
+            "is_muted": session["video_state"].get("is_muted", False),
+            "session": session,
+        }
+
+    elif cmd == "video_sync":
+        if "video_state" not in session:
+            session["video_state"] = {}
+        if req.time_sec is not None:
+            session["video_state"]["current_time"] = req.time_sec
+        if req.duration_sec is not None:
+            session["video_state"]["duration_sec"] = req.duration_sec
+        if req.is_paused is not None:
+            session["video_state"]["is_paused"] = req.is_paused
+        event_payload = {
+            "event": "video_sync",
+            "video_state": session["video_state"],
+            "session": session,
+        }
+
+    elif cmd == "laser_pointer":
+        event_payload = {
+            "event": "laser_pointer",
+            "laser_x": req.laser_x,
+            "laser_y": req.laser_y,
+            "laser_active": bool(req.laser_active),
+        }
+
+    elif cmd == "set_privacy_shield":
+        new_val = bool(req.privacy_shield) if req.privacy_shield is not None else not session.get("privacy_shield", False)
+        session["privacy_shield"] = new_val
+        event_payload = {
+            "event": "privacy_shield_change",
+            "privacy_shield": new_val,
+            "session": session,
+        }
+
     await _save_session(session)
     await _broadcast_cast_event(session_id, event_payload)
     return {"status": "ok", "command": cmd, "session": session}
+
+
+@router.post("/session/{session_id}/close")
+async def close_cast_session(session_id: str):
+    """
+    Explicitly closes a Cast session on TV browser window unload/close.
+    Provides immediate 0-second cleanup to prevent ghost sessions on the network.
+    """
+    session = await _get_session(session_id)
+    if session:
+        pin = session.get("pin")
+        dev = session.get("device_id")
+        r = await get_async_redis_client()
+        if r:
+            try:
+                await r.delete(f"{REDIS_SESSION_PREFIX}{session_id}")
+                if pin:
+                    await r.delete(f"{REDIS_PIN_PREFIX}{pin}")
+                if dev:
+                    await r.delete(f"{REDIS_DEVICE_PREFIX}{dev}")
+                await r.zrem(REDIS_ACTIVE_SESSIONS_ZSET, session_id)
+                await r.srem(REDIS_ACTIVE_SESSIONS_SET, session_id)
+                await r.close()
+            except Exception:
+                pass
+        if session_id in _in_memory_sessions:
+            del _in_memory_sessions[session_id]
+        if pin and pin in _in_memory_pins:
+            del _in_memory_pins[pin]
+        if dev and dev in _in_memory_devices:
+            del _in_memory_devices[dev]
+
+        await _broadcast_cast_event(session_id, {"event": "tv_closed", "session_id": session_id})
+        logger.info(f"Explicitly closed Cast session {session_id}")
+    return {"status": "closed", "session_id": session_id}
+
+
+@router.get("/ambient-media")
+async def get_ambient_media(limit: int = 30, db: Session = Depends(get_db)):
+    """
+    Returns curated ambient media (favorites, scenic photos, high-resolution memories)
+    for Smart TV Lounge standby screensaver mode.
+    """
+    items = (
+        db.query(Media)
+        .filter(Media.is_deleted == False, Media.is_blurry == False)
+        .order_by(Media.is_favorite.desc(), Media.captured_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {"media": [_format_media_for_cast(m) for m in items]}
 
 
 @router.websocket("/ws/{session_id}")
@@ -552,6 +730,10 @@ async def websocket_cast_endpoint(websocket: WebSocket, session_id: str):
         send_task.cancel()
         if session_id in _in_memory_active_ws and websocket in _in_memory_active_ws[session_id]:
             _in_memory_active_ws[session_id].remove(websocket)
+            if len(_in_memory_active_ws[session_id]) == 0:
+                del _in_memory_active_ws[session_id]
+                # Broadcast socket offline event
+                await _broadcast_cast_event(session_id, {"event": "tv_socket_offline", "session_id": session_id})
         if pubsub and r:
             try:
                 await pubsub.unsubscribe(channel)

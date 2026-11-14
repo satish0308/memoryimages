@@ -23,10 +23,24 @@ export const CastMiniBar: React.FC = () => {
 
   const currentMedia = activeSession.current_media;
   const isPlaying = activeSession.slideshow_state?.is_playing;
+  const isVideo = Boolean(currentMedia?.is_video);
+  const videoState = activeSession.video_state;
+  const videoProgress = videoState?.duration_sec && videoState.duration_sec > 0
+    ? Math.min(100, ((videoState.current_time || 0) / videoState.duration_sec) * 100)
+    : 0;
 
   return (
     <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 z-40 max-w-md w-[92%] sm:w-auto animate-slideUp">
-      <div className="bg-slate-900/90 dark:bg-neutral-900/95 border border-slate-700/80 dark:border-neutral-700 text-white backdrop-blur-xl rounded-2xl p-2.5 sm:px-4 sm:py-2.5 shadow-2xl flex items-center justify-between gap-3 sm:gap-5">
+      <div className="bg-slate-900/95 dark:bg-neutral-900/95 border border-slate-700/80 dark:border-neutral-700 text-white backdrop-blur-xl rounded-2xl p-2.5 sm:px-4 sm:py-2.5 shadow-2xl flex items-center justify-between gap-3 sm:gap-5 relative overflow-hidden">
+        {/* Bottom Video Progress Line (for Videos) */}
+        {isVideo && videoProgress > 0 && (
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20">
+            <div
+              className="h-full bg-blue-500 transition-all duration-300"
+              style={{ width: `${videoProgress}%` }}
+            />
+          </div>
+        )}
         {/* Left Side: Thumbnail & TV Name */}
         <div
           onClick={() => setCastModalOpen(true)}

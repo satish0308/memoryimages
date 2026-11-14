@@ -53,9 +53,18 @@ interface CastSessionData {
   session_id: string;
   pin: string;
   tv_name: string;
+  device_id?: string;
   status: 'waiting' | 'connected' | 'idle';
   controller_name: string | null;
   current_media: CastMediaItem | null;
+  privacy_shield?: boolean;
+  video_state?: {
+    current_time: number;
+    duration_sec: number;
+    volume: number;
+    is_muted: boolean;
+    is_paused: boolean;
+  };
   slideshow_state: {
     is_playing: boolean;
     interval_sec: number;
@@ -77,11 +86,20 @@ export default function TvReceiverPage() {
   const [pairUrl, setPairUrl] = useState('');
   const [animVariant, setAnimVariant] = useState(0);
   const [slideshowProgress, setSlideshowProgress] = useState(0);
+  const [ambientMedia, setAmbientMedia] = useState<CastMediaItem[]>([]);
+  const [ambientIndex, setAmbientIndex] = useState(0);
+  const [laserPointer, setLaserPointer] = useState<{ x: number; y: number; active: boolean }>({
+    x: 0.5,
+    y: 0.5,
+    active: false,
+  });
 
   const API_URL = getApiUrl();
   const wsRef = useRef<WebSocket | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const hudTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const ambientTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Format captured timestamp
   const formatCapturedDate = (isoStr: string | null) => {
@@ -131,13 +149,22 @@ export default function TvReceiverPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Initialize or restore Cast session
+  // Initialize or restore Cast session with persistent device_id to avoid duplicate sessions on reload
   const initSession = useCallback(async () => {
     try {
+      let deviceId = '';
+      if (typeof window !== 'undefined') {
+        deviceId = localStorage.getItem('memorypics_tv_device_id') || '';
+        if (!deviceId) {
+          deviceId = 'tv_' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 12));
+          localStorage.setItem('memorypics_tv_device_id', deviceId);
+        }
+      }
+
       const res = await fetch(`${API_URL}/api/v1/cast/session/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tv_name: 'Smart TV Lounge' }),
+        body: JSON.stringify({ tv_name: 'Smart TV Lounge', device_id: deviceId }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: CastSessionData = await res.json();
@@ -155,6 +182,16 @@ export default function TvReceiverPage() {
           console.error('QR generation error:', e);
         }
       }
+
+      // Fetch ambient curated media for living room screensaver
+      fetch(`${API_URL}/api/v1/cast/ambient-media?limit=25`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.media && d.media.length > 0) {
+            setAmbientMedia(d.media);
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       console.error('Failed to create cast session:', err);
     }
@@ -163,6 +200,25 @@ export default function TvReceiverPage() {
   useEffect(() => {
     initSession();
   }, [initSession]);
+
+  // Clean up session immediately on tab close or navigation (0s cleanup)
+  useEffect(() => {
+    if (!session?.session_id) return;
+
+    const handleUnload = () => {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${API_URL}/api/v1/cast/session/${session.session_id}/close`);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+    };
+  }, [session?.session_id, API_URL]);
 
   // Connect WebSocket when session is ready
   useEffect(() => {
@@ -183,7 +239,7 @@ export default function TvReceiverPage() {
             if (socket && socket.readyState === WebSocket.OPEN) {
               socket.send(JSON.stringify({ action: 'ping' }));
             }
-          }, 20000);
+          }, 15000); // 15-second heartbeats for robust 120s TTL
         };
 
         socket.onmessage = (event) => {
@@ -215,6 +271,28 @@ export default function TvReceiverPage() {
                 ...prev,
                 slideshow_state: { ...prev.slideshow_state, ken_burns: data.ken_burns }
               } : prev);
+            } else if (data.event === 'privacy_shield_change') {
+              setSession((prev) => prev ? {
+                ...prev,
+                privacy_shield: data.privacy_shield
+              } : prev);
+            } else if (data.event === 'video_seek' && videoRef.current) {
+              if (typeof data.time_sec === 'number') {
+                videoRef.current.currentTime = data.time_sec;
+              }
+            } else if (data.event === 'video_volume' && videoRef.current) {
+              if (typeof data.volume === 'number') {
+                videoRef.current.volume = Math.max(0, Math.min(1, data.volume));
+              }
+              if (typeof data.is_muted === 'boolean') {
+                videoRef.current.muted = data.is_muted;
+              }
+            } else if (data.event === 'laser_pointer') {
+              setLaserPointer({
+                x: typeof data.laser_x === 'number' ? data.laser_x : 0.5,
+                y: typeof data.laser_y === 'number' ? data.laser_y : 0.5,
+                active: Boolean(data.laser_active),
+              });
             } else if (data.event === 'disconnected') {
               setSession(data.session);
             }
@@ -248,7 +326,23 @@ export default function TvReceiverPage() {
     };
   }, [session?.session_id, API_URL, resetHudTimer]);
 
-  // Slideshow progress timer & auto advance if playing
+  // Ambient living room screensaver rotation when in Standby
+  useEffect(() => {
+    if (session?.current_media || ambientMedia.length === 0) {
+      if (ambientTimerRef.current) clearInterval(ambientTimerRef.current);
+      return;
+    }
+
+    ambientTimerRef.current = setInterval(() => {
+      setAmbientIndex((prev) => (prev + 1) % ambientMedia.length);
+    }, 12000);
+
+    return () => {
+      if (ambientTimerRef.current) clearInterval(ambientTimerRef.current);
+    };
+  }, [session?.current_media, ambientMedia.length]);
+
+  // Slideshow progress timer & auto advance (delta timestamp based to prevent Smart TV timer drift)
   useEffect(() => {
     if (!session?.slideshow_state?.is_playing || !session?.session_id) {
       setSlideshowProgress(0);
@@ -257,16 +351,16 @@ export default function TvReceiverPage() {
     }
 
     const intervalSec = session.slideshow_state.interval_sec || 6;
-    const stepMs = 100;
-    const totalSteps = (intervalSec * 1000) / stepMs;
-    let curStep = 0;
+    const totalDurationMs = intervalSec * 1000;
+    const startTime = Date.now();
 
     progressTimerRef.current = setInterval(() => {
-      curStep++;
-      setSlideshowProgress(Math.min(100, (curStep / totalSteps) * 100));
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(100, (elapsed / totalDurationMs) * 100);
+      setSlideshowProgress(progress);
 
-      if (curStep >= totalSteps) {
-        curStep = 0;
+      if (elapsed >= totalDurationMs) {
+        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
         // Request next slide from backend
         fetch(`${API_URL}/api/v1/cast/session/${session.session_id}/command`, {
           method: 'POST',
@@ -274,12 +368,12 @@ export default function TvReceiverPage() {
           body: JSON.stringify({ command: 'next' }),
         }).catch(() => {});
       }
-    }, stepMs);
+    }, 100);
 
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     };
-  }, [session?.slideshow_state?.is_playing, session?.slideshow_state?.interval_sec, session?.session_id, API_URL]);
+  }, [session?.slideshow_state?.is_playing, session?.slideshow_state?.interval_sec, session?.slideshow_state?.playlist_index, session?.session_id, API_URL]);
 
   // Handle remote controller key presses (Smart TV remotes send keyboard events)
   useEffect(() => {
@@ -400,15 +494,46 @@ export default function TvReceiverPage() {
       )}
 
       {/* =========================================================================
-          STATE A: STANDBY PAIRING SCREEN (Clean 10-Foot UI)
+          VIRTUAL LASER POINTER & TOUCH TRACKPAD OVERLAY
+         ========================================================================= */}
+      {laserPointer.active && (
+        <div
+          className="absolute z-50 pointer-events-none transition-all duration-75 ease-out -translate-x-1/2 -translate-y-1/2"
+          style={{
+            left: `${Math.max(0.01, Math.min(0.99, laserPointer.x)) * 100}%`,
+            top: `${Math.max(0.01, Math.min(0.99, laserPointer.y)) * 100}%`,
+          }}
+        >
+          <div className="relative flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-rose-500/30 animate-ping absolute" />
+            <div className="w-5 h-5 rounded-full bg-rose-500 shadow-[0_0_20px_#f43f5e] border-2 border-white" />
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          STATE A: STANDBY PAIRING SCREEN (With Living Room Ambient Screensaver)
          ========================================================================= */}
       {isStandby && (
-        <div className="relative w-full h-full flex flex-col items-center justify-center p-8 bg-gradient-to-br from-neutral-950 via-neutral-900 to-blue-950/40">
+        <div className="relative w-full h-full flex flex-col items-center justify-center p-8 bg-gradient-to-br from-neutral-950 via-neutral-900 to-blue-950/40 overflow-hidden">
+          {/* Living Room Ambient Screensaver Backdrop (Subtle Slow Ken-Burns) */}
+          {ambientMedia.length > 0 && (
+            <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden opacity-35 transition-opacity duration-1000">
+              <img
+                key={ambientMedia[ambientIndex]?.id || 'amb'}
+                src={`${API_URL}${ambientMedia[ambientIndex]?.view_url}`}
+                alt="Ambient Memories"
+                className="w-full h-full object-cover blur-md scale-105 animate-ken-burns-1 transition-all duration-1000"
+              />
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" />
+            </div>
+          )}
+
           {/* Subtle Ambient Decorative Circles */}
           <div className="absolute w-[600px] h-[600px] rounded-full bg-blue-600/10 blur-[140px] pointer-events-none -top-40 -left-40 animate-pulse" />
           <div className="absolute w-[500px] h-[500px] rounded-full bg-indigo-600/10 blur-[130px] pointer-events-none -bottom-20 -right-20 animate-pulse" />
 
-          <div className="max-w-4xl w-full bg-neutral-900/80 border border-neutral-800/80 backdrop-blur-2xl rounded-3xl p-8 sm:p-12 shadow-2xl flex flex-col md:flex-row items-center gap-10 z-10">
+          <div className="max-w-4xl w-full bg-neutral-900/85 border border-neutral-700/80 backdrop-blur-2xl rounded-3xl p-8 sm:p-12 shadow-2xl flex flex-col md:flex-row items-center gap-10 z-10">
             {/* Left Column: QR Code */}
             <div className="flex flex-col items-center justify-center p-6 bg-white rounded-2xl shadow-xl">
               {qrSvg ? (
@@ -456,9 +581,9 @@ export default function TvReceiverPage() {
               </div>
 
               {/* Connection Direct Link */}
-              <div className="text-xs text-neutral-500 bg-neutral-950/60 border border-neutral-800/80 px-4 py-2.5 rounded-xl w-full flex items-center justify-between">
+              <div className="text-xs text-neutral-400 bg-neutral-950/70 border border-neutral-800/80 px-4 py-2.5 rounded-xl w-full flex items-center justify-between">
                 <span className="truncate">
-                  Direct pairing URL: <span className="text-neutral-300 select-all font-mono">{pairUrl || 'Loading...'}</span>
+                  Direct pairing URL: <span className="text-neutral-200 select-all font-mono">{pairUrl || 'Loading...'}</span>
                 </span>
                 <button
                   onClick={initSession}
@@ -479,14 +604,35 @@ export default function TvReceiverPage() {
       {!isStandby && currentMedia && (
         <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black">
           {currentMedia.is_video ? (
-            /* Video Player */
+            /* Video Player with Remote Sync */
             <video
+              ref={videoRef}
               key={currentMedia.id}
               src={`${API_URL}${currentMedia.view_url}`}
               autoPlay
               controls={showHud}
               playsInline
               loop={!session?.slideshow_state?.is_playing}
+              onTimeUpdate={() => {
+                if (videoRef.current && session?.session_id) {
+                  const cur = videoRef.current.currentTime;
+                  const dur = videoRef.current.duration || 0;
+                  const paused = videoRef.current.paused;
+                  // Periodic sync every 2s
+                  if (Math.floor(cur) % 2 === 0) {
+                    fetch(`${API_URL}/api/v1/cast/session/${session.session_id}/command`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        command: 'video_sync',
+                        time_sec: cur,
+                        duration_sec: dur,
+                        is_paused: paused,
+                      }),
+                    }).catch(() => {});
+                  }
+                }
+              }}
               onEnded={() => {
                 if (session?.slideshow_state?.is_playing && session?.session_id) {
                   fetch(`${API_URL}/api/v1/cast/session/${session.session_id}/command`, {
@@ -526,7 +672,7 @@ export default function TvReceiverPage() {
           )}
 
           {/* =========================================================================
-              BOTTOM-LEFT FROSTED GLASS HUD METADATA PILL
+              BOTTOM-LEFT FROSTED GLASS HUD METADATA PILL (With Privacy Shield Support)
              ========================================================================= */}
           <div
             className={`absolute bottom-6 sm:bottom-8 left-6 sm:left-8 z-30 transition-all duration-500 pointer-events-auto ${
@@ -534,6 +680,14 @@ export default function TvReceiverPage() {
             }`}
           >
             <div className="bg-neutral-900/80 border border-neutral-700/60 backdrop-blur-xl rounded-2xl p-4 sm:p-5 shadow-2xl max-w-lg space-y-2.5 text-neutral-200">
+              {/* Privacy Shield Badge */}
+              {session?.privacy_shield && (
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full w-fit">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>Privacy Shield Active (Face tags & EXIF hidden)</span>
+                </div>
+              )}
+
               {/* Date & Location */}
               <div className="flex flex-wrap items-center gap-3">
                 {currentMedia.captured_at && (
@@ -550,16 +704,16 @@ export default function TvReceiverPage() {
                 )}
               </div>
 
-              {/* People & Faces */}
-              {currentMedia.face_names && currentMedia.face_names.length > 0 && (
+              {/* People & Faces (Hidden if Privacy Shield is On) */}
+              {!session?.privacy_shield && currentMedia.face_names && currentMedia.face_names.length > 0 && (
                 <div className="flex items-center gap-1.5 text-xs text-neutral-300">
                   <Users className="w-3.5 h-3.5 text-indigo-400" />
                   <span>{currentMedia.face_names.join(', ')}</span>
                 </div>
               )}
 
-              {/* Camera Make & Model */}
-              {(currentMedia.camera_make || currentMedia.camera_model) && (
+              {/* Camera Make & Model (Hidden if Privacy Shield is On) */}
+              {!session?.privacy_shield && (currentMedia.camera_make || currentMedia.camera_model) && (
                 <div className="flex items-center gap-1.5 text-xs text-neutral-400">
                   <Camera className="w-3.5 h-3.5 text-neutral-400" />
                   <span>

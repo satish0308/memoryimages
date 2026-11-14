@@ -31,9 +31,18 @@ export interface CastSessionData {
   session_id: string;
   pin: string;
   tv_name: string;
+  device_id?: string;
   status: 'waiting' | 'connected' | 'idle';
   controller_name: string | null;
   current_media: CastMediaItem | null;
+  privacy_shield?: boolean;
+  video_state?: {
+    current_time: number;
+    duration_sec: number;
+    volume: number;
+    is_muted: boolean;
+    is_paused: boolean;
+  };
   slideshow_state: {
     is_playing: boolean;
     interval_sec: number;
@@ -47,9 +56,17 @@ export interface CastSessionData {
 export interface DiscoveredTvSession {
   session_id: string;
   tv_name: string;
+  device_id?: string;
   status: 'waiting' | 'connected' | 'idle';
   controller_name: string | null;
   has_current_media: boolean;
+}
+
+export interface PairedTvDevice {
+  session_id: string;
+  tv_name: string;
+  pin: string;
+  last_connected: string;
 }
 
 interface CastContextType {
@@ -57,6 +74,7 @@ interface CastContextType {
   isCasting: boolean;
   castModalOpen: boolean;
   availableSessions: DiscoveredTvSession[];
+  pairedTvs: PairedTvDevice[];
   setCastModalOpen: (open: boolean) => void;
   openCastModal: (withMedia?: MediaItem | number, withPlaylist?: (MediaItem | number)[]) => void;
   pairWithPin: (pin: string, controllerName?: string) => Promise<{ success: boolean; error?: string }>;
@@ -68,8 +86,13 @@ interface CastContextType {
   toggleTvPlay: () => Promise<void>;
   setTvInterval: (seconds: number) => Promise<void>;
   toggleTvMotion: () => Promise<void>;
+  seekVideo: (timeSec: number) => Promise<void>;
+  setVideoVolume: (volume: number, isMuted?: boolean) => Promise<void>;
+  sendLaserPointer: (x: number, y: number, active: boolean) => Promise<void>;
+  togglePrivacyShield: () => Promise<void>;
   disconnectTv: () => Promise<void>;
   refreshSessions: () => Promise<void>;
+  forgetPairedTv: (sessionIdOrPin: string) => void;
 }
 
 const CastContext = createContext<CastContextType | undefined>(undefined);
@@ -78,12 +101,34 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeSession, setActiveSession] = useState<CastSessionData | null>(null);
   const [castModalOpen, setCastModalOpen] = useState(false);
   const [availableSessions, setAvailableSessions] = useState<DiscoveredTvSession[]>([]);
+  const [pairedTvs, setPairedTvs] = useState<PairedTvDevice[]>([]);
   const [pendingMediaId, setPendingMediaId] = useState<number | null>(null);
   const [pendingPlaylistIds, setPendingPlaylistIds] = useState<number[] | null>(null);
 
   const API_URL = getApiUrl();
   const wsRef = useRef<WebSocket | null>(null);
   const isCasting = Boolean(activeSession && activeSession.status === 'connected');
+
+  // Load remembered TVs from localStorage on client mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('memorypics_paired_tvs');
+      if (raw) {
+        setPairedTvs(JSON.parse(raw));
+      }
+    } catch {}
+  }, []);
+
+  const forgetPairedTv = useCallback((key: string) => {
+    setPairedTvs((prev) => {
+      const updated = prev.filter((t) => t.session_id !== key && t.pin !== key);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('memorypics_paired_tvs', JSON.stringify(updated));
+      }
+      return updated;
+    });
+  }, []);
 
   // Discover active TV sessions on local network
   const refreshSessions = useCallback(async () => {
@@ -130,7 +175,17 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...prev,
               slideshow_state: data.slideshow_state || prev.slideshow_state,
             } : prev);
-          } else if (data.event === 'disconnected') {
+          } else if (data.event === 'video_sync') {
+            setActiveSession((prev) => prev ? {
+              ...prev,
+              video_state: data.video_state || prev.video_state,
+            } : prev);
+          } else if (data.event === 'privacy_shield_change') {
+            setActiveSession((prev) => prev ? {
+              ...prev,
+              privacy_shield: data.privacy_shield,
+            } : prev);
+          } else if (data.event === 'disconnected' || data.event === 'tv_closed' || data.event === 'tv_socket_offline') {
             setActiveSession(null);
             if (typeof window !== 'undefined') {
               localStorage.removeItem('memorypics_cast_session_id');
@@ -235,6 +290,21 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (typeof window !== 'undefined') {
         localStorage.setItem('memorypics_cast_session_id', data.session_id);
       }
+
+      // Remember paired TV device for 1-click reconnecting
+      setPairedTvs((prev) => {
+        const entry: PairedTvDevice = {
+          session_id: data.session_id,
+          tv_name: data.session?.tv_name || 'Smart TV Lounge',
+          pin,
+          last_connected: new Date().toISOString(),
+        };
+        const updated = [entry, ...prev.filter((t) => t.pin !== pin && t.session_id !== data.session_id)].slice(0, 5);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('memorypics_paired_tvs', JSON.stringify(updated));
+        }
+        return updated;
+      });
 
       // If there was pending media, cast it now!
       if (pendingMediaId) {
@@ -394,6 +464,57 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
   }, [activeSession, API_URL]);
 
+  // Video Remote Controls (Seek & Volume)
+  const seekVideo = useCallback(async (timeSec: number) => {
+    if (!activeSession) return;
+    try {
+      await fetch(`${API_URL}/api/v1/cast/session/${activeSession.session_id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'video_seek', time_sec: timeSec }),
+      });
+    } catch {}
+  }, [activeSession, API_URL]);
+
+  const setVideoVolume = useCallback(async (volume: number, isMuted?: boolean) => {
+    if (!activeSession) return;
+    try {
+      await fetch(`${API_URL}/api/v1/cast/session/${activeSession.session_id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'video_volume', volume, is_muted: isMuted }),
+      });
+    } catch {}
+  }, [activeSession, API_URL]);
+
+  // Virtual Laser Pointer
+  const sendLaserPointer = useCallback(async (x: number, y: number, active: boolean) => {
+    if (!activeSession) return;
+    try {
+      await fetch(`${API_URL}/api/v1/cast/session/${activeSession.session_id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'laser_pointer', laser_x: x, laser_y: y, laser_active: active }),
+      });
+    } catch {}
+  }, [activeSession, API_URL]);
+
+  // Privacy Shield Toggle
+  const togglePrivacyShield = useCallback(async () => {
+    if (!activeSession) return;
+    try {
+      const res = await fetch(`${API_URL}/api/v1/cast/session/${activeSession.session_id}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'set_privacy_shield' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setActiveSession(data.session);
+      }
+    } catch {}
+  }, [activeSession, API_URL]);
+
   const disconnectTv = useCallback(async () => {
     if (!activeSession) return;
     try {
@@ -416,6 +537,7 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isCasting,
         castModalOpen,
         availableSessions,
+        pairedTvs,
         setCastModalOpen,
         openCastModal,
         pairWithPin,
@@ -427,8 +549,13 @@ export const CastProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleTvPlay,
         setTvInterval,
         toggleTvMotion,
+        seekVideo,
+        setVideoVolume,
+        sendLaserPointer,
+        togglePrivacyShield,
         disconnectTv,
         refreshSessions,
+        forgetPairedTv,
       }}
     >
       {children}
