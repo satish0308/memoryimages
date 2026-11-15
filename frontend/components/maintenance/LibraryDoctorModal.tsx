@@ -14,8 +14,11 @@ import {
   RefreshCw, 
   ArrowRight,
   ShieldCheck,
-  Check
+  Check,
+  Clock,
+  Loader2
 } from 'lucide-react';
+import { useTaskQueue } from '@/context/TaskQueueContext';
 
 interface HealthAction {
   action: string;
@@ -61,9 +64,18 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
   const [fixingAction, setFixingAction] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
-  const fetchHealth = async () => {
+  const { activeTasks = [], refreshTasks } = useTaskQueue() || {};
+
+  const activeClipTask = activeTasks.find(
+    (t) => t.type === 'clip_index_all' && (t.status === 'running' || t.status === 'pending')
+  );
+  const activeRendTask = activeTasks.find(
+    (t) => t.type === 'pregenerate_1080p_renditions' && (t.status === 'running' || t.status === 'pending')
+  );
+
+  const fetchHealth = async (showSpinner: boolean = true) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const token = typeof window !== 'undefined' 
         ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) 
         : null;
@@ -81,16 +93,31 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
     } catch (e) {
       console.error('Failed to load library health data:', e);
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
   useEffect(() => {
     if (isOpen) {
-      fetchHealth();
+      fetchHealth(true);
       setActionMessage(null);
+      if (refreshTasks) refreshTasks();
     }
   }, [isOpen, apiUrl]);
+
+  // Auto-refresh while active tasks are running
+  useEffect(() => {
+    if (!isOpen) return;
+    const hasActive = activeClipTask || activeRendTask;
+    if (!hasActive) return;
+
+    const interval = setInterval(() => {
+      fetchHealth(false);
+      if (refreshTasks) refreshTasks();
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [isOpen, activeClipTask, activeRendTask]);
 
   const handleExecuteFix = async (action: string) => {
     try {
@@ -111,8 +138,9 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
       if (res.ok) {
         const result = await res.json();
         setActionMessage(result.message || 'Action executed successfully!');
-        // Refresh health data
-        fetchHealth();
+        // Refresh health data and active task queue
+        fetchHealth(false);
+        if (refreshTasks) refreshTasks();
       } else {
         const err = await res.json().catch(() => ({ detail: 'Failed to execute remedy.' }));
         setActionMessage(`Error: ${err.detail || 'Execution failed.'}`);
@@ -167,7 +195,7 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
 
           <div className="flex items-center gap-2">
             <button
-              onClick={fetchHealth}
+              onClick={() => fetchHealth(true)}
               disabled={loading}
               className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition"
               title="Re-run diagnostic scan"
@@ -307,39 +335,76 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
                   </h3>
 
                   <div className="space-y-2.5">
-                    {data.recommended_actions.map((act) => (
-                      <div
-                        key={act.action}
-                        className="p-4 bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-center justify-between gap-4 shadow-xs hover:border-emerald-500/50 transition"
-                      >
-                        <div className="space-y-1">
-                          <h4 className="text-xs font-bold text-slate-900 dark:text-white">
-                            {act.title}
-                          </h4>
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            {act.description}
-                          </p>
-                        </div>
+                    {data.recommended_actions.map((act) => {
+                      const activeTask = act.action === 'clip' ? activeClipTask : act.action === 'renditions' ? activeRendTask : null;
 
-                        <button
-                          onClick={() => handleExecuteFix(act.action)}
-                          disabled={fixingAction === act.action}
-                          className="flex-shrink-0 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50 shadow-sm shadow-emerald-600/20"
+                      return (
+                        <div
+                          key={act.action}
+                          className="p-4 bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs hover:border-emerald-500/50 transition"
                         >
-                          {fixingAction === act.action ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              <span>Fixing...</span>
-                            </>
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                                {act.title}
+                              </h4>
+                              {activeTask && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                  {activeTask.status === 'running' ? 'Active' : 'Queued'}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {act.description}
+                            </p>
+                          </div>
+
+                          {activeTask ? (
+                            <div className="flex-shrink-0 flex flex-col items-start sm:items-end gap-1.5 min-w-[200px] p-2.5 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="flex items-center justify-between w-full text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                <span className="flex items-center gap-1.5">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                                  {activeTask.status === 'running' ? `Running (${activeTask.progress}%)` : 'Queued in Worker'}
+                                </span>
+                                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                                  {activeTask.current_step > 0 
+                                    ? `${activeTask.current_step.toLocaleString()} / ${(activeTask.total_steps || 0).toLocaleString()}`
+                                    : 'In Queue'}
+                                </span>
+                              </div>
+                              <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                                <div 
+                                  className="bg-indigo-500 h-full rounded-full transition-all duration-300"
+                                  style={{ width: `${Math.max(4, activeTask.progress)}%` }}
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[200px]">
+                                {activeTask.message || 'Processing in background...'}
+                              </p>
+                            </div>
                           ) : (
-                            <>
-                              <span>{act.button_label}</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </>
+                            <button
+                              onClick={() => handleExecuteFix(act.action)}
+                              disabled={fixingAction === act.action}
+                              className="flex-shrink-0 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-50 shadow-sm shadow-emerald-600/20"
+                            >
+                              {fixingAction === act.action ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  <span>Fixing...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>{act.button_label}</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </>
+                              )}
+                            </button>
                           )}
-                        </button>
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

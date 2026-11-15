@@ -185,16 +185,22 @@ def execute_remedy_action(
         return FixActionResponse(
             action=action,
             status="enqueued",
-            message="Background CLIP multimodal indexing task enqueued.",
+            message=f"Dispatched CLIP AI indexing (Task {task.get('id')}). The background AI worker is actively indexing your photos.",
             details={"task_id": task.get("id")}
         )
     elif action == "gps":
         from app.api.media import interpolate_locations
-        res = interpolate_locations(window_hours=2.0, preview=False, limit=None, current_user=current_user, db=db)
+        res = interpolate_locations(window_hours=24.0, preview=False, limit=None, current_user=current_user, db=db)
+        matched = res.get('matched_count', 0)
+        msg = (
+            f"Successfully auto-geotagged {matched:,} photos from timeline proximity (within 24h window)."
+            if matched > 0
+            else "No unmapped photos were found within the 24h timeline window of your geotagged phone shots."
+        )
         return FixActionResponse(
             action=action,
             status="completed",
-            message=f"Successfully auto-geotagged {res.get('matched_count', 0)} photos from timeline proximity.",
+            message=msg,
             details=res
         )
     elif action == "passerby":
@@ -203,7 +209,7 @@ def execute_remedy_action(
         return FixActionResponse(
             action=action,
             status="completed",
-            message=f"Successfully hidden {res.get('hidden_count', 0)} passerby face clusters.",
+            message=f"Successfully hidden {res.get('hidden_count', 0)} passerby crowd face clusters.",
             details=res
         )
     elif action == "renditions":
@@ -211,7 +217,7 @@ def execute_remedy_action(
         return FixActionResponse(
             action=action,
             status="enqueued",
-            message="Background 1080p WebP rendition pre-generation enqueued.",
+            message=f"Dispatched 1080p WebP pre-generation (Task {task.get('id')}). Previews are rendering in the background worker.",
             details={"task_id": task.get("id")}
         )
     else:
