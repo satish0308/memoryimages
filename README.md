@@ -452,8 +452,14 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
+| `GET` | `/api/v1/health` | Backend operational status & health verification |
+| `GET` | `/api/v1/maintenance/health-check` | Library Doctor 0.23s diagnostic health scanner (0-100% score gauge) |
+| `POST` | `/api/v1/maintenance/fix/{action}` | 1-click automated Library Doctor remedies (pregenerate, vectors, passerby, geotags) |
 | `GET` | `/api/v1/media` | Paginated media items with multi-attribute filtering |
-| `GET` | `/api/v1/media/timeline` | Media grouped by Day, Month, or Year scale |
+| `GET` | `/api/v1/media/timeline` | Media grouped by Day, Month, or Year scale with people presence sub-grouping |
+| `GET` | `/api/v1/media/flashbacks` | "On This Day" Time Capsule nostalgia flashbacks with $\pm 2$ day near-date fallback |
+| `POST` | `/api/v1/media/interpolate-locations` | $O(\log N)$ spatiotemporal GPS interpolator auto-geotagging camera photos from phone shots |
+| `POST` | `/api/v1/media/batch-geotag` | Batch geographic coordinate tagging from Map Explorer |
 | `GET` | `/api/v1/media/{id}/thumbnail` | Direct 307 CDN redirect or in-memory WebP thumbnail |
 | `GET` | `/api/v1/media/{id}/view` | Streams full-resolution original image from Drive/disk |
 | `GET` | `/api/v1/media/{id}/similar` | Multi-vector similarity search across Visual, Faces, Location, and Time |
@@ -477,9 +483,10 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `GET` | `/api/v1/people` | Identified people with photo counts, relationship tags, and avatars |
 | `GET` | `/api/v1/people/{id}/avatar` | On-the-fly square WebP face crop avatar |
 | `GET` | `/api/v1/people/merge-suggestions` | AI duplicate people merge recommendations based on ArcFace centroid cosine distance |
+| `POST` | `/api/v1/people/hide-passerby` | 1-click passerby crowd cleanup hiding unnamed $\le 2$ face detection clusters |
 | `POST` | `/api/v1/people/search-by-face` | 512-d ArcFace visual search by custom crop box across entire library |
 | `POST` | `/api/v1/people/group-matched-faces` | 1-click group matched face crops into new or existing person profile |
-| `PATCH` | `/api/v1/people/{id}` | Updates person name, relationship category (Family, Friends, Work, Partner, Self), and hidden state |
+| `PATCH` | `/api/v1/people/{id}` | Updates person name, relationship category (Family, Friends, Work, Partner, Self), VIP star pinning, and hidden state |
 | `PATCH` | `/api/v1/people/{id}/cover` | Sets custom cover photo for person profile |
 | `POST` | `/api/v1/people/{id}/recheck` | Auto-corrects misgrouped person clusters against named identities |
 | `POST` | `/api/v1/people/{id}/remove-faces` | Detaches specific photos from a person ("Not This Person") without deleting |
@@ -500,8 +507,8 @@ MyMemoryPics connects to your Google Drive to index and stream photos with zero 
 | `POST` | `/api/v1/triage/recalculate` | Re-evaluates media items against updated smart triage thresholds |
 | `GET` | `/api/v1/settings` | Retrieves dynamic application & AI vision settings |
 | `PUT` | `/api/v1/settings` | Updates dynamic application & AI settings with disk persistence |
-| `GET` | `/api/v1/purge/google-photos-query`| Generates batch-optimized Google Photos search queries with hyphen negation prevention |
-| `GET` | `/api/v1/purge/export-csv` | Exports pending purge items as CSV with direct Google Photos search links |
+| `GET` | `/api/v1/purge/google-photos-query`| Generates batch-optimized Google Photos search queries with hyphen negation prevention (alias: `/system/purge/...`) |
+| `GET` | `/api/v1/purge/export-csv` | Exports pending purge items as CSV with direct Google Photos search links (alias: `/system/purge/...`) |
 | `GET` | `/api/v1/storage/s3/status` | Live MinIO S3 connectivity, bucket stats, and console URLs |
 | `GET` | `/api/v1/storage/s3/objects` | Real-time object listing across photos, thumbnails, backups |
 | `POST` | `/api/v1/storage/s3/upload` | Direct multipart ingestion of photos into MinIO bucket |

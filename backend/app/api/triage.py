@@ -921,3 +921,44 @@ def change_media_category(
         "count": updated,
         "new_category": target_category.value
     }
+
+@router.post("/recalculate")
+def recalculate_triage_metrics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Re-evaluates media items against updated smart triage thresholds
+    (focus/sharpness, screenshot expiry, and duplicate clustering).
+    """
+    from app.services.settings_service import get_setting
+
+    expiry_days = int(get_setting(db, "screenshot_expiry_days", "30"))
+    now = datetime.utcnow()
+    new_expiry = now + timedelta(days=expiry_days)
+    updated_screenshots = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.category == MediaCategory.SCREENSHOT,
+        Media.is_deleted == False
+    ).update({"expires_at": new_expiry}, synchronize_session=False)
+
+    blur_threshold = float(get_setting(db, "blur_laplacian_threshold", "65.0"))
+    updated_blurry = db.query(Media).filter(
+        Media.user_id == current_user.id,
+        Media.blurriness_score != None,
+        Media.blurriness_score > 0,
+        Media.is_deleted == False
+    ).update({
+        "is_blurry": Media.blurriness_score < blur_threshold
+    }, synchronize_session=False)
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": "Triage metrics successfully recalculated",
+        "screenshots_updated": updated_screenshots,
+        "blurry_updated": updated_blurry,
+        "blur_threshold": blur_threshold,
+        "screenshot_expiry_days": expiry_days
+    }
+

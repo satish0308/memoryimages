@@ -11,6 +11,7 @@ api_router.include_router(database.router, prefix="/system/database", tags=["Dua
 api_router.include_router(backup.router, prefix="/system/backups", tags=["System Backups & Disaster Recovery"])
 api_router.include_router(s3_storage.router, prefix="/storage/s3", tags=["S3 / MinIO Object Storage"])
 api_router.include_router(purge.router, prefix="/system/purge", tags=["Host Disk Purge"])
+api_router.include_router(purge.router, prefix="/purge", tags=["Host Disk Purge"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["Background Tasks & Worker"])
 api_router.include_router(cast.router, prefix="/cast", tags=["Smart TV Cast & Lounge"])
 api_router.include_router(media.router, prefix="/media", tags=["Media"])
