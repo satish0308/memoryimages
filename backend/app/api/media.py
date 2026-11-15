@@ -1377,8 +1377,25 @@ def get_thumbnail(
             
     thumb_path = media.thumbnail_256_path if size in ("256", "512") else media.thumbnail_1080_path
 
+    is_media_video = (media.mime_type or "").startswith("video/") or (media.original_path and os.path.splitext(media.original_path)[1].lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"})
+
+    # On-demand video cover frame extraction or fallback if thumbnail is missing
+    if is_media_video and (not thumb_path or not os.path.isfile(thumb_path)):
+        if media.thumbnail_256_path and os.path.isfile(media.thumbnail_256_path):
+            thumb_path = media.thumbnail_256_path
+        elif media.original_path and os.path.isfile(media.original_path):
+            try:
+                from app.services.video_engine import extract_video_cover_thumbnail
+                extracted = extract_video_cover_thumbnail(media.id, media.original_path, media.duration_seconds or 0.0)
+                if extracted and os.path.isfile(extracted):
+                    media.thumbnail_256_path = extracted
+                    db.commit()
+                    thumb_path = extracted
+            except Exception as vid_err:
+                logger.warning(f"On-demand video cover extraction failed for media {media.id}: {vid_err}")
+
     # On-demand high-definition 1080p preview generation if missing for local images
-    if size in ("1080", "2048") and (not thumb_path or not os.path.isfile(thumb_path)):
+    if not is_media_video and size in ("1080", "2048") and (not thumb_path or not os.path.isfile(thumb_path)):
         if media.source_type == SourceType.LOCAL and media.original_path and os.path.isfile(media.original_path):
             try:
                 from app.services.thumbnail import open_image_for_thumbnail
@@ -1427,11 +1444,19 @@ def get_thumbnail(
             )
         
     if media.original_path and os.path.isfile(media.original_path):
-        return FileResponse(
-            media.original_path,
-            media_type=media.mime_type or "image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400"}
-        )
+        # Never stream multi-gigabyte video original files as image thumbnails!
+        if not is_media_video:
+            return FileResponse(
+                media.original_path,
+                media_type=media.mime_type or "image/jpeg",
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
+        elif media.thumbnail_256_path and os.path.isfile(media.thumbnail_256_path):
+            return FileResponse(
+                media.thumbnail_256_path,
+                media_type="image/webp",
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
 
     # 3. In-memory stream fallback from Google Drive
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id:
@@ -1495,7 +1520,7 @@ def send_range_file(file_path: str, range_header: Optional[str], media_type: str
                 f.seek(start)
                 remaining = chunk_size
                 while remaining > 0:
-                    to_read = min(remaining, 262144)  # 256KB chunks
+                    to_read = min(remaining, 524288)  # 512KB chunks for smooth local video playback
                     data = f.read(to_read)
                     if not data:
                         break
@@ -1716,6 +1741,24 @@ def view_original(
 
     storage_mode = get_storage_mode(db)
 
+    # Detect correct media_type for videos and images
+    resolved_mime = media.mime_type
+    filename_for_ext = media.original_path or media.filename or ""
+    ext = os.path.splitext(filename_for_ext)[1].lower()
+    if not resolved_mime or resolved_mime in ("application/octet-stream", "image/jpeg"):
+        if ext == ".mp4":
+            resolved_mime = "video/mp4"
+        elif ext in (".mov", ".qt"):
+            resolved_mime = "video/quicktime"
+        elif ext == ".mkv":
+            resolved_mime = "video/x-matroska"
+        elif ext == ".webm":
+            resolved_mime = "video/webm"
+        elif ext == ".m4v":
+            resolved_mime = "video/x-m4v"
+        elif ext == ".avi":
+            resolved_mime = "video/x-msvideo"
+
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (storage_mode == "in_memory" or not media.original_path or not os.path.isfile(media.original_path)):
         try:
             from app.services.drive_cache import stream_google_drive_range
@@ -1725,7 +1768,7 @@ def view_original(
                 db,
                 range_header=range_header,
                 user_id=current_user.id if current_user else None,
-                media_type=media.mime_type or "video/mp4"
+                media_type=resolved_mime or "video/mp4"
             )
         except HTTPException:
             raise
@@ -1737,7 +1780,7 @@ def view_original(
             from app.services.s3_storage import stream_s3_file
             return StreamingResponse(
                 stream_s3_file(media.source_id),
-                media_type=media.mime_type or "image/jpeg",
+                media_type=resolved_mime or "image/jpeg",
                 headers={"Content-Disposition": "inline"}
             )
         except Exception as e:
@@ -1748,7 +1791,7 @@ def view_original(
         return send_range_file(
             media.original_path,
             range_header=range_header,
-            media_type=media.mime_type or "image/jpeg"
+            media_type=resolved_mime or "image/jpeg"
         )
 
     raise HTTPException(status_code=404, detail="Original image not found")

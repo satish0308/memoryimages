@@ -38,6 +38,9 @@ export interface DuplicateItem {
   is_best_shot?: boolean;
   has_faces?: boolean;
   has_text?: boolean;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 export interface DuplicateCluster {

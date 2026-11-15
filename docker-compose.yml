@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: memorypics-backend
+    # container_name: memorypics-backend (omitted to enable zero-downtime docker-rollout)
     restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -153,7 +153,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: memorypics-frontend
+    # container_name: memorypics-frontend (omitted to enable zero-downtime docker-rollout)
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-3000}:3000"

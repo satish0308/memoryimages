@@ -248,6 +248,7 @@ def detect_burst_clusters(
             q = calculate_photo_quality(m)
             has_people = m.id in media_ids_with_faces
             has_text = bool(m.extracted_text and len(m.extracted_text.strip()) > 0)
+            is_vid = (m.mime_type or "").startswith("video/") or os.path.splitext(m.filename or "")[1].lower() in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
             scored_items.append({
                 "id": m.id,
                 "filename": m.filename,
@@ -259,6 +260,9 @@ def detect_burst_clusters(
                 "perceptual_hash": m.perceptual_hash,
                 "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256",
                 "preview_url": f"/api/v1/media/{m.id}/thumbnail?size=1080",
+                "is_video": is_vid,
+                "duration_seconds": m.duration_seconds,
+                "mime_type": m.mime_type,
                 "sharpness_score": q["sharpness_score"],
                 "exposure_score": q.get("exposure_score", 82.0),
                 "expression_score": q["expression_score"],

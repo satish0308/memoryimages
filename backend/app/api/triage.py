@@ -20,6 +20,12 @@ from app.services.burst_engine import (
 
 router = APIRouter()
 
+def is_video_media(item: Media) -> bool:
+    if item.mime_type and item.mime_type.startswith("video/"):
+        return True
+    ext = os.path.splitext(item.filename or "")[1].lower()
+    return ext in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".flv", ".wmv", ".ts"}
+
 def is_file_on_readonly_mount(file_path: Optional[str]) -> bool:
     """Returns True if the file or its directory resides on a read-only filesystem."""
     if not file_path:
@@ -224,7 +230,10 @@ def get_screenshots(
             "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            "is_video": is_video_media(item),
+            "duration_seconds": item.duration_seconds,
+            "mime_type": item.mime_type
         })
     return results
 
@@ -284,7 +293,10 @@ def get_bills_and_receipts(
             "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            "is_video": is_video_media(item),
+            "duration_seconds": item.duration_seconds,
+            "mime_type": item.mime_type
         })
     return results
 
@@ -510,7 +522,10 @@ def get_memes_and_graphics(
             "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            "is_video": is_video_media(item),
+            "duration_seconds": item.duration_seconds,
+            "mime_type": item.mime_type
         })
     return results
 
@@ -576,7 +591,10 @@ def get_large_storage_files(
             "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            "is_video": is_video_media(item),
+            "duration_seconds": item.duration_seconds,
+            "mime_type": item.mime_type
         })
     return results
 
@@ -689,7 +707,10 @@ def get_blurry_photos(
             "text_preview": text_preview,
             "source_type": (item.source_type.value if hasattr(item.source_type, "value") else str(item.source_type)) if item.source_type else "local",
             "source_id": item.source_id,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256",
+            "is_video": is_video_media(item),
+            "duration_seconds": item.duration_seconds,
+            "mime_type": item.mime_type
         })
     return results
 
@@ -862,7 +883,10 @@ def get_wallpapers(
             "text_preview": text_preview,
             "source_type": (m.source_type.value if hasattr(m.source_type, "value") else str(m.source_type)) if m.source_type else "local",
             "source_id": m.source_id,
-            "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256"
+            "thumbnail_url": f"/api/v1/media/{m.id}/thumbnail?size=256",
+            "is_video": is_video_media(m),
+            "duration_seconds": m.duration_seconds,
+            "mime_type": m.mime_type
         })
     return results
 

@@ -33,7 +33,9 @@ import {
   ShieldCheck,
   Tag,
   Filter,
-  Users
+  Users,
+  Play,
+  Video
 } from 'lucide-react';
 
 import { DuplicateResolverModal, DuplicateCluster } from '@/components/triage/DuplicateResolverModal';
@@ -87,6 +89,9 @@ interface ScreenshotItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 interface WallpaperItem {
@@ -104,6 +109,9 @@ interface WallpaperItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 interface BillItem {
@@ -119,6 +127,9 @@ interface BillItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 interface BlurryItem {
@@ -138,6 +149,9 @@ interface BlurryItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 interface LargeFileItem {
@@ -156,6 +170,9 @@ interface LargeFileItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 interface MemeItem {
@@ -170,6 +187,9 @@ interface MemeItem {
   face_count?: number;
   has_text?: boolean;
   text_preview?: string | null;
+  is_video?: boolean;
+  duration_seconds?: number | null;
+  mime_type?: string;
 }
 
 export type TimeGrouping = 'week' | 'month' | 'year' | 'all';
@@ -765,6 +785,11 @@ export default function TriagePage() {
       ];
       const found = allItems.find((i) => i.id === id);
       if (found) {
+        const isVideo = Boolean(
+          (found as any).is_video ||
+          (found.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(found.filename)) ||
+          ((found as any).mime_type && (found as any).mime_type.startsWith('video/'))
+        );
         setInspectingPhoto({
           id: found.id,
           filename: found.filename,
@@ -777,6 +802,8 @@ export default function TriagePage() {
           thumbnail_url: found.thumbnail_url,
           source_type: 'source_type' in found ? (found.source_type as any) : 'local',
           source_id: 'source_id' in found ? (found.source_id as any) : undefined,
+          is_video: isVideo,
+          duration_seconds: (found as any).duration_seconds || undefined,
         });
       }
     },
@@ -3016,6 +3043,11 @@ export default function TriagePage() {
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                           {visibleItems.map((l) => {
                             const isSelected = selectedIds.includes(l.id);
+                            const isItemVideo = Boolean(
+                              l.is_video ||
+                              (l.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(l.filename)) ||
+                              (l.mime_type && l.mime_type.startsWith('video/'))
+                            );
                             return (
                               <div
                                 key={l.id}
@@ -3023,7 +3055,7 @@ export default function TriagePage() {
                                 onPointerDown={(e) => handlePointerDown(e, l.id)}
                                 onClick={(e) => handleItemClick(l.id, e, currentTabItemIds)}
                                 onDoubleClick={(e) => handleItemDoubleClick(l.id, e)}
-                                title="Click to select/deselect • Double-click to view full image"
+                                title={isItemVideo ? "Click to select • Double-click to play video" : "Click to select • Double-click to view"}
                                 className={`group relative aspect-square bg-slate-100 dark:bg-slate-800 rounded-2xl overflow-hidden cursor-pointer border-2 transition-all hover:scale-[1.02] shadow-sm select-none ${
                                   isSelected ? 'border-red-500 ring-2 ring-red-500/30' : 'border-transparent'
                                 }`}
@@ -3036,12 +3068,30 @@ export default function TriagePage() {
                                   draggable={false}
                                 />
 
+                                {isItemVideo && (
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="w-10 h-10 rounded-full bg-black/50 backdrop-blur-sm border border-white/40 flex items-center justify-center text-white shadow-lg group-hover:scale-110 group-hover:bg-red-600/90 transition-all">
+                                      <Play className="w-5 h-5 fill-current ml-0.5" />
+                                    </div>
+                                  </div>
+                                )}
+
                                 {/* Badges & Checkbox */}
                                 <div className="absolute top-2 inset-x-2 flex justify-between items-center pointer-events-auto">
                                   <div className="flex items-center gap-1">
                                     <span className="bg-red-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                                       {l.file_size_mb} MB
                                     </span>
+                                    {isItemVideo && (
+                                      <span className="bg-blue-600/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm backdrop-blur-md flex items-center gap-1">
+                                        <Play className="w-2.5 h-2.5 fill-current" />
+                                        <span>
+                                          {l.duration_seconds && l.duration_seconds > 0
+                                            ? `${Math.floor(l.duration_seconds / 60)}:${String(Math.round(l.duration_seconds % 60)).padStart(2, '0')}`
+                                            : 'Video'}
+                                        </span>
+                                      </span>
+                                    )}
                                     {l.has_faces && (
                                       <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-md bg-purple-600/90 text-white shadow-sm flex items-center gap-0.5">
                                         <Users className="w-2.5 h-2.5" />

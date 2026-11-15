@@ -268,19 +268,37 @@ def stream_google_drive_range(
         raise HTTPException(status_code=502, detail="Google Drive credentials unavailable")
 
     try:
+        from datetime import datetime, timedelta
         creds_info = json.loads(source.oauth_tokens_json)
+        expiry_dt = None
+        if creds_info.get("expiry"):
+            try:
+                exp_val = creds_info["expiry"]
+                if isinstance(exp_val, str):
+                    expiry_dt = datetime.fromisoformat(exp_val.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                pass
+
         credentials = Credentials(
             token=creds_info.get("token"),
             refresh_token=creds_info.get("refresh_token"),
             token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
             client_id=creds_info.get("client_id"),
             client_secret=creds_info.get("client_secret"),
-            scopes=creds_info.get("scopes")
+            scopes=creds_info.get("scopes"),
+            expiry=expiry_dt
         )
-        if not credentials.valid and credentials.refresh_token:
+        should_refresh = (
+            not credentials.valid
+            or credentials.expired
+            or (expiry_dt and expiry_dt <= datetime.utcnow() + timedelta(minutes=5))
+        )
+        if should_refresh and credentials.refresh_token:
             from google.auth.transport.requests import Request as GRequest
             credentials.refresh(GRequest())
             creds_info["token"] = credentials.token
+            if credentials.expiry:
+                creds_info["expiry"] = credentials.expiry.isoformat()
             source.oauth_tokens_json = json.dumps(creds_info)
             db.commit()
         token = credentials.token
@@ -298,17 +316,37 @@ def stream_google_drive_range(
 
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
     try:
-        resp = session.get(url, headers=headers, stream=True, timeout=20)
+        resp = session.get(url, headers=headers, stream=True, timeout=25)
     except Exception as e:
         logger.error(f"[drive_cache] Range stream error for {file_id}: {e}")
         raise HTTPException(status_code=502, detail=f"Google Drive connection failed: {e}")
+
+    # Self-heal on HTTP 401 (token expired / invalidated during request)
+    if resp.status_code == 401 and credentials.refresh_token:
+        try:
+            logger.info(f"[drive_cache] Received 401 for file {file_id}. Refreshing token and retrying stream...")
+            from google.auth.transport.requests import Request as GRequest
+            credentials.refresh(GRequest())
+            creds_info["token"] = credentials.token
+            if credentials.expiry:
+                creds_info["expiry"] = credentials.expiry.isoformat()
+            source.oauth_tokens_json = json.dumps(creds_info)
+            db.commit()
+            headers["Authorization"] = f"Bearer {credentials.token}"
+            resp = session.get(url, headers=headers, stream=True, timeout=25)
+        except Exception as retry_err:
+            logger.error(f"[drive_cache] Retry after 401 failed for {file_id}: {retry_err}")
 
     if resp.status_code not in (200, 206):
         raise HTTPException(status_code=resp.status_code, detail=f"Google Drive error {resp.status_code}")
 
     content_range = resp.headers.get("Content-Range")
     content_length = resp.headers.get("Content-Length")
-    resp_content_type = resp.headers.get("Content-Type") or media_type or "video/mp4"
+    drive_ct = resp.headers.get("Content-Type")
+    if drive_ct and drive_ct != "application/octet-stream":
+        resp_content_type = drive_ct
+    else:
+        resp_content_type = media_type or "video/mp4"
 
     response_headers = {
         "Accept-Ranges": "bytes",
@@ -322,7 +360,7 @@ def stream_google_drive_range(
 
     def iter_chunks():
         try:
-            for chunk in resp.iter_content(chunk_size=1024 * 64):
+            for chunk in resp.iter_content(chunk_size=1024 * 256):  # 256KB chunks for smooth playback
                 if chunk:
                     yield chunk
         finally:

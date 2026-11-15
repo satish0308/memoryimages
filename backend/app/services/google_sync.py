@@ -471,19 +471,38 @@ def delete_file_from_google_drive(db: Session, file_id: str, user_id: int, perma
             return False
 
         import google.auth.transport.requests
+        from datetime import datetime, timedelta
         creds_info = json.loads(source.oauth_tokens_json)
+        expiry_dt = None
+        if creds_info.get("expiry"):
+            try:
+                exp_val = creds_info["expiry"]
+                if isinstance(exp_val, str):
+                    expiry_dt = datetime.fromisoformat(exp_val.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                pass
+
         credentials = Credentials(
             token=creds_info.get("token"),
             refresh_token=creds_info.get("refresh_token"),
             token_uri=creds_info.get("token_uri"),
             client_id=creds_info.get("client_id"),
             client_secret=creds_info.get("client_secret"),
-            scopes=creds_info.get("scopes")
+            scopes=creds_info.get("scopes"),
+            expiry=expiry_dt
         )
-        if credentials.expired and credentials.refresh_token:
+        should_refresh = (
+            not credentials.valid
+            or credentials.expired
+            or (expiry_dt and expiry_dt <= datetime.utcnow() + timedelta(minutes=5))
+        )
+        if should_refresh and credentials.refresh_token:
             req_refresh = google.auth.transport.requests.Request()
             credentials.refresh(req_refresh)
-            source.oauth_tokens_json = credentials.to_json()
+            creds_info["token"] = credentials.token
+            if credentials.expiry:
+                creds_info["expiry"] = credentials.expiry.isoformat()
+            source.oauth_tokens_json = json.dumps(creds_info)
             db.commit()
 
         service = build("drive", "v3", credentials=credentials)
@@ -674,20 +693,38 @@ def get_google_drive_service(db: Session, user_id: int):
         return None
 
     try:
+        from datetime import datetime, timedelta
         creds_info = json.loads(source.oauth_tokens_json)
+        expiry_dt = None
+        if creds_info.get("expiry"):
+            try:
+                exp_val = creds_info["expiry"]
+                if isinstance(exp_val, str):
+                    expiry_dt = datetime.fromisoformat(exp_val.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                pass
+
         credentials = Credentials(
             token=creds_info.get("token"),
             refresh_token=creds_info.get("refresh_token"),
             token_uri=creds_info.get("token_uri") or "https://oauth2.googleapis.com/token",
             client_id=creds_info.get("client_id") or settings.GOOGLE_CLIENT_ID,
             client_secret=creds_info.get("client_secret") or settings.GOOGLE_CLIENT_SECRET,
-            scopes=creds_info.get("scopes") or SCOPES
+            scopes=creds_info.get("scopes") or SCOPES,
+            expiry=expiry_dt
         )
 
         from google.auth.transport.requests import Request
-        if credentials.expired and credentials.refresh_token:
+        should_refresh = (
+            not credentials.valid
+            or credentials.expired
+            or (expiry_dt and expiry_dt <= datetime.utcnow() + timedelta(minutes=5))
+        )
+        if should_refresh and credentials.refresh_token:
             credentials.refresh(Request())
             creds_info["token"] = credentials.token
+            if credentials.expiry:
+                creds_info["expiry"] = credentials.expiry.isoformat()
             source.oauth_tokens_json = json.dumps(creds_info)
             db.commit()
 

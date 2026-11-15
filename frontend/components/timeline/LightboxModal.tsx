@@ -151,6 +151,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   // AI Image Enhancement Studio State
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [videoPlaybackError, setVideoPlaybackError] = useState<string | null>(null);
+  const isCurrentVideo = Boolean(
+    photo?.is_video ||
+    (photo?.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(photo.filename))
+  );
   const [selectedPreset, setSelectedPreset] = useState<'auto_magic' | 'shadow_fix' | 'dehaze' | 'super_res'>('auto_magic');
   const [sliderPos, setSliderPos] = useState(50);
   const [isDraggingSlider, setIsDraggingSlider] = useState(false);
@@ -548,7 +553,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       setEnhanceParams(null);
     }
 
-    if (!photo.is_video && !photo.enhancement_data) {
+    if (!isCurrentVideo && !photo.enhancement_data) {
       fetch(`${apiUrl}/api/v1/media/${photo.id}/enhance-params`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -558,7 +563,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         })
         .catch(() => {});
     }
-  }, [photo?.id, apiUrl]);
+  }, [photo?.id, isCurrentVideo, apiUrl]);
 
   const handleToggleEnhance = async () => {
     if (!photo) return;
@@ -596,6 +601,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsHighResLoaded(false);
+    setVideoPlaybackError(null);
     setEditingFaceId(null);
     setIsAddingFace(false);
     setIsEditingLocation(false);
@@ -620,9 +626,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=256${tokenParam}`;
     setCurrentDisplaySrc(initialThumb);
 
-    // Step 2: Background preload 1080p preview for full crisp quality
+    // Step 2: Background preload 1080p preview for full crisp quality (only for photos, never videos)
     let isMounted = true;
-    if (!photo.is_video) {
+    if (!isCurrentVideo) {
       const preview1080Url = `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
       const img1080 = new window.Image();
       img1080.src = preview1080Url;
@@ -650,7 +656,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [photo?.id, apiUrl]);
+  }, [photo?.id, isCurrentVideo, apiUrl]);
 
   // Anticipatory zero-latency pre-fetching for adjacent photos (N+1 and N-1)
   useEffect(() => {
@@ -659,7 +665,11 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     const tokenParam = token ? `&token=${token}` : '';
 
     const prefetchItem = (item?: MediaItem | null) => {
-      if (!item || item.is_video || !item.id) return;
+      const itemIsVideo = Boolean(
+        item?.is_video ||
+        (item?.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(item.filename))
+      );
+      if (!item || itemIsVideo || !item.id) return;
       // Preload 1080p preview image into browser cache
       const img = new window.Image();
       img.src = `${apiUrl}/api/v1/media/${item.id}/thumbnail?size=1080${tokenParam}`;
@@ -676,7 +686,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
   // On-demand original raw download only when zooming deep (> 1.2x) to save network & memory
   useEffect(() => {
-    if (!photo?.id || photo.is_video || isHighResLoaded || zoom <= 1.2) return;
+    if (!photo?.id || isCurrentVideo || isHighResLoaded || zoom <= 1.2) return;
 
     let isMounted = true;
     const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
@@ -883,7 +893,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         setShowShareModal(true);
       } else if (e.key.toLowerCase() === 's') {
         window.open(`/similar?id=${photo.id}`, '_blank');
-      } else if (e.key.toLowerCase() === 'e' && !photo.is_video) {
+      } else if (e.key.toLowerCase() === 'e' && !isCurrentVideo) {
         window.location.href = `/edit?id=${photo.id}`;
       }
     };
@@ -979,7 +989,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
-          {!photo.is_video && (
+          {!isCurrentVideo && (
             <a
               href={`/edit?id=${photo.id}`}
               className="px-3 py-2 bg-indigo-600/90 hover:bg-indigo-600 text-white font-semibold text-xs rounded-full transition shadow-lg backdrop-blur-sm cursor-pointer flex items-center gap-1.5 border border-indigo-400/40 hover:scale-105"
@@ -1199,20 +1209,47 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               transition: isDragging ? 'none' : 'transform 75ms ease-out',
             }}
           >
-            {photo.is_video ? (
+            {isCurrentVideo ? (
               <div className="flex flex-col items-center gap-3">
                 <video
                   ref={videoRef}
                   src={videoUrl}
                   controls
                   autoPlay
+                  playsInline
+                  preload="metadata"
                   className="max-h-[75vh] max-w-full rounded-xl shadow-2xl bg-black"
                   onLoadedMetadata={(e) => {
+                    setVideoPlaybackError(null);
                     if (photo.matched_timestamp) {
                       e.currentTarget.currentTime = photo.matched_timestamp;
                     }
                   }}
+                  onError={(e) => {
+                    console.error('Video playback error:', e);
+                    const mediaError = (e.currentTarget as HTMLVideoElement).error;
+                    let msg = 'Playback failed. The video format or codec might not be supported natively by your browser.';
+                    if (mediaError?.code === 4) {
+                      msg = 'Video format or container is not supported natively by your browser (e.g. MKV or HEVC).';
+                    } else if (mediaError?.code === 2) {
+                      msg = 'Network connection error while streaming video.';
+                    }
+                    setVideoPlaybackError(msg);
+                  }}
                 />
+                {videoPlaybackError && (
+                  <div className="p-3 bg-red-950/80 border border-red-800 rounded-xl text-center text-xs text-red-200 max-w-lg space-y-2">
+                    <p>{videoPlaybackError}</p>
+                    <a
+                      href={videoUrl}
+                      download={photo.filename}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white rounded-lg font-semibold text-xs transition cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download Video File ({photo.filename})</span>
+                    </a>
+                  </div>
+                )}
                 {photo.matched_timestamp_label && (
                   <div className="bg-rose-600/95 text-white text-xs px-3.5 py-1.5 rounded-full shadow-xl flex items-center gap-2.5 animate-fadeIn">
                     <Sparkles className="w-3.5 h-3.5 text-amber-300 flex-shrink-0" />
@@ -1641,7 +1678,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             <div className="h-4 w-px bg-slate-700" />
 
             {/* Auto-Enhance Engine */}
-            {photo && !photo.is_video && (
+            {photo && !isCurrentVideo && (
               <>
                 <button
                   onClick={handleToggleEnhance}
@@ -2073,14 +2110,14 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 </div>
 
                 {/* AI Emotion, Mood & Visual Intelligence Card */}
-                {(photo.mood || photo.dominant_color || photo.is_video) && (
+                {(photo.mood || photo.dominant_color || isCurrentVideo) && (
                   <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/30 to-slate-900/60 rounded-xl p-3.5 space-y-3 border border-indigo-500/20 shadow-md">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-indigo-300 font-semibold text-xs">
                         <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
                         <span>AI Visual Intelligence</span>
                       </div>
-                      {photo.is_video && (
+                      {isCurrentVideo && (
                         <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                           <Play className="w-2.5 h-2.5 fill-rose-300" />
                           Video ({photo.duration_seconds ? `${photo.duration_seconds}s` : 'Clip'})
@@ -2496,7 +2533,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <Download className="w-3.5 h-3.5" />
               Download
             </a>
-            {!photo.is_video && (
+            {!isCurrentVideo && (
               <a
                 href={`/edit?id=${photo.id}`}
                 className="p-2 rounded-lg border border-indigo-500/50 bg-indigo-950/40 hover:bg-indigo-900/60 text-indigo-300 hover:text-white transition"
