@@ -228,25 +228,25 @@ def semantic_search(
             if user_id:
                 params["user_id"] = user_id
                 sql = text("""
-                    SELECT me.media_id, (1.0 - (me.embedding <=> :q_vec::vector)) AS score
+                    SELECT me.media_id, (1.0 - (me.embedding <=> CAST(:q_vec AS vector))) AS score
                     FROM media_embeddings me
                     JOIN media m ON m.id = me.media_id
                     WHERE me.embedding IS NOT NULL 
                       AND m.is_deleted = false 
                       AND m.user_id = :user_id 
-                      AND (me.embedding <=> :q_vec::vector) <= :max_dist
-                    ORDER BY me.embedding <=> :q_vec::vector ASC
+                      AND (me.embedding <=> CAST(:q_vec AS vector)) <= :max_dist
+                    ORDER BY me.embedding <=> CAST(:q_vec AS vector) ASC
                     LIMIT :top_k;
                 """)
             else:
                 sql = text("""
-                    SELECT me.media_id, (1.0 - (me.embedding <=> :q_vec::vector)) AS score
+                    SELECT me.media_id, (1.0 - (me.embedding <=> CAST(:q_vec AS vector))) AS score
                     FROM media_embeddings me
                     JOIN media m ON m.id = me.media_id
                     WHERE me.embedding IS NOT NULL 
                       AND m.is_deleted = false 
-                      AND (me.embedding <=> :q_vec::vector) <= :max_dist
-                    ORDER BY me.embedding <=> :q_vec::vector ASC
+                      AND (me.embedding <=> CAST(:q_vec AS vector)) <= :max_dist
+                    ORDER BY me.embedding <=> CAST(:q_vec AS vector) ASC
                     LIMIT :top_k;
                 """)
             rows = db.execute(sql, params).fetchall()
@@ -254,6 +254,10 @@ def semantic_search(
                 top_results = [(r[0], float(r[1])) for r in rows]
         except Exception as e:
             logger.warning(f"Native PostgreSQL pgvector search failed, falling back to in-memory matrix: {e}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
             top_results = None
 
     if top_results is None:
