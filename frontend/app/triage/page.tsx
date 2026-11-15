@@ -746,6 +746,46 @@ export default function TriagePage() {
     return [];
   }, [activeTab, filteredScreenshots, filteredWallpapers, filteredBills, filteredBlurry, filteredLargeFiles, filteredMemes, filteredDuplicates]);
 
+  // Full MediaItem list for current active tab to power Lightbox Next/Prev scrolling and delete advance
+  const currentTabMediaItems = useMemo((): MediaItem[] => {
+    let rawList: any[] = [];
+    if (activeTab === 'screenshots') rawList = filteredScreenshots;
+    else if (activeTab === 'wallpapers') rawList = filteredWallpapers;
+    else if (activeTab === 'bills') rawList = filteredBills;
+    else if (activeTab === 'blurry') rawList = filteredBlurry;
+    else if (activeTab === 'large_files') rawList = filteredLargeFiles;
+    else if (activeTab === 'memes') rawList = filteredMemes;
+    else if (activeTab === 'duplicates') rawList = filteredDuplicates.flatMap((d) => d.items);
+
+    return rawList.map((found) => {
+      const isVideo = Boolean(
+        found.is_video ||
+        (found.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(found.filename)) ||
+        (found.mime_type && found.mime_type.startsWith('video/'))
+      );
+      return {
+        id: found.id,
+        filename: found.filename,
+        category: found.category || 'memory',
+        width: found.width || 1920,
+        height: found.height || 1080,
+        captured_at: found.captured_at || new Date().toISOString(),
+        is_favorite: false,
+        is_blurry: false,
+        thumbnail_url: found.thumbnail_url,
+        source_type: found.source_type || 'local',
+        source_id: found.source_id,
+        is_video: isVideo,
+        duration_seconds: found.duration_seconds,
+      };
+    });
+  }, [activeTab, filteredScreenshots, filteredWallpapers, filteredBills, filteredBlurry, filteredLargeFiles, filteredMemes, filteredDuplicates]);
+
+  const currentTriagePhotoIndex = useMemo(() => {
+    if (!inspectingPhoto) return -1;
+    return currentTabMediaItems.findIndex((p) => p.id === inspectingPhoto.id);
+  }, [inspectingPhoto, currentTabMediaItems]);
+
   const isAllSelected = currentTabItemIds.length > 0 && currentTabItemIds.every((id) => selectedIds.includes(id));
 
   const toggleSelectAll = () => {
@@ -796,7 +836,7 @@ export default function TriagePage() {
           category: 'category' in found ? (found.category as string) : 'memory',
           width: 'width' in found ? (found.width as number) : 1920,
           height: 'height' in found ? (found.height as number) : 1080,
-          captured_at: found.captured_at,
+          captured_at: found.captured_at || new Date().toISOString(),
           is_favorite: false,
           is_blurry: false,
           thumbnail_url: found.thumbnail_url,
@@ -3496,10 +3536,32 @@ export default function TriagePage() {
         onClose={() => setInspectingPhoto(null)}
         onToggleFavorite={() => {}}
         onDelete={(id) => {
-          setInspectingPhoto(null);
+          const remaining = currentTabMediaItems.filter((p) => p.id !== id);
+          const delIdx = currentTabMediaItems.findIndex((p) => p.id === id);
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setInspectingPhoto(nextP);
+          } else {
+            setInspectingPhoto(null);
+          }
           refreshCurrentTab();
           fetchOverview();
         }}
+        hasPrev={currentTriagePhotoIndex > 0}
+        hasNext={currentTriagePhotoIndex >= 0 && currentTriagePhotoIndex < currentTabMediaItems.length - 1}
+        nextPhoto={currentTriagePhotoIndex >= 0 && currentTriagePhotoIndex < currentTabMediaItems.length - 1 ? currentTabMediaItems[currentTriagePhotoIndex + 1] : null}
+        prevPhoto={currentTriagePhotoIndex > 0 ? currentTabMediaItems[currentTriagePhotoIndex - 1] : null}
+        onNavigatePrev={() => {
+          if (currentTriagePhotoIndex > 0) setInspectingPhoto(currentTabMediaItems[currentTriagePhotoIndex - 1]);
+        }}
+        onNavigateNext={() => {
+          if (currentTriagePhotoIndex >= 0 && currentTriagePhotoIndex < currentTabMediaItems.length - 1) {
+            setInspectingPhoto(currentTabMediaItems[currentTriagePhotoIndex + 1]);
+          }
+        }}
+        currentIndex={currentTriagePhotoIndex >= 0 ? currentTriagePhotoIndex : undefined}
+        totalCount={currentTabMediaItems.length > 0 ? currentTabMediaItems.length : undefined}
+        collectionTitle={`Triage • ${activeTab.replace('_', ' ').toUpperCase()}`}
       />
 
       {/* Safe vs Permanent Bulk Delete Modal */}

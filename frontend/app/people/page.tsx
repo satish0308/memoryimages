@@ -528,7 +528,14 @@ export default function PeoplePage() {
         );
         setSelectedPhotoIds((prev) => prev.filter((pid) => pid !== id));
         if (selectedPhoto && selectedPhoto.id === id) {
-          setSelectedPhoto(null);
+          const remaining = allPersonPhotos.filter((p) => p.id !== id);
+          const delIdx = allPersonPhotos.findIndex((p) => p.id === id);
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setSelectedPhoto(nextP);
+          } else {
+            setSelectedPhoto(null);
+          }
         }
       }
     } catch (err) {
@@ -2087,13 +2094,34 @@ export default function PeoplePage() {
         apiUrl={API_URL}
         onClose={() => setSelectedPhoto(null)}
         onToggleFavorite={toggleFavorite}
-        onDelete={deletePhoto}
+        onDelete={(id) => {
+          setPersonTimeline((prev) =>
+            prev
+              .map((g) => ({
+                ...g,
+                items: g.items.filter((it) => it.id !== id),
+              }))
+              .filter((g) => g.items.length > 0)
+          );
+          setSelectedPhotoIds((prev) => prev.filter((pid) => pid !== id));
+          const remaining = allPersonPhotos.filter((p) => p.id !== id);
+          const delIdx = allPersonPhotos.findIndex((p) => p.id === id);
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setSelectedPhoto(nextP);
+          } else {
+            setSelectedPhoto(null);
+          }
+        }}
         hasPrev={hasPrev}
         hasNext={hasNext}
         nextPhoto={nextPhoto}
         prevPhoto={prevPhoto}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
+        currentIndex={currentPhotoIndex >= 0 ? currentPhotoIndex : undefined}
+        totalCount={allPersonPhotos.length > 0 ? allPersonPhotos.length : undefined}
+        collectionTitle={selectedPerson?.name || 'Person'}
         onSelectPhoto={(photoOrId) => {
           if (typeof photoOrId === 'number') {
             const found = allPersonPhotos.find((p) => p.id === photoOrId);

@@ -177,6 +177,35 @@ export default function TrashGalleryPage() {
 
   const orderedIds = useMemo(() => filteredAndSortedItems.map((i) => i.id), [filteredAndSortedItems]);
 
+  const trashMediaItems: MediaItem[] = useMemo(() => {
+    return filteredAndSortedItems.map((found) => {
+      const isVideo = Boolean(
+        found.mime_type?.startsWith('video/') ||
+        (found.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(found.filename))
+      );
+      return {
+        id: found.id,
+        filename: found.filename,
+        category: 'deleted',
+        width: found.width || 1920,
+        height: found.height || 1080,
+        captured_at: found.captured_at || found.marked_for_deletion_at || new Date().toISOString(),
+        is_favorite: false,
+        is_blurry: false,
+        thumbnail_url: found.thumbnail_url,
+        source_type: (found as any).source_type || 'local',
+        source_id: (found as any).source_id,
+        is_video: isVideo,
+        duration_seconds: (found as any).duration_seconds,
+      };
+    });
+  }, [filteredAndSortedItems]);
+
+  const currentTrashPhotoIndex = useMemo(() => {
+    if (!inspectingPhoto) return -1;
+    return trashMediaItems.findIndex((p) => p.id === inspectingPhoto.id);
+  }, [inspectingPhoto, trashMediaItems]);
+
   // Selected item objects
   const selectedItems = useMemo(() => {
     const set = new Set(selectedIds);
@@ -1001,11 +1030,33 @@ export default function TrashGalleryPage() {
         onClose={() => setInspectingPhoto(null)}
         onToggleFavorite={() => {}}
         onDelete={(id) => {
-          // In trash view, deleting permanently purges
-          setInspectingPhoto(null);
+          // In trash view, clicking delete opens permanent purge confirmation
+          const remaining = trashMediaItems.filter((p) => p.id !== id);
+          const delIdx = trashMediaItems.findIndex((p) => p.id === id);
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setInspectingPhoto(nextP);
+          } else {
+            setInspectingPhoto(null);
+          }
           setSelectedIds([id]);
           setShowConfirmPurgeSelected(true);
         }}
+        hasPrev={currentTrashPhotoIndex > 0}
+        hasNext={currentTrashPhotoIndex >= 0 && currentTrashPhotoIndex < trashMediaItems.length - 1}
+        nextPhoto={currentTrashPhotoIndex >= 0 && currentTrashPhotoIndex < trashMediaItems.length - 1 ? trashMediaItems[currentTrashPhotoIndex + 1] : null}
+        prevPhoto={currentTrashPhotoIndex > 0 ? trashMediaItems[currentTrashPhotoIndex - 1] : null}
+        onNavigatePrev={() => {
+          if (currentTrashPhotoIndex > 0) setInspectingPhoto(trashMediaItems[currentTrashPhotoIndex - 1]);
+        }}
+        onNavigateNext={() => {
+          if (currentTrashPhotoIndex >= 0 && currentTrashPhotoIndex < trashMediaItems.length - 1) {
+            setInspectingPhoto(trashMediaItems[currentTrashPhotoIndex + 1]);
+          }
+        }}
+        currentIndex={currentTrashPhotoIndex >= 0 ? currentTrashPhotoIndex : undefined}
+        totalCount={trashMediaItems.length > 0 ? trashMediaItems.length : undefined}
+        collectionTitle="Trash Bin"
       />
 
       {/* Google Photos Deletion Search Helper Modal */}

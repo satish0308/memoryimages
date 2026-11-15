@@ -1272,7 +1272,29 @@ export default function MapPage() {
         apiUrl={API_URL}
         onClose={() => setSelectedPhotoIndex(null)}
         onToggleFavorite={() => {}}
-        onDelete={() => {}}
+        onDelete={(id) => {
+          if (!selectedCluster) {
+            setSelectedPhotoIndex(null);
+            return;
+          }
+          const remaining = selectedCluster.photos.filter((p) => p.id !== id);
+          if (remaining.length === 0) {
+            setSelectedPhotoIndex(null);
+            setSelectedCluster(null);
+          } else {
+            const nextIdx = Math.min(selectedPhotoIndex ?? 0, remaining.length - 1);
+            setSelectedCluster({
+              ...selectedCluster,
+              count: remaining.length,
+              photos: remaining,
+            });
+            setSelectedPhotoIndex(nextIdx);
+          }
+          setGeoPhotos((prev) => prev.filter((p) => p.id !== id));
+        }}
+        currentIndex={selectedPhotoIndex !== null ? selectedPhotoIndex : undefined}
+        totalCount={selectedCluster ? selectedCluster.photos.length : undefined}
+        collectionTitle={selectedCluster?.location_name || 'Map Outing'}
         hasPrev={selectedPhotoIndex !== null && selectedPhotoIndex > 0}
         hasNext={
           selectedPhotoIndex !== null &&

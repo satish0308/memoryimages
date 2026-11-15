@@ -529,11 +529,12 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const handleConfirmDelete = async () => {
     if (!photo) return;
     setIsDeleting(true);
+    const deletedId = photo.id;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/media/${photo.id}`, { method: 'DELETE' });
+      const res = await fetch(`${apiUrl}/api/v1/media/${deletedId}`, { method: 'DELETE' });
       if (res.ok) {
-        onDelete(photo.id);
         setShowDeleteConfirm(false);
+        onDelete(deletedId);
       }
     } catch (err) {
       console.error('Failed to delete photo:', err);

@@ -1097,15 +1097,28 @@ export default function PhotosPage() {
         onClose={handleCloseLightbox}
         onToggleFavorite={toggleFavorite}
         onDelete={(id) => {
+          // Advance to next photo (or previous if at end) instead of closing Lightbox
+          const remaining = allFlatPhotos.filter((p) => p.id !== id);
+          const delIdx = allFlatPhotos.findIndex((p) => p.id === id);
+
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setSelectedPhoto(nextP);
+          } else {
+            handleCloseLightbox();
+          }
+
           setTimeline((prev) =>
             prev.map((group) => ({
               ...group,
               items: group.items.filter((item) => item.id !== id),
             })).filter((group) => group.items.length > 0)
           );
-          handleCloseLightbox();
           if (searchResults) {
             setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
+          }
+          if (lightboxContextPhotos) {
+            setLightboxContextPhotos((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
           }
         }}
         onNavigatePrev={navigatePrev}

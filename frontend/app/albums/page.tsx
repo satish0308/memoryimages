@@ -1535,19 +1535,32 @@ export default function AlbumsPage() {
           }
         }}
         onDelete={(id) => {
+          const currentPhotos = selectedCollection?.photos || [];
+          const remaining = currentPhotos.filter((p) => p.id !== id);
+          const delIdx = currentPhotos.findIndex((p) => p.id === id);
+
           if (selectedCollection) {
             setSelectedCollection({
               ...selectedCollection,
               photo_count: Math.max(0, selectedCollection.photo_count - 1),
-              photos: selectedCollection.photos.filter((p) => p.id !== id),
+              photos: remaining,
             });
           }
-          setSelectedPhoto(null);
+
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setSelectedPhoto(nextP);
+          } else {
+            setSelectedPhoto(null);
+          }
         }}
         hasPrev={hasPrev}
         hasNext={hasNext}
         nextPhoto={nextPhoto}
         prevPhoto={prevPhoto}
+        currentIndex={currentPhotoIndex >= 0 ? currentPhotoIndex : undefined}
+        totalCount={selectedCollection?.photos ? selectedCollection.photos.length : undefined}
+        collectionTitle={selectedCollection?.name || 'Album'}
         onNavigatePrev={navigatePrev}
         onNavigateNext={navigateNext}
         onBackupToDrive={(item) => handleBackupSinglePhoto(item)}

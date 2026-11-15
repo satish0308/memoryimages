@@ -394,13 +394,61 @@ export default function MemoriesPage() {
       )}
 
       {/* Lightbox Modal when User clicks Inspect */}
-      <LightboxModal
-        photo={selectedPhoto}
-        apiUrl={API_URL}
-        onClose={() => setSelectedPhoto(null)}
-        onToggleFavorite={() => {}}
-        onDelete={() => setSelectedPhoto(null)}
-      />
+      {selectedPhoto && (
+        <LightboxModal
+          photo={selectedPhoto}
+          apiUrl={API_URL}
+          onClose={() => setSelectedPhoto(null)}
+          onToggleFavorite={() => {}}
+          onDelete={(id) => {
+            const storyPhotos = activeStory?.items || [];
+            const remaining = storyPhotos.filter((p) => p.id !== id);
+            const delIdx = storyPhotos.findIndex((p) => p.id === id);
+            if (activeStory) {
+              setActiveStory({
+                ...activeStory,
+                items: remaining,
+              });
+            }
+            if (remaining.length > 0 && delIdx !== -1) {
+              const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+              setSelectedPhoto(nextP);
+            } else {
+              setSelectedPhoto(null);
+            }
+          }}
+          hasPrev={activeStory?.items ? activeStory.items.findIndex((p) => p.id === selectedPhoto.id) > 0 : false}
+          hasNext={
+            activeStory?.items
+              ? activeStory.items.findIndex((p) => p.id === selectedPhoto.id) >= 0 &&
+                activeStory.items.findIndex((p) => p.id === selectedPhoto.id) < activeStory.items.length - 1
+              : false
+          }
+          nextPhoto={
+            activeStory?.items && activeStory.items.findIndex((p) => p.id === selectedPhoto.id) < activeStory.items.length - 1
+              ? activeStory.items[activeStory.items.findIndex((p) => p.id === selectedPhoto.id) + 1]
+              : null
+          }
+          prevPhoto={
+            activeStory?.items && activeStory.items.findIndex((p) => p.id === selectedPhoto.id) > 0
+              ? activeStory.items[activeStory.items.findIndex((p) => p.id === selectedPhoto.id) - 1]
+              : null
+          }
+          onNavigatePrev={() => {
+            if (!activeStory?.items) return;
+            const idx = activeStory.items.findIndex((p) => p.id === selectedPhoto.id);
+            if (idx > 0) setSelectedPhoto(activeStory.items[idx - 1]);
+          }}
+          onNavigateNext={() => {
+            if (!activeStory?.items) return;
+            const idx = activeStory.items.findIndex((p) => p.id === selectedPhoto.id);
+            if (idx >= 0 && idx < activeStory.items.length - 1) setSelectedPhoto(activeStory.items[idx + 1]);
+          }}
+          currentIndex={activeStory?.items ? activeStory.items.findIndex((p) => p.id === selectedPhoto.id) : undefined}
+          totalCount={activeStory?.items ? activeStory.items.length : undefined}
+          collectionTitle={activeStory?.title || 'Memory Reel'}
+        />
+      )}
 
       {/* Cinematic Highlight Reel Studio Modal */}
       {highlightReelData && (

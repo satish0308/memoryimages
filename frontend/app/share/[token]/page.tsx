@@ -253,7 +253,47 @@ export default function GuestSharePage() {
         apiUrl={API_URL}
         onClose={() => setSelectedPhoto(null)}
         onToggleFavorite={() => {}}
-        onDelete={() => setSelectedPhoto(null)}
+        onDelete={(id) => {
+          const remaining = photos.filter((p) => p.id !== id);
+          const delIdx = photos.findIndex((p) => p.id === id);
+          if (remaining.length > 0 && delIdx !== -1) {
+            const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+            setSelectedPhoto(nextP);
+          } else {
+            setSelectedPhoto(null);
+          }
+          setAlbumData((prev) => (prev ? { ...prev, photos: remaining } : null));
+        }}
+        hasPrev={selectedPhoto ? photos.findIndex((p) => p.id === selectedPhoto.id) > 0 : false}
+        hasNext={
+          selectedPhoto
+            ? photos.findIndex((p) => p.id === selectedPhoto.id) >= 0 &&
+              photos.findIndex((p) => p.id === selectedPhoto.id) < photos.length - 1
+            : false
+        }
+        nextPhoto={
+          selectedPhoto && photos.findIndex((p) => p.id === selectedPhoto.id) < photos.length - 1
+            ? photos[photos.findIndex((p) => p.id === selectedPhoto.id) + 1]
+            : null
+        }
+        prevPhoto={
+          selectedPhoto && photos.findIndex((p) => p.id === selectedPhoto.id) > 0
+            ? photos[photos.findIndex((p) => p.id === selectedPhoto.id) - 1]
+            : null
+        }
+        onNavigatePrev={() => {
+          if (!selectedPhoto) return;
+          const idx = photos.findIndex((p) => p.id === selectedPhoto.id);
+          if (idx > 0) setSelectedPhoto(photos[idx - 1]);
+        }}
+        onNavigateNext={() => {
+          if (!selectedPhoto) return;
+          const idx = photos.findIndex((p) => p.id === selectedPhoto.id);
+          if (idx >= 0 && idx < photos.length - 1) setSelectedPhoto(photos[idx + 1]);
+        }}
+        currentIndex={selectedPhoto ? photos.findIndex((p) => p.id === selectedPhoto.id) : undefined}
+        totalCount={photos.length > 0 ? photos.length : undefined}
+        collectionTitle={albumData?.name || 'Shared Album'}
       />
 
       {/* Ambient Slideshow for Guests */}

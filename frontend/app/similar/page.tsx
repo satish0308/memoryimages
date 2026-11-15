@@ -705,7 +705,49 @@ function SimilarPhotosContent() {
           apiUrl={API_URL}
           onClose={() => setSelectedPhoto(null)}
           onToggleFavorite={() => {}}
-          onDelete={() => {}}
+          onDelete={(id) => {
+            const remaining = displayedItems.filter((p) => p.id !== id);
+            const delIdx = displayedItems.findIndex((p) => p.id === id);
+            if (remaining.length > 0 && delIdx !== -1) {
+              const nextP = delIdx < remaining.length ? remaining[delIdx] : remaining[remaining.length - 1];
+              setSelectedPhoto(nextP);
+            } else {
+              setSelectedPhoto(null);
+            }
+            if (data) {
+              setData({
+                ...data,
+                results: data.results.filter((p) => p.id !== id),
+              });
+            }
+          }}
+          hasPrev={displayedItems.findIndex((p) => p.id === selectedPhoto.id) > 0}
+          hasNext={
+            displayedItems.findIndex((p) => p.id === selectedPhoto.id) >= 0 &&
+            displayedItems.findIndex((p) => p.id === selectedPhoto.id) < displayedItems.length - 1
+          }
+          nextPhoto={
+            displayedItems.findIndex((p) => p.id === selectedPhoto.id) >= 0 &&
+            displayedItems.findIndex((p) => p.id === selectedPhoto.id) < displayedItems.length - 1
+              ? displayedItems[displayedItems.findIndex((p) => p.id === selectedPhoto.id) + 1]
+              : null
+          }
+          prevPhoto={
+            displayedItems.findIndex((p) => p.id === selectedPhoto.id) > 0
+              ? displayedItems[displayedItems.findIndex((p) => p.id === selectedPhoto.id) - 1]
+              : null
+          }
+          onNavigatePrev={() => {
+            const idx = displayedItems.findIndex((p) => p.id === selectedPhoto.id);
+            if (idx > 0) setSelectedPhoto(displayedItems[idx - 1]);
+          }}
+          onNavigateNext={() => {
+            const idx = displayedItems.findIndex((p) => p.id === selectedPhoto.id);
+            if (idx >= 0 && idx < displayedItems.length - 1) setSelectedPhoto(displayedItems[idx + 1]);
+          }}
+          currentIndex={displayedItems.findIndex((p) => p.id === selectedPhoto.id) >= 0 ? displayedItems.findIndex((p) => p.id === selectedPhoto.id) : undefined}
+          totalCount={displayedItems.length > 0 ? displayedItems.length : undefined}
+          collectionTitle="Similar Photos"
         />
       )}
 
