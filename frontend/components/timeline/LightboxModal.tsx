@@ -880,12 +880,52 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       if (!photo) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      // When Delete Confirmation Dialog is open
+      if (showDeleteConfirm) {
+        if (e.key === 'Enter' || e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          e.stopPropagation();
+          handleConfirmDelete();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowDeleteConfirm(false);
+        }
+        return;
+      }
+
+      // Normal Lightbox Mode
       if (e.key === 'Escape') {
-        onClose();
+        e.preventDefault();
+        if (showShareModal) {
+          setShowShareModal(false);
+        } else if (showCaptureModal) {
+          setShowCaptureModal(false);
+        } else if (showSidebar) {
+          setShowSidebar(false);
+        } else if (showFaceBoxes) {
+          setShowFaceBoxes(false);
+        } else {
+          onClose();
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace' || e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setShowDeleteConfirm(true);
+      } else if (e.key === 'Enter') {
+        // Pressing Enter on an image also prompts delete if requested
+        e.preventDefault();
+        setShowDeleteConfirm(true);
       } else if (e.key === 'ArrowLeft' && onNavigatePrev && hasPrev) {
+        e.preventDefault();
         onNavigatePrev();
       } else if (e.key === 'ArrowRight' && onNavigateNext && hasNext) {
+        e.preventDefault();
         onNavigateNext();
+      } else if (e.key === ' ' || e.key === 'Spacebar') {
+        if (!isCurrentVideo && onNavigateNext && hasNext) {
+          e.preventDefault();
+          onNavigateNext();
+        }
       } else if (e.key === '+' || e.key === '=') {
         handleZoomIn();
       } else if (e.key === '-') {
@@ -893,7 +933,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       } else if (e.key === '0') {
         handleResetZoom();
       } else if (e.key.toLowerCase() === 'f') {
-        setShowFaceBoxes((prev) => !prev);
+        onToggleFavorite(photo.id);
       } else if (e.key.toLowerCase() === 'i') {
         setShowSidebar((prev) => !prev);
       } else if (e.key.toLowerCase() === 'p') {
@@ -906,7 +946,21 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [photo?.id, hasPrev, hasNext, onNavigatePrev, onNavigateNext]);
+  }, [
+    photo?.id,
+    hasPrev,
+    hasNext,
+    onNavigatePrev,
+    onNavigateNext,
+    showDeleteConfirm,
+    showShareModal,
+    showCaptureModal,
+    showSidebar,
+    showFaceBoxes,
+    isCurrentVideo,
+    onClose,
+    onToggleFavorite,
+  ]);
 
   if (!photo) return null;
 
@@ -2626,6 +2680,15 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                   ? 'This will remove the photo from MyMemoryPics and move it to trash in your Google Drive.'
                   : 'This will remove the photo from your library and storage.'}
               </p>
+              <div className="flex items-center justify-center gap-1.5 mt-3 text-[11px] text-slate-400 font-mono">
+                <span>Press</span>
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Enter ↵</kbd>
+                <span>or</span>
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Delete</kbd>
+                <span>to confirm •</span>
+                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Esc</kbd>
+                <span>to cancel</span>
+              </div>
             </div>
             <div className="flex items-center gap-3 pt-2">
               <button
@@ -2633,7 +2696,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 disabled={isDeleting}
                 className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
               >
-                Cancel
+                Cancel (Esc)
               </button>
               <button
                 onClick={handleConfirmDelete}
@@ -2645,7 +2708,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
                 ) : (
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Photo</span>
+                    <span>Delete (Enter ↵)</span>
                   </>
                 )}
               </button>

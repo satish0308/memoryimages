@@ -403,6 +403,51 @@ export default function TrashGalleryPage() {
   const totalCount = data?.total_count || 0;
   const totalSizeBytes = data?.total_size_bytes || 0;
 
+  // Global Page Keyboard Shortcuts (Escape to exit/cancel, Delete to purge, Enter to confirm purge)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (inspectingPhoto) return; // Lightbox handles its own keys
+
+      if (showConfirmPurgeSelected) {
+        if (e.key === 'Enter' && !isProcessingAction) {
+          e.preventDefault();
+          handlePurgePermanent(false);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setShowConfirmPurgeSelected(false);
+        }
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (showConfirmPurgeAll) {
+          setShowConfirmPurgeAll(false);
+        } else if (showGooglePhotosModal) {
+          setShowGooglePhotosModal(false);
+        } else if (selectedIds.length > 0) {
+          setSelectedIds([]);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length > 0 && !showConfirmPurgeSelected) {
+          e.preventDefault();
+          setShowConfirmPurgeSelected(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    inspectingPhoto,
+    showConfirmPurgeSelected,
+    showConfirmPurgeAll,
+    showGooglePhotosModal,
+    isProcessingAction,
+    selectedIds.length,
+  ]);
+
   return (
     <div className="max-w-[1700px] mx-auto p-4 sm:p-6 space-y-6 pb-24" onPointerDown={(e) => handlePointerDown(e)}>
       {/* 2D Marquee Drag-to-Select Box */}
@@ -1001,6 +1046,9 @@ export default function TrashGalleryPage() {
               <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl p-3 text-[11px] text-amber-900 dark:text-amber-300 mt-3">
                 <b>Note:</b> If files reside on a read-only host mount, run <code className="font-mono font-bold">./scripts/delete_files_marked_as_deleted.sh</code> on your host terminal to remove the physical files from disk.
               </div>
+              <p className="text-[11px] text-slate-400 mt-2 font-mono">
+                Press <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded font-bold">Enter ↵</kbd> to purge • <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded font-bold">Esc</kbd> to cancel
+              </p>
             </div>
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
@@ -1008,7 +1056,7 @@ export default function TrashGalleryPage() {
                 onClick={() => setShowConfirmPurgeSelected(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold transition"
               >
-                Cancel
+                Cancel (Esc)
               </button>
               <button
                 type="button"
@@ -1016,7 +1064,7 @@ export default function TrashGalleryPage() {
                 onClick={() => handlePurgePermanent(false)}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold transition shadow-sm disabled:opacity-50"
               >
-                {isProcessingAction ? 'Purging...' : 'Permanently Purge Records'}
+                {isProcessingAction ? 'Purging...' : 'Permanently Purge Records (Enter ↵)'}
               </button>
             </div>
           </div>

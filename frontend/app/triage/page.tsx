@@ -849,6 +849,39 @@ export default function TriagePage() {
     },
   });
 
+  // Global Page Keyboard Shortcuts (Escape to clear/close, Delete to batch-delete)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (inspectingPhoto || inspectingBillId) return; // Lightbox/Bill modal handles keys
+
+      if (e.key === 'Escape') {
+        if (showBulkDeleteModal) {
+          setShowBulkDeleteModal(false);
+        } else if (showGooglePhotosModal) {
+          setShowGooglePhotosModal(false);
+        } else if (selectedIds.length > 0) {
+          setSelectedIds([]);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length > 0 && !showBulkDeleteModal) {
+          e.preventDefault();
+          setShowBulkDeleteModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    inspectingPhoto,
+    inspectingBillId,
+    showBulkDeleteModal,
+    showGooglePhotosModal,
+    selectedIds.length,
+  ]);
+
   // Invert Selection for currently visible tab items
   const handleInvertSelection = () => {
     const currentSet = new Set(selectedIds);

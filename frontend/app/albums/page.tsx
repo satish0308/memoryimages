@@ -239,6 +239,42 @@ export default function AlbumsPage() {
     }
   };
 
+  // Global Page Keyboard Shortcuts (Escape to exit/clear, Delete to batch-delete)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (selectedPhoto || isSlideshowOpen) return;
+
+      if (e.key === 'Escape') {
+        if (showBulkDeleteModal) {
+          setShowBulkDeleteModal(false);
+        } else if (showGooglePhotosModal) {
+          setShowGooglePhotosModal(false);
+        } else if (collectionSelectedIds.length > 0) {
+          setCollectionSelectedIds([]);
+        } else if (selectedCollection) {
+          setSelectedCollection(null);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (collectionSelectedIds.length > 0 && !showBulkDeleteModal) {
+          e.preventDefault();
+          setShowBulkDeleteModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    selectedPhoto,
+    isSlideshowOpen,
+    showBulkDeleteModal,
+    showGooglePhotosModal,
+    collectionSelectedIds.length,
+    selectedCollection,
+  ]);
+
   // Inline edit album
   const [isEditingAlbum, setIsEditingAlbum] = useState(false);
   const [editName, setEditName] = useState('');

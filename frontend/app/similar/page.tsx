@@ -275,6 +275,41 @@ function SimilarPhotosContent() {
     }
   };
 
+  // Global Page Keyboard Shortcuts (Escape to exit/clear, Delete to batch-delete)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (selectedPhoto || isSlideshowOpen) return; // Lightbox/Slideshow handles keys
+
+      if (e.key === 'Escape') {
+        if (showBulkDeleteModal) {
+          setShowBulkDeleteModal(false);
+        } else if (showGooglePhotosModal) {
+          setShowGooglePhotosModal(false);
+        } else if (selectedIds.length > 0) {
+          setSelectedIds([]);
+        } else {
+          handleBack();
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length > 0 && !showBulkDeleteModal) {
+          e.preventDefault();
+          setShowBulkDeleteModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    selectedPhoto,
+    isSlideshowOpen,
+    showBulkDeleteModal,
+    showGooglePhotosModal,
+    selectedIds.length,
+  ]);
+
   return (
     <div 
       className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans select-none"

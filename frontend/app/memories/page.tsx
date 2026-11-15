@@ -128,6 +128,31 @@ export default function MemoriesPage() {
 
   const currentItem: MediaItem | undefined = activeStory?.items[storyIndex];
 
+  // Global Page Keyboard Shortcuts (Escape to exit reels, Left/Right arrow to navigate story)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (selectedPhoto) return; // Lightbox handles its own keys
+      if (e.key === 'Escape') {
+        if (highlightReelData) {
+          setHighlightReelData(null);
+        } else if (activeStory) {
+          setActiveStory(null);
+        }
+      } else if (activeStory) {
+        if (e.key === 'ArrowRight' || e.key === ' ') {
+          e.preventDefault();
+          handleNextSlide();
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          handlePrevSlide();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedPhoto, highlightReelData, activeStory, storyIndex]);
+
   const token = authContextToken || (typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null);
   const tokenQuery = token ? `?token=${token}` : '';
 

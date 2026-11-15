@@ -396,22 +396,33 @@ export default function PeoplePage() {
     }
   };
 
-  // Keyboard shortcut: Esc to return to all people when no modal is open
+  // Keyboard shortcut: Esc to clear selection or return to all people, Delete to bulk-delete
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        const hasOpenModal =
-          Boolean(selectedPhoto) ||
-          Boolean(inspectingBurstLead) ||
-          isSlideshowOpen ||
-          showBulkDeleteModal ||
-          showGooglePhotosModal ||
-          isBackupModalOpen ||
-          showMergeModal ||
-          isSearchPersonOpen;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      const hasOpenModal =
+        Boolean(selectedPhoto) ||
+        Boolean(inspectingBurstLead) ||
+        isSlideshowOpen ||
+        showBulkDeleteModal ||
+        showGooglePhotosModal ||
+        isBackupModalOpen ||
+        showMergeModal ||
+        isSearchPersonOpen;
+
+      if (e.key === 'Escape') {
         if (!hasOpenModal && selectedPerson) {
-          closePersonTimeline();
+          if (selectedPhotoIds.length > 0) {
+            setSelectedPhotoIds([]);
+          } else {
+            closePersonTimeline();
+          }
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (!hasOpenModal && selectedPhotoIds.length > 0) {
+          e.preventDefault();
+          setShowBulkDeleteModal(true);
         }
       }
     };
@@ -427,6 +438,7 @@ export default function PeoplePage() {
     isBackupModalOpen,
     showMergeModal,
     isSearchPersonOpen,
+    selectedPhotoIds.length,
   ]);
 
   // Filtered & Chronologically Ordered Timeline for Person

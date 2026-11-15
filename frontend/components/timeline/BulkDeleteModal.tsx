@@ -51,20 +51,6 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
     }
   }, [isOpen]);
 
-  // Handle ESC key to close
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isDeleting) {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isDeleting, onClose]);
-
-  if (!isOpen) return null;
-
   const handleAction = async () => {
     if (deleteMode === 'hard' && !confirmHardDelete) return;
     try {
@@ -75,6 +61,27 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
       onClose();
     }
   };
+
+  // Handle ESC and Enter key shortcuts
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'Escape' && !isDeleting) {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'Enter' && !isDeleting) {
+        e.preventDefault();
+        if (deleteMode === 'soft' || (deleteMode === 'hard' && confirmHardDelete)) {
+          handleAction();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isDeleting, onClose, deleteMode, confirmHardDelete]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fadeIn">
@@ -285,7 +292,7 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
             disabled={isDeleting}
             className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-xl transition disabled:opacity-50"
           >
-            Cancel
+            Cancel (Esc)
           </button>
 
           <button
@@ -308,12 +315,12 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
             ) : deleteMode === 'hard' ? (
               <>
                 <Flame className="w-3.5 h-3.5" />
-                <span>Permanently Delete ({itemCount})</span>
+                <span>Permanently Delete ({itemCount}) ↵</span>
               </>
             ) : (
               <>
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Move to Trash ({itemCount})</span>
+                <span>Move to Trash ({itemCount}) ↵</span>
               </>
             )}
           </button>

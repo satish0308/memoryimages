@@ -762,6 +762,23 @@ export default function MapPage() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
+  // Global Page Keyboard Shortcuts (Escape to close cluster drawer or unselect cluster)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (selectedPhotoIndex !== null) return; // Lightbox handles its own keys
+      if (e.key === 'Escape') {
+        if (isDrawerOpen) {
+          setIsDrawerOpen(false);
+        } else if (selectedCluster) {
+          setSelectedCluster(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedPhotoIndex, isDrawerOpen, selectedCluster]);
+
   const activeMediaItem: MediaItem | null = useMemo(() => {
     if (!selectedCluster || selectedPhotoIndex === null) return null;
     const p = selectedCluster.photos[selectedPhotoIndex];

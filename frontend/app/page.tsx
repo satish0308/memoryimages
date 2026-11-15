@@ -512,6 +512,47 @@ export default function PhotosPage() {
     },
   });
 
+  // Global Page Keyboard Shortcuts (Escape to cancel/clear, Delete to batch-delete)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      // When Lightbox, Slideshow, or Burst Inspector is active, it handles its own keyboard events
+      if (selectedPhoto || isSlideshowOpen || inspectingBurstLead) return;
+
+      if (e.key === 'Escape') {
+        if (showBulkDeleteModal) {
+          setShowBulkDeleteModal(false);
+        } else if (showGooglePhotosModal) {
+          setShowGooglePhotosModal(false);
+        } else if (isFilterDrawerOpen) {
+          setIsFilterDrawerOpen(false);
+        } else if (selectedIds.length > 0) {
+          setSelectedIds([]);
+        } else if (searchQuery) {
+          setSearchQuery('');
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedIds.length > 0 && !showBulkDeleteModal) {
+          e.preventDefault();
+          setShowBulkDeleteModal(true);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [
+    selectedPhoto,
+    isSlideshowOpen,
+    inspectingBurstLead,
+    showBulkDeleteModal,
+    showGooglePhotosModal,
+    isFilterDrawerOpen,
+    selectedIds.length,
+    searchQuery,
+  ]);
+
   return (
     <div className="w-full max-w-[2560px] mx-auto space-y-6 pb-20 md:pr-12 lg:pr-14" onPointerDown={handlePointerDown}>
       {/* Search Bar with AI Semantic Toggle */}
