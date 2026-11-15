@@ -40,6 +40,7 @@ class PersonUpdateRequest(BaseModel):
     name: Optional[str] = None
     relationship_type: Optional[str] = None
     is_hidden: Optional[bool] = None
+    is_favorite: Optional[bool] = None
     is_pet: Optional[bool] = None
     pet_type: Optional[str] = None
 
@@ -88,6 +89,7 @@ def list_people(
     filter_type: str = Query("all", regex="^(all|people|pets)$"),
     relationship: Optional[str] = Query(None),
     show_hidden: bool = Query(False),
+    min_faces: Optional[int] = Query(None, description="Optional filter to exclude passerby faces below N detections"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
@@ -143,6 +145,8 @@ def list_people(
         # Only show people who actually appear in current user's media
         if not p_faces:
             continue
+        if min_faces and len(p_faces) < min_faces:
+            continue
 
         unique_media_ids = set(m_id for _, m_id in p_faces)
         first_face = p_faces[0] if p_faces else None
@@ -155,13 +159,14 @@ def list_people(
             "pet_type": p.pet_type,
             "relationship_type": getattr(p, "relationship_type", None),
             "is_hidden": bool(p.is_hidden),
+            "is_favorite": bool(getattr(p, "is_favorite", False)),
             "cover_media_id": cover_media_id,
             "photo_count": len(unique_media_ids),
             "faces_count": len(p_faces),
             "avatar_url": f"/api/v1/people/{p.id}/avatar" if first_face else None,
             "cover_thumbnail_url": f"/api/v1/media/{cover_media_id}/thumbnail?size=256" if cover_media_id else None
         })
-    return sorted(results, key=lambda x: x["photo_count"], reverse=True)
+    return sorted(results, key=lambda x: (x.get("is_favorite", False), x["photo_count"]), reverse=True)
 
 @router.get("/stats")
 def get_people_stats(
@@ -992,6 +997,8 @@ def update_person(
         person.relationship_type = req.relationship_type.strip() or None
     if req.is_hidden is not None:
         person.is_hidden = req.is_hidden
+    if req.is_favorite is not None:
+        person.is_favorite = req.is_favorite
     if req.is_pet is not None:
         person.is_pet = req.is_pet
     if req.pet_type is not None:
@@ -1004,6 +1011,7 @@ def update_person(
         "name": person.name,
         "relationship_type": person.relationship_type,
         "is_hidden": person.is_hidden,
+        "is_favorite": getattr(person, "is_favorite", False),
         "is_pet": bool(person.is_pet),
         "pet_type": person.pet_type
     }
@@ -1068,6 +1076,167 @@ def merge_people(
         raise HTTPException(status_code=500, detail=f"Database error during merge: {str(e)}")
 
     return {"status": "merged", "target_id": target.id, "target_name": target.name}
+
+@router.get("/merge-suggestions")
+def get_merge_suggestions(
+    min_faces: int = Query(3, ge=2, le=20, description="Minimum face detections required per person"),
+    similarity_threshold: float = Query(0.68, ge=0.5, le=0.95, description="Cosine similarity threshold"),
+    limit: int = Query(30, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Analyzes average ArcFace facial vectors across person clusters to surface
+    intelligent 1-click merge suggestions for the same person split across clusters.
+    """
+    if not current_user:
+        return []
+
+    from sqlalchemy import text
+    import numpy as np
+
+    # Query candidate people with at least min_faces who are not hidden
+    sql = text("""
+        SELECT p.id, p.name, p.cover_media_id, p.is_favorite, count(f.id) as fcnt, string_agg(f.embedding_str, ';') as embs
+        FROM people p
+        JOIN face_detections f ON f.person_id = p.id
+        JOIN media m ON f.media_id = m.id
+        WHERE f.embedding_str IS NOT NULL 
+          AND p.is_hidden = false
+          AND m.is_deleted = false
+          AND (:is_admin = true OR m.user_id = :user_id OR m.user_id IS NULL)
+        GROUP BY p.id, p.name, p.cover_media_id, p.is_favorite
+        HAVING count(f.id) >= :min_faces
+        ORDER BY count(f.id) DESC
+        LIMIT 250;
+    """)
+
+    rows = db.execute(sql, {
+        "user_id": current_user.id,
+        "is_admin": current_user.is_admin,
+        "min_faces": min_faces
+    }).fetchall()
+
+    if not rows or len(rows) < 2:
+        return []
+
+    people_vectors = []
+    people_meta = []
+    for r in rows:
+        pid, name, cover_id, is_fav, fcnt, embs_str = r[0], r[1], r[2], r[3], r[4], r[5]
+        embs_list = embs_str.split(";") if embs_str else []
+        vecs = []
+        for e in embs_list[:12]:
+            try:
+                v = np.fromstring(e, sep=",", dtype=np.float32)
+                if len(v) == 512:
+                    norm = np.linalg.norm(v)
+                    if norm > 0:
+                        vecs.append(v / norm)
+            except Exception:
+                pass
+        if vecs:
+            avg_v = np.mean(vecs, axis=0)
+            avg_norm = np.linalg.norm(avg_v)
+            if avg_norm > 0:
+                people_vectors.append(avg_v / avg_norm)
+                people_meta.append({
+                    "id": pid,
+                    "name": name,
+                    "faces_count": fcnt,
+                    "is_favorite": bool(is_fav),
+                    "cover_media_id": cover_id,
+                    "avatar_url": f"/api/v1/people/{pid}/avatar",
+                    "cover_thumbnail_url": f"/api/v1/media/{cover_id}/thumbnail?size=256" if cover_id else None
+                })
+
+    if len(people_vectors) < 2:
+        return []
+
+    mat = np.array(people_vectors)
+    sim_mat = mat @ mat.T
+    np.fill_diagonal(sim_mat, 0)
+
+    suggestions = []
+    seen_pairs = set()
+    for i in range(len(people_meta)):
+        for j in range(i + 1, len(people_meta)):
+            sim = float(sim_mat[i, j])
+            if sim >= similarity_threshold:
+                p1 = people_meta[i]
+                p2 = people_meta[j]
+                pair_key = (min(p1["id"], p2["id"]), max(p1["id"], p2["id"]))
+                if pair_key not in seen_pairs:
+                    seen_pairs.add(pair_key)
+                    if p2["faces_count"] > p1["faces_count"] or (not p2["name"].startswith("Person ") and p1["name"].startswith("Person ")):
+                        target, source = p2, p1
+                    else:
+                        target, source = p1, p2
+
+                    suggestions.append({
+                        "target_person": target,
+                        "source_person": source,
+                        "person_1": target,
+                        "person_2": source,
+                        "similarity": round(sim, 4),
+                        "similarity_percent": int(round(sim * 100)),
+                        "confidence_pct": int(round(sim * 100)),
+                        "target_id": target["id"],
+                        "source_id": source["id"]
+                    })
+
+    suggestions.sort(key=lambda s: s["similarity"], reverse=True)
+    return suggestions[:limit]
+
+@router.post("/hide-passerby")
+def hide_passerby_faces(
+    max_faces: int = Query(2, ge=1, le=5, description="Maximum face detections to qualify as passerby"),
+    unnamed_only: bool = Query(True, description="Only hide unnamed clusters"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Automatically marks low-frequency passerby face clusters (e.g. <= 2 faces in background)
+    as hidden to unclutter the People archive.
+    """
+    from sqlalchemy import text
+    if unnamed_only:
+        sql = text("""
+            UPDATE people
+            SET is_hidden = true
+            WHERE id IN (
+                SELECT p.id
+                FROM people p
+                JOIN face_detections f ON f.person_id = p.id
+                WHERE p.is_hidden = false
+                  AND (p.name LIKE 'Person %' OR p.name = 'Unnamed Person')
+                  AND (:is_admin = true OR p.user_id = :user_id OR p.user_id IS NULL)
+                GROUP BY p.id
+                HAVING count(f.id) <= :max_faces
+            );
+        """)
+    else:
+        sql = text("""
+            UPDATE people
+            SET is_hidden = true
+            WHERE id IN (
+                SELECT p.id
+                FROM people p
+                JOIN face_detections f ON f.person_id = p.id
+                WHERE p.is_hidden = false
+                  AND (:is_admin = true OR p.user_id = :user_id OR p.user_id IS NULL)
+                GROUP BY p.id
+                HAVING count(f.id) <= :max_faces
+            );
+        """)
+
+    res = db.execute(sql, {
+        "user_id": current_user.id,
+        "is_admin": current_user.is_admin,
+        "max_faces": max_faces
+    })
+    db.commit()
+    return {"status": "success", "hidden_count": res.rowcount}
 
 @router.delete("/{person_id}")
 def delete_person(

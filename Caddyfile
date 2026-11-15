@@ -3,8 +3,12 @@
 # replace ':80' with your domain name (e.g., photos.example.com) and set your email.
 
 :80 {
-    # Gzip & Zstandard compression
-    encode zstd gzip
+    # Gzip & Zstandard compression (skip binary video and range partial content)
+    @compressible {
+        not path /api/v1/media/*/view*
+        not path /api/v1/media/*/motion-video*
+    }
+    encode @compressible zstd gzip
 
     # Reverse proxy backend API endpoints
     handle /api/* {

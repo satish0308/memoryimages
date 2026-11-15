@@ -40,8 +40,10 @@ signal.signal(signal.SIGTERM, handle_exit_signal)
 
 def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Generates CLIP ViT-B/32 multimodal vectors for all unindexed photos with step-by-step progress."""
-    from app.models.media import Media, MediaEmbedding
+    from concurrent.futures import ThreadPoolExecutor
+    from app.models.media import Media, MediaEmbedding, SourceType
     from app.services.clip_engine import get_image_model, embed_image, embed_images_batch, VIDEO_EXTENSIONS
+    from app.services.drive_cache import fetch_google_drive_thumbnail_bytes
     import numpy as np
 
     with SessionLocal() as db:
@@ -81,6 +83,7 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             chunk_items = unindexed[chunk_start:chunk_start + BATCH_SIZE]
             batch_paths = []
             batch_media = []
+            gdrive_fetch_queue = []
 
             for item in chunk_items:
                 target_path = None
@@ -99,14 +102,39 @@ def run_clip_indexing(task_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                         cover = extract_video_cover_thumbnail(item.id, item.original_path, item.duration_seconds or 0.0)
                         if cover and os.path.isfile(cover):
                             item.thumbnail_256_path = cover
-                            db.commit()
                             target_path = cover
                     except Exception:
                         pass
 
-                if target_path:
+                # If no local file yet, check if Google Drive item can be downloaded
+                if not target_path and (item.source_type == SourceType.GOOGLE_DRIVE or (item.source_id and not item.original_path)):
+                    gdrive_fetch_queue.append(item)
+                elif target_path:
                     batch_paths.append(target_path)
                     batch_media.append(item)
+
+            # Concurrent Google Drive thumbnail pre-fetch
+            if gdrive_fetch_queue:
+                os.makedirs(settings.THUMBNAIL_DIR, exist_ok=True)
+                def _fetch_gdrive_thumb(gd_item):
+                    try:
+                        bytes_data = fetch_google_drive_thumbnail_bytes(gd_item.source_id, db, size=256, user_id=gd_item.user_id)
+                        if bytes_data:
+                            thumb_file = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{gd_item.id}_256.webp")
+                            with open(thumb_file, "wb") as f:
+                                f.write(bytes_data)
+                            return gd_item, thumb_file
+                    except Exception as err:
+                        logger.debug(f"Failed to fetch gdrive thumb for media {gd_item.id}: {err}")
+                    return gd_item, None
+
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    gdrive_results = list(pool.map(_fetch_gdrive_thumb, gdrive_fetch_queue))
+                    for gd_item, local_thumb in gdrive_results:
+                        if local_thumb and os.path.isfile(local_thumb):
+                            gd_item.thumbnail_256_path = local_thumb
+                            batch_paths.append(local_thumb)
+                            batch_media.append(gd_item)
 
             if batch_paths:
                 try:

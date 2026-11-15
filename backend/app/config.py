@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     
     MEDIA_DIR: str = os.getenv("MEDIA_DIR", "/data/originals")
     THUMBNAIL_DIR: str = os.getenv("THUMBNAIL_DIR", "/data/thumbnails")
+    DB_DIR: str = os.getenv("DB_DIR", "/data/db")
     
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:3000")

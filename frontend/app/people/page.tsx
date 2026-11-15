@@ -51,6 +51,7 @@ interface PersonItem {
   pet_type?: string | null;
   relationship_type?: string | null;
   is_hidden?: boolean;
+  is_favorite?: boolean;
   photo_count: number;
   faces_count: number;
   avatar_url: string | null;
@@ -131,6 +132,7 @@ export default function PeoplePage() {
   const [isScanning, setIsScanning] = useState(false);
   const [isRechecking, setIsRechecking] = useState(false);
   const [isReclusteringUnnamed, setIsReclusteringUnnamed] = useState(false);
+  const [isHidingPasserby, setIsHidingPasserby] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Inline editing
@@ -215,7 +217,10 @@ export default function PeoplePage() {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`${API_URL}/api/v1/people/merge-suggestions?similarity_threshold=0.40`, { headers });
+      const res = await fetch(`${API_URL}/api/v1/people/merge-suggestions?similarity_threshold=0.68`, {
+        headers,
+        credentials: 'include',
+      });
       if (res.ok) {
         setMergeSuggestions(await res.json());
       }
@@ -743,6 +748,55 @@ export default function PeoplePage() {
       setTimeout(() => setStatusMessage(null), 4000);
     } finally {
       setMergingId(null);
+    }
+  };
+
+  const handleToggleFavorite = async (person: PersonItem) => {
+    try {
+      const token = getActiveToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const newFav = !person.is_favorite;
+      setPeople((prev) =>
+        prev.map((p) => (p.id === person.id ? { ...p, is_favorite: newFav } : p))
+      );
+
+      await fetch(`${API_URL}/api/v1/people/${person.id}`, {
+        method: 'PATCH',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ is_favorite: newFav }),
+      });
+    } catch (e) {
+      console.error('Failed to toggle favorite:', e);
+    }
+  };
+
+  const handleHidePasserby = async () => {
+    if (!confirm('Hide low-frequency crowd/passerby faces (≤ 2 photos)? You can still view them anytime under "Hidden Shown".')) {
+      return;
+    }
+    try {
+      setIsHidingPasserby(true);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/people/hide-passerby?max_faces=2&unnamed_only=true`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(`Successfully hid ${data.hidden_count} passerby crowd faces.`);
+        fetchPeople();
+      }
+    } catch (e: any) {
+      console.error('Failed to hide passerby faces:', e);
+    } finally {
+      setIsHidingPasserby(false);
     }
   };
 
@@ -1691,6 +1745,15 @@ export default function PeoplePage() {
                     {showHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     <span>{showHidden ? 'Hidden Shown' : 'Hidden'}</span>
                   </button>
+                  <button
+                    onClick={handleHidePasserby}
+                    disabled={isHidingPasserby}
+                    className="px-2.5 py-1 text-[11px] rounded-lg font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 flex items-center gap-1 transition disabled:opacity-50"
+                    title="Automatically hides low-frequency crowd faces (<= 2 detections)"
+                  >
+                    <Sparkles className="w-3 h-3 text-indigo-500" />
+                    <span>{isHidingPasserby ? 'Cleaning...' : 'Filter Passerby'}</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1743,6 +1806,22 @@ export default function PeoplePage() {
                         className="group bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-4 text-center space-y-3 shadow-sm hover:shadow-xl hover:border-indigo-400 dark:hover:border-indigo-600 transition-all duration-300 relative cursor-pointer"
                         onClick={() => openPersonTimeline(person)}
                       >
+                        {/* VIP / Favorite Star Pin */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleFavorite(person);
+                          }}
+                          className={`absolute top-3 right-3 p-1.5 rounded-full transition-all z-10 ${
+                            person.is_favorite
+                              ? 'text-amber-400 bg-amber-400/10 hover:bg-amber-400/20'
+                              : 'text-slate-400 opacity-0 group-hover:opacity-100 hover:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                          title={person.is_favorite ? 'Unpin VIP favorite' : 'Pin VIP / Family member to top'}
+                        >
+                          <Star className={`w-4 h-4 ${person.is_favorite ? 'fill-current' : ''}`} />
+                        </button>
+
                         {/* Face Crop Avatar Circle */}
                         <div className="relative w-24 h-24 mx-auto rounded-full overflow-hidden bg-slate-900 ring-4 ring-slate-100 dark:ring-slate-800 group-hover:ring-indigo-500/50 transition-all duration-300 group-hover:scale-105 shadow-md">
                           {avatarSrc ? (

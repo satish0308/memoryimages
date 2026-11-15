@@ -573,15 +573,17 @@ export default function PhotosPage() {
         </button>
       </div>
 
-      {/* Desktop Full Memories & Flashbacks (Preserved 100% on desktop web) */}
+      {/* Time Capsule & Flashbacks (Desktop & Mobile) */}
       {!searchResults && (
-        <div className="hidden md:block space-y-6">
+        <div className="space-y-6">
           <OnThisDaySection apiUrl={API_URL} onSelectPhoto={(photo) => setSelectedPhoto(photo)} />
-          <MomentsCarousel
-            events={events}
-            apiUrl={API_URL}
-            onSelectEvent={(ev) => setSelectedEvent(ev)}
-          />
+          <div className="hidden md:block">
+            <MomentsCarousel
+              events={events}
+              apiUrl={API_URL}
+              onSelectEvent={(ev) => setSelectedEvent(ev)}
+            />
+          </div>
         </div>
       )}
 

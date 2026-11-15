@@ -227,6 +227,109 @@ def get_timeline_summary(
 
     return Response(content=payload_json, media_type="application/json")
 
+@router.get("/flashbacks")
+def get_flashbacks(
+    month: Optional[int] = Query(None, ge=1, le=12),
+    day: Optional[int] = Query(None, ge=1, le=31),
+    current_year: Optional[int] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns nostalgic 'On This Day' flashbacks grouped by historical year.
+    Surfaces top memories from 1 year ago, 2 years ago, 5 years ago, etc.
+    """
+    if not current_user:
+        return []
+
+    now = datetime.now()
+    target_month = month or now.month
+    target_day = day or now.day
+    this_year = current_year or now.year
+
+    # 1. Query exact month & day matches across prior years
+    exact_items = (
+        db.query(Media)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            Media.is_archived == False,
+            Media.captured_at.isnot(None),
+            extract("month", Media.captured_at) == target_month,
+            extract("day", Media.captured_at) == target_day,
+            extract("year", Media.captured_at) < this_year
+        )
+        .order_by(
+            extract("year", Media.captured_at).desc(),
+            Media.is_favorite.desc(),
+            Media.aesthetic_score.desc().nullslast(),
+            Media.captured_at.asc()
+        )
+        .all()
+    )
+
+    is_near_date = False
+    items_to_process = exact_items
+
+    if not items_to_process:
+        # 2. Window fallback: +/- 2 days around today
+        is_near_date = True
+        d1 = max(1, target_day - 2)
+        d2 = min(31, target_day + 2)
+        items_to_process = (
+            db.query(Media)
+            .filter(
+                Media.user_id == current_user.id,
+                Media.is_deleted == False,
+                Media.is_archived == False,
+                Media.captured_at.isnot(None),
+                extract("month", Media.captured_at) == target_month,
+                extract("day", Media.captured_at) >= d1,
+                extract("day", Media.captured_at) <= d2,
+                extract("year", Media.captured_at) < this_year
+            )
+            .order_by(
+                extract("year", Media.captured_at).desc(),
+                Media.is_favorite.desc(),
+                Media.aesthetic_score.desc().nullslast(),
+                Media.captured_at.asc()
+            )
+            .all()
+        )
+
+    if not items_to_process:
+        return []
+
+    from collections import defaultdict
+    by_year = defaultdict(list)
+    for m in items_to_process:
+        if m.captured_at:
+            by_year[m.captured_at.year].append(m)
+
+    flashbacks = []
+    for yr in sorted(by_year.keys(), reverse=True):
+        year_media = by_year[yr]
+        years_ago = this_year - yr
+        title = f"{years_ago} Year{'s' if years_ago > 1 else ''} Ago"
+        subtitle = f"On this day in {yr}" if not is_near_date else f"Around this time in {yr}"
+
+        formatted_items = [_format_media_item(m) for m in year_media]
+        cover_item = formatted_items[0]
+
+        flashbacks.append({
+            "year": yr,
+            "years_ago": years_ago,
+            "title": title,
+            "subtitle": subtitle,
+            "date": f"{yr}-{target_month:02d}-{target_day:02d}",
+            "is_near_date": is_near_date,
+            "count": len(formatted_items),
+            "cover_media": cover_item,
+            "items": formatted_items
+        })
+
+    return flashbacks
+
 @router.get("/timeline")
 def get_timeline(
     category: Optional[MediaCategory] = None,
@@ -441,53 +544,7 @@ def get_timeline(
             logger.debug(f"Timeline cache write error: {e}")
     return Response(content=json_str, media_type="application/json")
 
-@router.get("/flashbacks")
-def get_flashbacks(
-    current_user: Optional[User] = Depends(get_optional_current_user),
-    db: Session = Depends(get_db)
-):
-    """Returns 'On This Day' memories strictly for the current user."""
-    if not current_user:
-        return []
 
-    now = datetime.utcnow()
-    current_month = now.month
-    current_day = now.day
-    current_year = now.year
-    
-    # ANSI SQL extract works identically across PostgreSQL and SQLite
-    items = db.query(Media).filter(
-        Media.user_id == current_user.id,
-        extract("month", Media.captured_at) == current_month,
-        extract("day", Media.captured_at) == current_day,
-        extract("year", Media.captured_at) < current_year,
-        Media.is_deleted == False,
-        Media.is_archived == False
-    ).order_by(desc(Media.captured_at)).all()
-
-    flashback_groups = {}
-    for item in items:
-        year = str(item.captured_at.year)
-        years_ago = now.year - item.captured_at.year
-        label = f"{years_ago} Year{'s' if years_ago > 1 else ''} Ago ({year})"
-        
-        if label not in flashback_groups:
-            flashback_groups[label] = {
-                "label": label,
-                "year": year,
-                "count": 0,
-                "items": []
-            }
-        flashback_groups[label]["count"] += 1
-        flashback_groups[label]["items"].append({
-            "id": item.id,
-            "filename": item.filename,
-            "category": item.category,
-            "captured_at": item.captured_at,
-            "thumbnail_url": f"/api/v1/media/{item.id}/thumbnail?size=256"
-        })
-
-    return list(flashback_groups.values())
 
 @router.get("/memories/highlights")
 def get_memories_highlights(
@@ -1345,6 +1402,17 @@ def get_thumbnail(
 
     storage_mode = get_storage_mode(db)
     use_google_cdn = get_setting(db, "use_google_cdn_thumbnails", "true").lower() in ("true", "1", "yes")
+
+    # Fast-path: If local cached thumbnail already exists on disk for Google Drive, serve instantly from disk!
+    if media.source_type == SourceType.GOOGLE_DRIVE:
+        target_local = media.thumbnail_256_path if size in ("256", "512") else (media.thumbnail_1080_path or media.thumbnail_256_path)
+        if target_local and os.path.isfile(target_local):
+            media_type = "image/webp" if target_local.endswith(".webp") else "image/jpeg"
+            return FileResponse(
+                target_local,
+                media_type=media_type,
+                headers={"Cache-Control": "public, max-age=86400", "X-Thumbnail-Source": "local_disk_cache"}
+            )
 
     # 1. Google Drive In-Memory / CDN Serving
     if media.source_type == SourceType.GOOGLE_DRIVE and media.source_id and (use_google_cdn or storage_mode == "in_memory"):
@@ -2829,6 +2897,148 @@ def batch_update_location(
         invalidate_timeline_cache(current_user.id)
     except Exception:
         pass
+    return {"status": "updated", "count": updated, "location_name": loc_name}
+
+@router.post("/batch-geotag")
+def batch_geotag(
+    req: BatchLocationRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Batch geotags photos with coordinates and optional location name."""
+    return batch_update_location(req, current_user, db)
+
+@router.post("/interpolate-locations")
+def interpolate_locations(
+    window_hours: float = Query(2.0, ge=0.5, le=24.0, description="Proximity time window in hours"),
+    preview: bool = Query(False, description="If true, returns candidate matches without modifying the database"),
+    limit: Optional[int] = Query(None, description="Optional cap on number of photos to update"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Intelligently auto-tags ungeotagged photos (e.g. from DSLR, camera, or downloads)
+    by interpolating GPS coordinates from geotagged phone photos taken within temporal proximity.
+    Uses O(log N) binary search for instant matching across tens of thousands of items.
+    """
+    import bisect
+
+    window_seconds = window_hours * 3600.0
+
+    # 1. Fetch all geotagged photos for this user
+    geotagged_rows = (
+        db.query(Media.captured_at, Media.latitude, Media.longitude, Media.location_name)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            Media.latitude.isnot(None),
+            Media.captured_at.isnot(None)
+        )
+        .order_by(Media.captured_at.asc())
+        .all()
+    )
+
+    if not geotagged_rows:
+        return {
+            "status": "no_geotagged_reference",
+            "message": "No geotagged reference photos found in your library to interpolate from.",
+            "matched_count": 0,
+            "total_ungeotagged": 0,
+            "sample_matches": []
+        }
+
+    timestamps = [g[0].timestamp() for g in geotagged_rows]
+
+    # 2. Fetch ungeotagged photos for this user
+    ungeotagged_rows = (
+        db.query(Media.id, Media.filename, Media.captured_at)
+        .filter(
+            Media.user_id == current_user.id,
+            Media.is_deleted == False,
+            Media.latitude.is_(None),
+            Media.captured_at.isnot(None)
+        )
+        .all()
+    )
+
+    if not ungeotagged_rows:
+        return {
+            "status": "all_geotagged",
+            "message": "All photos in your library already have GPS coordinates.",
+            "matched_count": 0,
+            "total_ungeotagged": 0,
+            "sample_matches": []
+        }
+
+    matches = []
+    for item_id, filename, cap_time in ungeotagged_rows:
+        ts = cap_time.timestamp()
+        idx = bisect.bisect_left(timestamps, ts)
+        best_diff = float("inf")
+        best_match = None
+
+        if idx > 0:
+            diff = abs(ts - timestamps[idx - 1])
+            if diff <= window_seconds and diff < best_diff:
+                best_diff = diff
+                best_match = geotagged_rows[idx - 1]
+
+        if idx < len(timestamps):
+            diff = abs(ts - timestamps[idx])
+            if diff <= window_seconds and diff < best_diff:
+                best_diff = diff
+                best_match = geotagged_rows[idx]
+
+        if best_match:
+            matches.append({
+                "id": item_id,
+                "filename": filename,
+                "captured_at": cap_time.isoformat(),
+                "latitude": best_match[1],
+                "longitude": best_match[2],
+                "location_name": best_match[3],
+                "time_diff_minutes": round(best_diff / 60.0, 1)
+            })
+            if limit and len(matches) >= limit:
+                break
+
+    if preview:
+        return {
+            "status": "preview",
+            "window_hours": window_hours,
+            "matched_count": len(matches),
+            "total_ungeotagged": len(ungeotagged_rows),
+            "percentage": int(round((len(matches) / len(ungeotagged_rows)) * 100)) if ungeotagged_rows else 0,
+            "sample_matches": matches[:25]
+        }
+
+    # Execute updates in batches of 500
+    updated_count = 0
+    BATCH_SIZE = 500
+    for i in range(0, len(matches), BATCH_SIZE):
+        batch = matches[i:i + BATCH_SIZE]
+        for m in batch:
+            db.query(Media).filter(Media.id == m["id"]).update({
+                "latitude": m["latitude"],
+                "longitude": m["longitude"],
+                "location_name": m["location_name"]
+            }, synchronize_session=False)
+        db.commit()
+        updated_count += len(batch)
+
+    try:
+        invalidate_timeline_cache(current_user.id)
+    except Exception:
+        pass
+
+    return {
+        "status": "applied",
+        "window_hours": window_hours,
+        "matched_count": updated_count,
+        "total_ungeotagged": len(ungeotagged_rows),
+        "percentage": int(round((updated_count / len(ungeotagged_rows)) * 100)) if ungeotagged_rows else 0,
+        "sample_matches": matches[:10]
+    }
 
     return {
         "status": "success",

@@ -1,18 +1,21 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Search, Upload, FolderUp, Cpu, Loader2, Sparkles, ChevronDown, Tv } from 'lucide-react';
+import { Search, Upload, FolderUp, Cpu, Loader2, Sparkles, ChevronDown, Tv, Activity } from 'lucide-react';
 import { UserNavMenu } from '@/components/auth/UserNavMenu';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { useTaskQueue } from '@/context/TaskQueueContext';
 import { useUpload } from '@/context/UploadContext';
 import { useCast } from '@/context/CastContext';
 import { TaskQueueDrawer } from '@/components/tasks/TaskQueueDrawer';
+import { LibraryDoctorModal } from '@/components/maintenance/LibraryDoctorModal';
+import { getApiUrl } from '@/utils/apiUrl';
 
 export const AppHeader: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authInitialUser, setAuthInitialUser] = useState<string | undefined>(undefined);
   const [showUploadDropdown, setShowUploadDropdown] = useState(false);
+  const [isDoctorOpen, setIsDoctorOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -103,6 +106,16 @@ export const AppHeader: React.FC = () => {
             <span className="text-xs font-semibold hidden md:inline">
               {isCasting ? (activeSession?.tv_name || 'Casting') : 'Cast'}
             </span>
+          </button>
+
+          {/* Library Doctor Button */}
+          <button
+            onClick={() => setIsDoctorOpen(true)}
+            className="p-2 text-slate-600 hover:text-emerald-600 hover:bg-slate-100 rounded-xl transition flex items-center gap-1.5 border border-slate-200/60"
+            title="Library Doctor & Health Diagnostics"
+          >
+            <Activity className="w-4 h-4 text-emerald-600" />
+            <span className="text-xs font-semibold hidden lg:inline">Doctor</span>
           </button>
 
           {/* Upload Button & Dropdown */}
@@ -216,6 +229,13 @@ export const AppHeader: React.FC = () => {
 
       {/* Global Background Tasks & Worker Drawer */}
       <TaskQueueDrawer />
+
+      {/* Library Doctor Diagnostics Modal */}
+      <LibraryDoctorModal
+        isOpen={isDoctorOpen}
+        onClose={() => setIsDoctorOpen(false)}
+        apiUrl={getApiUrl()}
+      />
     </>
   );
 };

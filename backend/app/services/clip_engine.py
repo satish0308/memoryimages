@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 # Enable decoding of truncated or partially damaged JPEG images
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+from app.config import settings
 from app.models.media import Media, MediaEmbedding
 
 logger = logging.getLogger(__name__)
@@ -20,18 +21,32 @@ VIDEO_EXTENSIONS = {
 _image_model = None
 _text_model = None
 
+def _get_fastembed_cache_dir() -> str:
+    cache_dir = os.path.join(settings.DB_DIR, "fastembed_cache")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except Exception:
+        pass
+    return cache_dir
+
 def get_image_model():
     global _image_model
     if _image_model is None:
         from fastembed import ImageEmbedding
-        _image_model = ImageEmbedding(model_name="Qdrant/clip-ViT-B-32-vision")
+        _image_model = ImageEmbedding(
+            model_name="Qdrant/clip-ViT-B-32-vision",
+            cache_dir=_get_fastembed_cache_dir()
+        )
     return _image_model
 
 def get_text_model():
     global _text_model
     if _text_model is None:
         from fastembed import TextEmbedding
-        _text_model = TextEmbedding(model_name="Qdrant/clip-ViT-B-32-text")
+        _text_model = TextEmbedding(
+            model_name="Qdrant/clip-ViT-B-32-text",
+            cache_dir=_get_fastembed_cache_dir()
+        )
     return _text_model
 
 def embed_image(image_path: str) -> Optional[np.ndarray]:

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/utils/apiUrl';
 import { GooglePhotosExportModal } from '@/components/sync/GooglePhotosExportModal';
+import { LibraryDoctorModal } from '@/components/maintenance/LibraryDoctorModal';
 import { 
   Sliders, 
   Cpu, 
@@ -33,7 +34,8 @@ import {
   Eye,
   Link as LinkIcon,
   Search,
-  Copy
+  Copy,
+  Activity
 } from 'lucide-react';
 
 interface StorageMetrics {
@@ -200,6 +202,7 @@ export default function AppSettingsPage() {
 
   // Approval modal state
   const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [showDoctorModal, setShowDoctorModal] = useState(false);
   const [approvalText, setApprovalText] = useState('');
   const [approvalLoading, setApprovalLoading] = useState(false);
 
@@ -1490,6 +1493,34 @@ export default function AppSettingsPage() {
         </div>
       </div>
 
+      {/* LIBRARY DOCTOR & HEALTH DIAGNOSTICS */}
+      <div className="bg-gradient-to-r from-emerald-500/10 via-slate-50 to-indigo-500/10 border border-emerald-500/30 rounded-2xl p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-600" />
+                Library Doctor & Health Diagnostics
+              </h3>
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                v0.5.0 Intelligence
+              </span>
+            </div>
+            <p className="text-xs text-slate-500">
+              Deep diagnostic audit covering multimodal CLIP natural language search, spatiotemporal GPS location interpolation for camera photos, and background passerby face cleanup.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDoctorModal(true)}
+            className="flex-shrink-0 flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition shadow-sm shadow-emerald-600/20"
+          >
+            <Activity className="w-4 h-4" />
+            <span>Launch Library Doctor</span>
+          </button>
+        </div>
+      </div>
+
       {/* DUAL-DATABASE & PGVECTOR ENGINE SECTION */}
       <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-4">
@@ -2726,6 +2757,13 @@ export default function AppSettingsPage() {
         items={pendingPurge?.items || []}
         title="Google Photos Purge Query"
         subtitle="Search and trash these read-only mount photos in your Google Photos cloud account"
+      />
+
+      {/* Library Doctor Diagnostics Modal */}
+      <LibraryDoctorModal
+        isOpen={showDoctorModal}
+        onClose={() => setShowDoctorModal(false)}
+        apiUrl={API_URL}
       />
     </div>
   );
