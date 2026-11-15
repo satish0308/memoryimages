@@ -578,6 +578,13 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **🎥 Complete Video Streaming Overhaul & Triage Video Playback (`v0.4.0`)**: 
+  - **Triage Video Playback & Lightbox Mapping**: Resolved missing `is_video` and `duration_seconds` propagation in Triage (`/triage`), restoring the full HTML5 `<video>` player with scrubbing, scene jumping, and frame capture instead of broken `<img>` tags.
+  - **Self-Healing Google Drive Token Refresh**: Automatic proactive OAuth token expiration detection and instant retry on HTTP 401 errors, eliminating playback errors for cloud-streamed media.
+  - **High-Throughput Chunked Range Streaming**: Increased chunk generator bandwidth to 256KB-512KB for local and Google Drive videos, supporting RFC 7233 HTTP 206 Partial Content range requests for instant seek/scrubbing in 4K/60fps video files.
+  - **Triage Video Badges & Play Overlays**: Visible video play indicators with formatted duration overlays on Large Files cards and Duplicate sequences.
+  - **Defensive Lightbox Video Handling**: Universal video detection across all views, `preload="metadata"` and `playsInline` optimization, and playback error detection with fallback direct video file download.
+  - **Thumbnail Safeguard**: Prevented multi-gigabyte video original files from ever being served as image thumbnails on missing 1080p preview requests.
 - [x] **🖼️ 1080p HD Rendition Engine & Anti-Blur Lightbox (`v0.3.9`)**: Upgraded default grid thumbnails to 512px Retina display, dynamic on-demand 1080p WebP preview generation with automatic Lightbox master-view fallback, 14x faster parallel background worker pool with thread-isolated Google Drive clients, persistent token caching, and live coverage metrics in both Admin Portal and Settings.
 - [x] **🔄 Zero-Downtime Docker Rollouts (`v0.3.9`)**: Integrated `docker-rollout` CLI plugin with container-name decoupling for seamless side-by-side rolling container updates (`docker rollout -w 5 <service>`) with zero dropped connections.
 - [x] **🛡️ Tombstone Denylist & Deletion Hardening (`v0.3.9`)**: Persistent tombstone registry preventing deleted photos from being re-scanned or re-indexed, with automatic Redis timeline cache flushing on deletions.
