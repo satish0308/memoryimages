@@ -69,6 +69,9 @@ interface LightboxModalProps {
   prevPhoto?: MediaItem | null;
   onSelectPhoto?: (photoOrId: MediaItem | number) => void;
   onBackupToDrive?: (photo: MediaItem) => void;
+  currentIndex?: number;
+  totalCount?: number;
+  collectionTitle?: string;
 }
 
 export const LightboxModal: React.FC<LightboxModalProps> = ({
@@ -85,6 +88,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   prevPhoto,
   onSelectPhoto,
   onBackupToDrive,
+  currentIndex,
+  totalCount,
+  collectionTitle,
 }) => {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -899,7 +905,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [photo?.id, hasPrev, hasNext]);
+  }, [photo?.id, hasPrev, hasNext, onNavigatePrev, onNavigateNext]);
 
   if (!photo) return null;
 
@@ -987,6 +993,23 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         }}
       >
         
+        {/* Top Left: Collection / Index Pill Badge */}
+        {currentIndex != null && totalCount != null && totalCount > 1 && (
+          <div className="absolute top-4 left-4 z-40 flex items-center gap-2">
+            <div className="px-3.5 py-1.5 bg-black/70 backdrop-blur-md rounded-full text-xs font-semibold text-slate-200 border border-white/15 flex items-center gap-2 shadow-2xl select-none">
+              {collectionTitle && (
+                <>
+                  <span className="text-amber-400 font-bold tracking-tight">{collectionTitle}</span>
+                  <span className="text-slate-500">•</span>
+                </>
+              )}
+              <span className="font-mono text-slate-300">
+                {currentIndex + 1} / {totalCount}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
           {!isCurrentVideo && (

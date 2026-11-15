@@ -34,6 +34,25 @@ export default function PhotosPage() {
   const [density, setDensity] = useState<GridDensity>('normal');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [selectedPhoto, setSelectedPhoto] = useState<MediaItem | null>(null);
+  const [lightboxContextPhotos, setLightboxContextPhotos] = useState<MediaItem[] | null>(null);
+  const [lightboxCollectionTitle, setLightboxCollectionTitle] = useState<string | null>(null);
+
+  const handleOpenPhotoWithContext = useCallback((photo: MediaItem, contextPhotos?: MediaItem[] | null, title?: string | null) => {
+    setSelectedPhoto(photo);
+    if (contextPhotos && contextPhotos.length > 0) {
+      setLightboxContextPhotos(contextPhotos);
+      setLightboxCollectionTitle(title || null);
+    } else {
+      setLightboxContextPhotos(null);
+      setLightboxCollectionTitle(null);
+    }
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setSelectedPhoto(null);
+    setLightboxContextPhotos(null);
+    setLightboxCollectionTitle(null);
+  }, []);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MediaItem[] | null>(null);
@@ -434,22 +453,46 @@ export default function PhotosPage() {
   }, [smartFilters]);
 
   // Lightbox flat list & navigation
-  const allFlatPhotos: MediaItem[] =
-    searchResults !== null ? searchResults : allFilteredPhotos;
-  const currentPhotoIndex = selectedPhoto
-    ? allFlatPhotos.findIndex((p) => p.id === selectedPhoto.id)
-    : -1;
+  const allFlatPhotos: MediaItem[] = useMemo(() => {
+    // 1. Scoped context photos (e.g. On This Day Time Capsule, Moment Story)
+    if (lightboxContextPhotos && lightboxContextPhotos.length > 0) {
+      return lightboxContextPhotos;
+    }
+    // 2. Search results
+    if (searchResults !== null) {
+      return searchResults;
+    }
+    // 3. Fallback: if selectedPhoto is not in allFilteredPhotos, check allPhotos
+    if (selectedPhoto && !allFilteredPhotos.some((p) => p.id === selectedPhoto.id)) {
+      if (allPhotos.some((p) => p.id === selectedPhoto.id)) {
+        return allPhotos;
+      }
+      return [selectedPhoto];
+    }
+    return allFilteredPhotos;
+  }, [lightboxContextPhotos, searchResults, allFilteredPhotos, allPhotos, selectedPhoto]);
+
+  const currentPhotoIndex = useMemo(() => {
+    if (!selectedPhoto) return -1;
+    return allFlatPhotos.findIndex((p) => p.id === selectedPhoto.id);
+  }, [selectedPhoto, allFlatPhotos]);
+
   const hasPrev = currentPhotoIndex > 0;
   const hasNext = currentPhotoIndex >= 0 && currentPhotoIndex < allFlatPhotos.length - 1;
   const prevPhoto = hasPrev ? allFlatPhotos[currentPhotoIndex - 1] : null;
   const nextPhoto = hasNext ? allFlatPhotos[currentPhotoIndex + 1] : null;
 
-  const navigatePrev = () => {
-    if (hasPrev) setSelectedPhoto(allFlatPhotos[currentPhotoIndex - 1]);
-  };
-  const navigateNext = () => {
-    if (hasNext) setSelectedPhoto(allFlatPhotos[currentPhotoIndex + 1]);
-  };
+  const navigatePrev = useCallback(() => {
+    if (currentPhotoIndex > 0) {
+      setSelectedPhoto(allFlatPhotos[currentPhotoIndex - 1]);
+    }
+  }, [currentPhotoIndex, allFlatPhotos]);
+
+  const navigateNext = useCallback(() => {
+    if (currentPhotoIndex >= 0 && currentPhotoIndex < allFlatPhotos.length - 1) {
+      setSelectedPhoto(allFlatPhotos[currentPhotoIndex + 1]);
+    }
+  }, [currentPhotoIndex, allFlatPhotos]);
 
   // 2D Marquee Drag-and-Select & Range Selection Hook for Timeline
   const {
@@ -465,7 +508,7 @@ export default function PhotosPage() {
     orderedIds: searchResults ? searchResults.map((p) => p.id) : allFlatPhotos.map((p) => p.id),
     onOpenLightbox: (id) => {
       const found = (searchResults || allFlatPhotos).find((p) => p.id === id);
-      if (found) setSelectedPhoto(found);
+      if (found) handleOpenPhotoWithContext(found, null);
     },
   });
 
@@ -576,7 +619,12 @@ export default function PhotosPage() {
       {/* Time Capsule & Flashbacks (Desktop & Mobile) */}
       {!searchResults && (
         <div className="space-y-6">
-          <OnThisDaySection apiUrl={API_URL} onSelectPhoto={(photo) => setSelectedPhoto(photo)} />
+          <OnThisDaySection
+            apiUrl={API_URL}
+            onSelectPhoto={(photo, contextPhotos) =>
+              handleOpenPhotoWithContext(photo, contextPhotos, 'Time Capsule')
+            }
+          />
           <div className="hidden md:block">
             <MomentsCarousel
               events={events}
@@ -760,7 +808,7 @@ export default function PhotosPage() {
                   apiUrl={API_URL}
                   isSelected={selectedIds.includes(item.id)}
                   selectionModeActive={selectedIds.length > 0}
-                  onSelect={setSelectedPhoto}
+                  onSelect={(p) => handleOpenPhotoWithContext(p, null)}
                   onToggleSelect={handleItemClick}
                   onPointerDown={handlePointerDown}
                   onToggleFavorite={toggleFavorite}
@@ -855,7 +903,7 @@ export default function PhotosPage() {
                     apiUrl={API_URL}
                     selectedIds={selectedIds}
                     density={density}
-                    onSelect={setSelectedPhoto}
+                    onSelect={(p) => handleOpenPhotoWithContext(p, null)}
                     onToggleSelect={handleItemClick}
                     onPointerDown={handlePointerDown}
                     onToggleSelectGroup={toggleSelectGroup}
@@ -925,7 +973,7 @@ export default function PhotosPage() {
                     apiUrl={API_URL}
                     selectedIds={selectedIds}
                     density={density}
-                    onSelect={setSelectedPhoto}
+                    onSelect={(p) => handleOpenPhotoWithContext(p, null)}
                     onToggleSelect={handleItemClick}
                     onPointerDown={handlePointerDown}
                     onToggleSelectGroup={toggleSelectGroup}
@@ -948,7 +996,7 @@ export default function PhotosPage() {
               apiUrl={API_URL}
               selectedIds={selectedIds}
               density={density}
-              onSelect={setSelectedPhoto}
+              onSelect={(p) => handleOpenPhotoWithContext(p, null)}
               onToggleSelect={handleItemClick}
               onPointerDown={handlePointerDown}
               onToggleSelectGroup={toggleSelectGroup}
@@ -1030,7 +1078,9 @@ export default function PhotosPage() {
         apiUrl={API_URL}
         selectedIds={selectedIds}
         onClose={() => setSelectedEvent(null)}
-        onSelectPhoto={(photo) => setSelectedPhoto(photo)}
+        onSelectPhoto={(photo) =>
+          handleOpenPhotoWithContext(photo, selectedEvent?.items || [], selectedEvent?.title)
+        }
         onToggleSelectPhoto={toggleSelectPhoto}
         onToggleSelectAll={(ids) => {
           const allIn = ids.length > 0 && ids.every((id) => selectedIds.includes(id));
@@ -1044,7 +1094,7 @@ export default function PhotosPage() {
       <LightboxModal
         photo={selectedPhoto}
         apiUrl={API_URL}
-        onClose={() => setSelectedPhoto(null)}
+        onClose={handleCloseLightbox}
         onToggleFavorite={toggleFavorite}
         onDelete={(id) => {
           setTimeline((prev) =>
@@ -1053,7 +1103,7 @@ export default function PhotosPage() {
               items: group.items.filter((item) => item.id !== id),
             })).filter((group) => group.items.length > 0)
           );
-          setSelectedPhoto(null);
+          handleCloseLightbox();
           if (searchResults) {
             setSearchResults((prev) => (prev ? prev.filter((p) => p.id !== id) : null));
           }
@@ -1064,10 +1114,13 @@ export default function PhotosPage() {
         hasNext={hasNext}
         nextPhoto={nextPhoto}
         prevPhoto={prevPhoto}
+        currentIndex={currentPhotoIndex >= 0 ? currentPhotoIndex : undefined}
+        totalCount={allFlatPhotos.length > 0 ? allFlatPhotos.length : undefined}
+        collectionTitle={lightboxCollectionTitle || undefined}
         onSelectPhoto={(photoOrId) => {
           if (typeof photoOrId === 'number') {
             const found = allPhotos.find((p) => p.id === photoOrId);
-            if (found) setSelectedPhoto(found);
+            if (found) handleOpenPhotoWithContext(found, null);
           } else {
             setSelectedPhoto(photoOrId);
           }

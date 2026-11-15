@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, Calendar, ChevronLeft, ChevronRight, X, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Sparkles, Calendar, ChevronLeft, ChevronRight, X, Play, Image as ImageIcon } from 'lucide-react';
 import { MediaItem } from '../timeline/PhotoCard';
 
 export interface FlashbackGroup {
@@ -18,7 +18,7 @@ export interface FlashbackGroup {
 
 interface OnThisDaySectionProps {
   apiUrl: string;
-  onSelectPhoto: (photo: MediaItem) => void;
+  onSelectPhoto: (photo: MediaItem, contextPhotos?: MediaItem[]) => void;
 }
 
 export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
@@ -28,6 +28,25 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
   const [flashbacks, setFlashbacks] = useState<FlashbackGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDismissed, setIsDismissed] = useState(false);
+
+  // Scoped list of all Time Capsule photos for forward/backward Lightbox navigation
+  const allCapsulePhotos = useMemo(() => {
+    const seen = new Set<number>();
+    const list: MediaItem[] = [];
+    for (const fb of flashbacks) {
+      if (fb.cover_media && !seen.has(fb.cover_media.id)) {
+        seen.add(fb.cover_media.id);
+        list.push(fb.cover_media);
+      }
+      for (const it of fb.items || []) {
+        if (!seen.has(it.id)) {
+          seen.add(it.id);
+          list.push(it);
+        }
+      }
+    }
+    return list;
+  }, [flashbacks]);
 
   // Scroll and Navigation State
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -211,8 +230,19 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
           </div>
         </div>
 
-        {/* Controls: Left/Right arrows + Dismiss */}
+        {/* Controls: Play Capsule + Left/Right arrows + Dismiss */}
         <div className="flex items-center gap-1.5">
+          {allCapsulePhotos.length > 0 && (
+            <button
+              onClick={() => onSelectPhoto(allCapsulePhotos[0], allCapsulePhotos)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer mr-1 hover:scale-105 active:scale-95"
+              title="Open Time Capsule Story viewer"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span className="hidden sm:inline">Play Capsule</span>
+              <span className="text-[10px] bg-black/20 px-1.5 py-0.5 rounded-full font-mono">{allCapsulePhotos.length}</span>
+            </button>
+          )}
           <button
             onClick={() => handleScroll('left')}
             disabled={!canScrollLeft}
@@ -294,7 +324,7 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
                 onClick={() => {
                   if (hasDraggedDistance.current > 5) return;
                   if (fb.cover_media) {
-                    onSelectPhoto(fb.cover_media);
+                    onSelectPhoto(fb.cover_media, allCapsulePhotos);
                   }
                 }}
               >
@@ -324,6 +354,12 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
                       <ImageIcon className="w-8 h-8" />
                     </div>
                   )}
+                  {/* Subtle Play Capsule overlay on hover */}
+                  <div className="absolute inset-0 bg-indigo-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                    <div className="p-2.5 rounded-full bg-black/70 backdrop-blur-md text-amber-300 border border-amber-400/30 shadow-2xl transform scale-90 group-hover:scale-100 transition-transform">
+                      <Play className="w-5 h-5 fill-current" />
+                    </div>
+                  </div>
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2.5">
                     <p className="text-[11px] text-slate-200 font-medium truncate">
                       {fb.subtitle}
@@ -340,7 +376,7 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (hasDraggedDistance.current > 5) return;
-                          onSelectPhoto(it);
+                          onSelectPhoto(it, allCapsulePhotos);
                         }}
                         className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 border border-white/20 hover:ring-2 hover:ring-amber-400 transition-all cursor-pointer"
                         title={it.filename}
