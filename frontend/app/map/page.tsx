@@ -113,6 +113,7 @@ export default function MapPage() {
 
   // Filter state
   const [selectedPlaceFilter, setSelectedPlaceFilter] = useState<string>('all');
+  const [isInterpolating, setIsInterpolating] = useState(false);
 
   // DOM Refs
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -185,6 +186,37 @@ export default function MapPage() {
   useEffect(() => {
     loadLocations();
   }, [loadLocations]);
+
+  const handleInterpolateLocations = async () => {
+    try {
+      setIsInterpolating(true);
+      const token = getActiveToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`${API_URL}/api/v1/media/interpolate-locations?window_hours=2.0&preview=false`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMessage(`Auto-geotagged ${data.matched_count} photos from timeline proximity!`);
+        loadLocations();
+        setTimeout(() => setStatusMessage(null), 5000);
+      } else {
+        const err = await res.json().catch(() => ({ detail: 'Interpolation failed.' }));
+        setStatusMessage(`Error: ${err.detail || 'Interpolation failed.'}`);
+        setTimeout(() => setStatusMessage(null), 5000);
+      }
+    } catch (e: any) {
+      console.error('Interpolation error:', e);
+      setStatusMessage('Error executing GPS interpolation.');
+      setTimeout(() => setStatusMessage(null), 5000);
+    } finally {
+      setIsInterpolating(false);
+    }
+  };
 
   // Dynamic Geographic Clustering Algorithm (O(N) Spatial Grid Bucket Hashing ~8.5km)
   const clusters: GeoCluster[] = useMemo(() => {
@@ -848,6 +880,17 @@ export default function MapPage() {
             >
               <Flame className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Heatmap</span>
+            </button>
+
+            {/* Auto-Enrich Geotags Button */}
+            <button
+              onClick={handleInterpolateLocations}
+              disabled={isInterpolating}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl text-xs font-semibold backdrop-blur-md shadow-xl border bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-500 shadow-emerald-500/20 transition-all disabled:opacity-50"
+              title="Automatically match ungeotagged photos with phone GPS shots taken within 2 hours"
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isInterpolating ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isInterpolating ? 'Enriching...' : 'Auto-Enrich Geotags'}</span>
             </button>
 
             {/* Map Style Selector */}

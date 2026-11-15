@@ -64,7 +64,9 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
   const fetchHealth = async () => {
     try {
       setLoading(true);
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' 
+        ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) 
+        : null;
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -94,7 +96,9 @@ export const LibraryDoctorModal: React.FC<LibraryDoctorModalProps> = ({
     try {
       setFixingAction(action);
       setActionMessage(null);
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+      const token = typeof window !== 'undefined' 
+        ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) 
+        : null;
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 

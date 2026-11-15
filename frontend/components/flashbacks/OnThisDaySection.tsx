@@ -36,7 +36,9 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
       setIsDismissed(true);
     }
 
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const token = typeof window !== 'undefined' 
+      ? (localStorage.getItem('memorypics_token') || localStorage.getItem('token')) 
+      : null;
     const headers: Record<string, string> = {};
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
