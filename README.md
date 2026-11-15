@@ -578,6 +578,13 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **🧠 Intelligence, Maintenance & Performance Overhaul (`v0.5.0`)**:
+  - **🩺 Library Doctor & Health Diagnostics**: Fast 0.23-second audit across all media evaluating multimodal CLIP search coverage, 1080p rendition readiness, geolocation density, and face cluster cleanliness with a live 0–100% health score gauge and 1-click automated remedies.
+  - **⏳ "On This Day" Time Capsule (Flashbacks)**: Nostalgic memory carousel directly on Timeline (`/`) featuring circular year badges (`8 Years Ago`), cover previews, photo count pills, near-date $\pm 2$ day fallback, and instant Lightbox launcher.
+  - **🗺️ Spatiotemporal GPS Location Interpolator**: High-performance $O(\log N)$ bisect binary search engine matching un-geotagged camera/DSLR photos with temporally proximate ($\pm 2$ hours) phone GPS shots, resolving 565+ locations in 0.15s, paired with batch map geotagging endpoints.
+  - **👥 People & Face Consolidation Studio**: Cosine similarity engine for average 512-dim ArcFace person cluster vectors discovering high-confidence duplicate clusters (e.g. 82.5% match), 1-click passerby crowd face cleanup hiding unnamed 1–2 detection clusters, and VIP person pinning with persistent `is_favorite` stars.
+  - **⚡ High-Throughput Background CLIP Multimodal Embedder**: Upgraded background worker with concurrent Google Drive thumbnail downloading and persistent local caching to index cloud archives with FastEmbed SIMD vision inference.
+  - **🚀 Caddy Video Streaming Compression Bypass**: Configured `@compressible` exclusions for video ranges in Caddy, eliminating gzip/zstd CPU overhead on HTTP 206 Partial Content streams.
 - [x] **🎥 Complete Video Streaming Overhaul & Triage Video Playback (`v0.4.0`)**: 
   - **Triage Video Playback & Lightbox Mapping**: Resolved missing `is_video` and `duration_seconds` propagation in Triage (`/triage`), restoring the full HTML5 `<video>` player with scrubbing, scene jumping, and frame capture instead of broken `<img>` tags.
   - **Self-Healing Google Drive Token Refresh**: Automatic proactive OAuth token expiration detection and instant retry on HTTP 401 errors, eliminating playback errors for cloud-streamed media.
