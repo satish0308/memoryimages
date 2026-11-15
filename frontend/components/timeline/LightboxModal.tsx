@@ -129,6 +129,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [locLon, setLocLon] = useState<string>(photo?.longitude != null ? photo.longitude.toString() : '');
   const [savingLoc, setSavingLoc] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<'soft' | 'hard'>('soft');
   const [isDeleting, setIsDeleting] = useState(false);
   const [isPlayingMotion, setIsPlayingMotion] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -519,6 +520,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   // Reset delete confirm modal when switching photos
   useEffect(() => {
     setShowDeleteConfirm(false);
+    setDeleteMode('soft');
     setIsDeleting(false);
     setIsPlayingMotion(false);
     setIsEnhancing(false);
@@ -531,7 +533,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setIsDeleting(true);
     const deletedId = photo.id;
     try {
-      const res = await fetch(`${apiUrl}/api/v1/media/${deletedId}`, { method: 'DELETE' });
+      const isPermanent = deleteMode === 'hard';
+      const res = await fetch(`${apiUrl}/api/v1/media/${deletedId}?permanent=${isPermanent}`, { method: 'DELETE' });
       if (res.ok) {
         setShowDeleteConfirm(false);
         onDelete(deletedId);
@@ -882,7 +885,19 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
       // When Delete Confirmation Dialog is open
       if (showDeleteConfirm) {
-        if (e.key === 'Enter' || e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          e.stopPropagation();
+          setDeleteMode('hard');
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+          e.preventDefault();
+          e.stopPropagation();
+          setDeleteMode('soft');
+        } else if (e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          e.stopPropagation();
+          setDeleteMode((prev) => (prev === 'soft' ? 'hard' : 'soft'));
+        } else if (e.key === 'Enter') {
           e.preventDefault();
           e.stopPropagation();
           handleConfirmDelete();
@@ -953,6 +968,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     onNavigatePrev,
     onNavigateNext,
     showDeleteConfirm,
+    deleteMode,
     showShareModal,
     showCaptureModal,
     showSidebar,
@@ -2669,27 +2685,93 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
       {/* Delete Confirmation Modal Overlay */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
-            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mx-auto shadow-inner">
-              <Trash2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-white">Delete Photo?</h3>
-              <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                {photo.source_type === 'google_drive'
-                  ? 'This will remove the photo from MyMemoryPics and move it to trash in your Google Drive.'
-                  : 'This will remove the photo from your library and storage.'}
-              </p>
-              <div className="flex items-center justify-center gap-1.5 mt-3 text-[11px] text-slate-400 font-mono">
-                <span>Press</span>
-                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Enter ↵</kbd>
-                <span>or</span>
-                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Delete</kbd>
-                <span>to confirm •</span>
-                <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-200">Esc</kbd>
-                <span>to cancel</span>
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-left">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-2xl ${
+                deleteMode === 'hard'
+                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              } transition-colors`}>
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Photo</h3>
+                <p className="text-xs text-slate-400">Choose deletion method for this item</p>
               </div>
             </div>
+
+            {/* Keyboard Arrow Navigation Hint */}
+            <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono bg-slate-800/60 px-3.5 py-1.5 rounded-xl border border-slate-700/60">
+              <span>Use <kbd className="font-bold text-slate-200">↑ / ↓</kbd> arrow keys to switch</span>
+              <span>•</span>
+              <span><kbd className="font-bold text-slate-200">Enter ↵</kbd> to delete</span>
+            </div>
+
+            {/* Options */}
+            <div className="space-y-2.5">
+              {/* Option 1: Move to Trash */}
+              <div
+                onClick={() => setDeleteMode('soft')}
+                className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer ${
+                  deleteMode === 'soft'
+                    ? 'border-indigo-500 bg-indigo-950/30 shadow-sm ring-2 ring-indigo-500/30'
+                    : 'border-slate-800 hover:border-slate-700 bg-slate-900/50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="lightboxDeleteMode"
+                    checked={deleteMode === 'soft'}
+                    onChange={() => setDeleteMode('soft')}
+                    className="w-4 h-4 text-indigo-600 accent-indigo-600 cursor-pointer mt-0.5"
+                  />
+                  <div className="flex-1 space-y-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white">Move to Trash</span>
+                      <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-800/40">
+                        Safely Restorable
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Hidden from library but kept safely in your Trash bin. 100% restorable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Option 2: Permanent Delete */}
+              <div
+                onClick={() => setDeleteMode('hard')}
+                className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer ${
+                  deleteMode === 'hard'
+                    ? 'border-rose-500 bg-rose-950/30 shadow-sm ring-2 ring-rose-500/30'
+                    : 'border-slate-800 hover:border-slate-700 bg-slate-900/50'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="lightboxDeleteMode"
+                    checked={deleteMode === 'hard'}
+                    onChange={() => setDeleteMode('hard')}
+                    className="w-4 h-4 text-rose-600 accent-rose-600 cursor-pointer mt-0.5"
+                  />
+                  <div className="flex-1 space-y-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white">Permanent Delete</span>
+                      <span className="text-[10px] font-semibold text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded-full border border-rose-800/40">
+                        Irreversible
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Permanently purges the photo and records. Cannot be recovered.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
@@ -2701,14 +2783,18 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
               <button
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="flex-1 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer disabled:opacity-50"
+                className={`flex-1 py-2 px-3 rounded-xl text-white text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-lg cursor-pointer disabled:opacity-50 ${
+                  deleteMode === 'hard'
+                    ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/30'
+                    : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/30'
+                }`}
               >
                 {isDeleting ? (
                   <span>Deleting...</span>
                 ) : (
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete (Enter ↵)</span>
+                    <span>{deleteMode === 'hard' ? 'Permanent Delete ↵' : 'Move to Trash ↵'}</span>
                   </>
                 )}
               </button>

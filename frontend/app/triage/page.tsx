@@ -869,6 +869,16 @@ export default function TriagePage() {
           e.preventDefault();
           setShowBulkDeleteModal(true);
         }
+      } else if (selectedIds.length === 0 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+        const tabs: TriageTab[] = ['screenshots', 'wallpapers', 'bills', 'blurry', 'large_files', 'memes', 'duplicates'];
+        const idx = tabs.indexOf(activeTab);
+        if (e.key === 'ArrowRight' && idx < tabs.length - 1) {
+          e.preventDefault();
+          setActiveTab(tabs[idx + 1]);
+        } else if (e.key === 'ArrowLeft' && idx > 0) {
+          e.preventDefault();
+          setActiveTab(tabs[idx - 1]);
+        }
       }
     };
 
@@ -880,6 +890,7 @@ export default function TriagePage() {
     showBulkDeleteModal,
     showGooglePhotosModal,
     selectedIds.length,
+    activeTab,
   ]);
 
   // Invert Selection for currently visible tab items

@@ -62,18 +62,38 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
     }
   };
 
-  // Handle ESC and Enter key shortcuts
+  // Handle ESC, Enter, and Arrow keys (Up/Down/Left/Right) to select between Trash and Permanent Delete
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
       if (e.key === 'Escape' && !isDeleting) {
         e.preventDefault();
         onClose();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        setDeleteMode('hard');
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setDeleteMode('soft');
+      } else if (e.key === ' ' || e.key === 'Spacebar') {
+        e.preventDefault();
+        if (deleteMode === 'hard') {
+          setConfirmHardDelete((prev) => !prev);
+        } else {
+          setDeleteMode('hard');
+        }
       } else if (e.key === 'Enter' && !isDeleting) {
         e.preventDefault();
-        if (deleteMode === 'soft' || (deleteMode === 'hard' && confirmHardDelete)) {
+        if (deleteMode === 'soft') {
           handleAction();
+        } else if (deleteMode === 'hard') {
+          if (!confirmHardDelete) {
+            setConfirmHardDelete(true);
+          } else {
+            handleAction();
+          }
         }
       }
     };
@@ -124,12 +144,19 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
 
         {/* Content Body */}
         <div className="p-5 space-y-4 overflow-y-auto">
+          {/* Keyboard Navigation Hint */}
+          <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-slate-800/60 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
+            <span>Use <kbd className="font-bold text-slate-800 dark:text-slate-200">↑ / ↓</kbd> arrow keys to switch</span>
+            <span>•</span>
+            <span><kbd className="font-bold text-slate-800 dark:text-slate-200">Enter ↵</kbd> to delete</span>
+          </div>
+
           {/* Option 1: Soft Delete (Move to Trash) */}
           <div
             onClick={() => !isDeleting && setDeleteMode('soft')}
             className={`p-4 rounded-2xl border-2 transition-all cursor-pointer relative ${
               deleteMode === 'soft'
-                ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/20 shadow-sm'
+                ? 'border-indigo-600 bg-indigo-50/60 dark:bg-indigo-950/20 shadow-sm ring-2 ring-indigo-500/30'
                 : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50'
             }`}
           >
@@ -171,7 +198,7 @@ export const BulkDeleteModal: React.FC<BulkDeleteModalProps> = ({
             onClick={() => !isDeleting && setDeleteMode('hard')}
             className={`p-4 rounded-2xl border-2 transition-all cursor-pointer relative ${
               deleteMode === 'hard'
-                ? 'border-rose-500 bg-rose-50/60 dark:bg-rose-950/20 shadow-sm'
+                ? 'border-rose-500 bg-rose-50/60 dark:bg-rose-950/20 shadow-sm ring-2 ring-rose-500/30'
                 : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50'
             }`}
           >

@@ -585,6 +585,16 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **⌨️ Universal Keyboard Shortcuts, Delete Auto-Advance & Arrow Navigation (`v0.5.1`)**:
+  - **🎞️ Lightbox Delete Auto-Advance**: Deleting any photo inside the full-screen Lightbox viewer automatically transitions to the next photo (or previous photo if last in collection) without exiting full view or returning to the gallery, preserving navigation flow across all 10 locations (Timeline, On This Day Time Capsule, Search, Albums, People, Map Outings, Memories, Triage, Similar Photos, Shared Guest Albums, and Trash).
+  - **🗑️ Delete Option Keyboard Selection**: Arrow keys (<kbd>↑</kbd> / <kbd>↓</kbd> or <kbd>←</kbd> / <kbd>→</kbd>) dynamically toggle between **Move to Trash** (soft delete, restorable) and **Permanent Delete** (hard delete, irreversible) in both Lightbox and Bulk Delete confirmation modals, with active card ring focus and radio selection.
+  - **⚡ Quick Confirm & Dismiss**: <kbd>Enter</kbd> confirms and executes deletions, <kbd>Space</kbd> toggles selection or confirmation checkboxes, and <kbd>Escape</kbd> safely cancels dialogs or immediately closes full-screen Lightbox views.
+  - **📑 Universal Section & Tab Arrow Browsing**: Keyboard arrow keys (<kbd>←</kbd> / <kbd>→</kbd>) cycle through tabs and categories across the platform:
+    - *Smart Triage*: Browse between Screenshots, Wallpapers, Receipts, Blurry, Large Files, Memes, and Duplicates.
+    - *Trash Bin*: Switch between All Deleted, Read-Only Mount Queue, and Soft Trash filters.
+    - *Gallery Timeline*: Switch between category filter pills (All, Memories, Screenshots, Bills, Memes).
+    - *Stories & Reels*: Advance or reverse story slides.
+  - **⌨️ Universal Page-Level Shortcuts**: Global <kbd>Delete</kbd> / <kbd>Backspace</kbd> triggers bulk deletion on selected items, <kbd>Escape</kbd> clears active selection, and <kbd>f</kbd> / <kbd>F</kbd> toggles favorites.
 - [x] **🧠 Intelligence, Maintenance & Performance Overhaul (`v0.5.0`)**:
   - **🩺 Library Doctor & Health Diagnostics**: Fast 0.23-second audit across all media evaluating multimodal CLIP search coverage, 1080p rendition readiness, geolocation density, and face cluster cleanliness with a live 0–100% health score gauge and 1-click automated remedies.
   - **⏳ "On This Day" Time Capsule (Flashbacks)**: Nostalgic memory carousel directly on Timeline (`/`) featuring circular year badges (`8 Years Ago`), cover previews, photo count pills, near-date $\pm 2$ day fallback, and instant Lightbox launcher.

@@ -537,6 +537,16 @@ export default function PhotosPage() {
           e.preventDefault();
           setShowBulkDeleteModal(true);
         }
+      } else if (selectedIds.length === 0 && !searchQuery && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+        const cats = ['all', 'memory', 'screenshot', 'document_bill', 'meme_junk'];
+        const curIdx = cats.indexOf(activeCategory);
+        if (e.key === 'ArrowRight' && curIdx < cats.length - 1) {
+          e.preventDefault();
+          setActiveCategory(cats[curIdx + 1]);
+        } else if (e.key === 'ArrowLeft' && curIdx > 0) {
+          e.preventDefault();
+          setActiveCategory(cats[curIdx - 1]);
+        }
       }
     };
 
@@ -551,6 +561,7 @@ export default function PhotosPage() {
     isFilterDrawerOpen,
     selectedIds.length,
     searchQuery,
+    activeCategory,
   ]);
 
   return (

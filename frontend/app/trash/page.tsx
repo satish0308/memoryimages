@@ -434,6 +434,16 @@ export default function TrashGalleryPage() {
           e.preventDefault();
           setShowConfirmPurgeSelected(true);
         }
+      } else if (selectedIds.length === 0 && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+        const filters: FilterType[] = ['all', 'mount_queue', 'soft_deleted'];
+        const curIdx = filters.indexOf(activeFilter);
+        if (e.key === 'ArrowRight' && curIdx < filters.length - 1) {
+          e.preventDefault();
+          setActiveFilter(filters[curIdx + 1]);
+        } else if (e.key === 'ArrowLeft' && curIdx > 0) {
+          e.preventDefault();
+          setActiveFilter(filters[curIdx - 1]);
+        }
       }
     };
 
@@ -446,6 +456,7 @@ export default function TrashGalleryPage() {
     showGooglePhotosModal,
     isProcessingAction,
     selectedIds.length,
+    activeFilter,
   ]);
 
   return (
