@@ -481,17 +481,22 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             Media.source_id,
             Media.original_path,
             Media.thumbnail_256_path,
+            Media.thumbnail_1080_path,
             Media.user_id,
             Media.mime_type
         ).filter(
             Media.is_deleted == False,
-            Media.thumbnail_1080_path == None,
             ~Media.mime_type.ilike("video/%")
         )
         if user_id:
             query = query.filter(Media.user_id == user_id)
 
-        rows = query.all()
+        all_candidates = query.all()
+        # Filter for photos whose 1080p preview is either unset in DB or physically missing on disk
+        rows = [
+            r for r in all_candidates
+            if not r[5] or not os.path.isfile(r[5])
+        ]
         total = len(rows)
 
         if total == 0:
@@ -512,8 +517,9 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                 "source_id": r[2],
                 "original_path": r[3],
                 "thumbnail_256_path": r[4],
-                "user_id": r[5],
-                "mime_type": r[6]
+                "thumbnail_1080_path": r[5],
+                "user_id": r[6],
+                "mime_type": r[7]
             }
             for r in rows
         ]
@@ -523,7 +529,7 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         total_steps=total,
         current_step=0,
         progress=0,
-        message=f"Accelerated 1080p WebP pre-generation started for {total} photos (16 workers)..."
+        message=f"Accelerated 1080p WebP pre-generation started for {total} photos (8 workers)..."
     )
 
     def process_single_item(item: dict) -> Optional[tuple]:
@@ -531,15 +537,31 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
         orig_path = item["original_path"]
         thumb_1080_path = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{item_id}_1080.webp")
 
+        # Skip if already exists on disk (concurrency / re-run safeguard)
+        if os.path.isfile(thumb_1080_path) and os.path.getsize(thumb_1080_path) > 0:
+            return (item_id, thumb_1080_path)
+
         try:
-            # 1. Local disk photos: read directly, resize & save as WebP
+            # 1. Local / Uploaded disk photos: read directly, resize & save as WebP
             if orig_path and os.path.isfile(orig_path):
-                with Image.open(orig_path) as img:
+                from app.services.thumbnail import open_image_for_thumbnail
+                img = open_image_for_thumbnail(orig_path)
+                try:
+                    if hasattr(img, "draft") and getattr(img, "format", None) == "JPEG":
+                        try:
+                            img.draft("RGB", (2560, 2560))
+                        except Exception:
+                            pass
                     img = ImageOps.exif_transpose(img)
-                    img_rgb = img.convert("RGB")
-                    img_1080 = img_rgb.copy()
-                    img_1080.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
-                    img_1080.save(thumb_1080_path, "WEBP", quality=90, method=2)
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    img.thumbnail((2560, 2560), Image.Resampling.BICUBIC)
+                    img.save(thumb_1080_path, "WEBP", quality=88, method=2)
+                finally:
+                    try:
+                        img.close()
+                    except Exception:
+                        pass
                 return (item_id, thumb_1080_path)
 
             # 2. Google Drive photos: fast CDN fetch (multi-threaded connection pool)
@@ -558,8 +580,9 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
             elif item["thumbnail_256_path"] and os.path.isfile(item["thumbnail_256_path"]):
                 with Image.open(item["thumbnail_256_path"]) as img:
                     img = ImageOps.exif_transpose(img)
-                    img_rgb = img.convert("RGB")
-                    img_rgb.save(thumb_1080_path, "WEBP", quality=85)
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    img.save(thumb_1080_path, "WEBP", quality=85)
                 return (item_id, thumb_1080_path)
 
         except Exception as e:
@@ -572,7 +595,7 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
     batch_updates = []
     last_update_time = time.time()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         future_to_item = {executor.submit(process_single_item, it): it for it in items_data}
 
         for future in concurrent.futures.as_completed(future_to_item):
@@ -588,8 +611,8 @@ def run_pregenerate_1080p_renditions(task_id: str, payload: Dict[str, Any]) -> D
                 batch_updates.append(res)
                 processed += 1
 
-            # Batch DB commit every 20 items
-            if len(batch_updates) >= 20:
+            # Batch DB commit every 25 items
+            if len(batch_updates) >= 25:
                 with SessionLocal() as db_batch:
                     for mid, path in batch_updates:
                         db_batch.query(Media).filter(Media.id == mid).update(

@@ -585,6 +585,12 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **⚡ Instant Lightbox & Accelerated 1080p WebP Pipeline (`v0.5.2`)**:
+  - **🚀 Instant 0ms Progressive Lightbox Display**: The Lightbox viewer now renders the browser-cached 512px thumbnail immediately upon opening, guaranteeing zero blank wait-times or loading spinners, and seamlessly transitions to crisp 1080p WebP once loaded in the background.
+  - **🔍 Disk-Aware 1080p Pre-Generation Pipeline**: Overhauled the background worker task in `worker.py` to identify photos physically missing 1080p WebP files on disk (restoring 17,062 renditions across 8 concurrent worker threads with BICUBIC downsampling and JPEG DCT draft decoding).
+  - **🛡️ Manual Upload & Local On-Demand Generation**: Extended on-demand 1080p generation in `media.py` to support `SourceType.MANUAL_UPLOAD` as well as `SourceType.LOCAL` with libjpeg `draft()` decoding, eliminating massive 2MB–30MB original file fallbacks.
+  - **🚦 Anti-Stall Progressive Fallback**: If an HD 1080p preview is not yet generated, the thumbnail endpoint immediately falls back to the crisp 256/512 thumbnail with short cache expiry instead of streaming the multi-megabyte original master file over HTTP.
+  - **⏱️ 250ms Prefetch Debouncing**: Throttled anticipatory prefetching for adjacent photos ($N+1$ / $N-1$) by 250ms, preventing request queue starvation and server lockups during rapid arrow navigation.
 - [x] **⌨️ Universal Keyboard Shortcuts, Delete Auto-Advance & Arrow Navigation (`v0.5.1`)**:
   - **🎞️ Lightbox Delete Auto-Advance**: Deleting any photo inside the full-screen Lightbox viewer automatically transitions to the next photo (or previous photo if last in collection) without exiting full view or returning to the gallery, preserving navigation flow across all 10 locations (Timeline, On This Day Time Capsule, Search, Albums, People, Map Outings, Memories, Triage, Similar Photos, Shared Guest Albums, and Trash).
   - **🗑️ Delete Option Keyboard Selection**: Arrow keys (<kbd>↑</kbd> / <kbd>↓</kbd> or <kbd>←</kbd> / <kbd>→</kbd>) dynamically toggle between **Move to Trash** (soft delete, restorable) and **Permanent Delete** (hard delete, irreversible) in both Lightbox and Bulk Delete confirmation modals, with active card ring focus and radio selection.

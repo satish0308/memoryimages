@@ -668,30 +668,34 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     };
   }, [photo?.id, isCurrentVideo, apiUrl]);
 
-  // Anticipatory zero-latency pre-fetching for adjacent photos (N+1 and N-1)
+  // Anticipatory zero-latency pre-fetching for adjacent photos (N+1 and N-1) with 250ms debounce
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const token = localStorage.getItem('memorypics_token');
     const tokenParam = token ? `&token=${token}` : '';
 
-    const prefetchItem = (item?: MediaItem | null) => {
-      const itemIsVideo = Boolean(
-        item?.is_video ||
-        (item?.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(item.filename))
-      );
-      if (!item || itemIsVideo || !item.id) return;
-      // Preload 1080p preview image into browser cache
-      const img = new window.Image();
-      img.src = `${apiUrl}/api/v1/media/${item.id}/thumbnail?size=1080${tokenParam}`;
-      // Also ensure low-res thumbnail is warm
-      if (item.thumbnail_url && !item.thumbnail_url.startsWith('http')) {
-        const thumbImg = new window.Image();
-        thumbImg.src = `${apiUrl}${item.thumbnail_url}${item.thumbnail_url.includes('?') ? tokenParam : `?token=${token}`}`;
-      }
-    };
+    const prefetchTimer = setTimeout(() => {
+      const prefetchItem = (item?: MediaItem | null) => {
+        const itemIsVideo = Boolean(
+          item?.is_video ||
+          (item?.filename && /\.(mp4|mov|avi|mkv|webm|flv|wmv|m4v|3gp|ts)$/i.test(item.filename))
+        );
+        if (!item || itemIsVideo || !item.id) return;
+        // Preload 1080p preview image into browser cache
+        const img = new window.Image();
+        img.src = `${apiUrl}/api/v1/media/${item.id}/thumbnail?size=1080${tokenParam}`;
+        // Also ensure low-res thumbnail is warm
+        if (item.thumbnail_url && !item.thumbnail_url.startsWith('http')) {
+          const thumbImg = new window.Image();
+          thumbImg.src = `${apiUrl}${item.thumbnail_url}${item.thumbnail_url.includes('?') ? tokenParam : `?token=${token}`}`;
+        }
+      };
 
-    if (nextPhoto) prefetchItem(nextPhoto);
-    if (prevPhoto) prefetchItem(prevPhoto);
+      if (nextPhoto) prefetchItem(nextPhoto);
+      if (prevPhoto) prefetchItem(prevPhoto);
+    }, 250);
+
+    return () => clearTimeout(prefetchTimer);
   }, [nextPhoto?.id, prevPhoto?.id, apiUrl]);
 
   // On-demand original raw download only when zooming deep (> 1.2x) to save network & memory
@@ -1035,10 +1039,16 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const tokenParam = token ? `&token=${token}` : '';
   const tokenQuery = token ? `?token=${token}` : '';
 
+  const fallbackThumb = photo.thumbnail_url
+    ? (photo.thumbnail_url.startsWith('http')
+        ? photo.thumbnail_url
+        : `${apiUrl}${photo.thumbnail_url}${photo.thumbnail_url.includes('?') ? tokenParam : tokenQuery}`)
+    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=256${tokenParam}`;
+
   const highResUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
   const displayImageUrl = currentDisplaySrc || (isHighResLoaded
     ? highResUrl
-    : `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`);
+    : fallbackThumb);
   const videoUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
   const motionVideoUrl = `${apiUrl}/api/v1/media/${photo.id}/motion-video${tokenQuery}`;
 

@@ -1462,9 +1462,9 @@ def get_thumbnail(
             except Exception as vid_err:
                 logger.warning(f"On-demand video cover extraction failed for media {media.id}: {vid_err}")
 
-    # On-demand high-definition 1080p preview generation if missing for local images
+    # On-demand high-definition 1080p preview generation if missing for local or uploaded images
     if not is_media_video and size in ("1080", "2048") and (not thumb_path or not os.path.isfile(thumb_path)):
-        if media.source_type == SourceType.LOCAL and media.original_path and os.path.isfile(media.original_path):
+        if media.original_path and os.path.isfile(media.original_path):
             try:
                 from app.services.thumbnail import open_image_for_thumbnail
                 from PIL import ImageOps, Image
@@ -1472,6 +1472,11 @@ def get_thumbnail(
                 gen_1080_path = os.path.join(settings.THUMBNAIL_DIR, f"thumb_{media.id}_1080.webp")
                 raw_img = open_image_for_thumbnail(media.original_path)
                 try:
+                    if hasattr(raw_img, "draft") and getattr(raw_img, "format", None) == "JPEG":
+                        try:
+                            raw_img.draft("RGB", (2560, 2560))
+                        except Exception:
+                            pass
                     raw_img = ImageOps.exif_transpose(raw_img)
                     if raw_img.mode != "RGB":
                         raw_img = raw_img.convert("RGB")
@@ -1481,7 +1486,10 @@ def get_thumbnail(
                     db.commit()
                     thumb_path = gen_1080_path
                 finally:
-                    raw_img.close()
+                    try:
+                        raw_img.close()
+                    except Exception:
+                        pass
             except Exception as gen_err:
                 logger.warning(f"On-demand 1080 preview generation failed for media {media.id}: {gen_err}")
 
@@ -1510,6 +1518,15 @@ def get_thumbnail(
                     "X-Accel-Buffering": "no"
                 }
             )
+
+    # Progressive fallback: If 1080p preview is not ready/available, serve crisp 256 thumbnail
+    # to avoid stalling the UI or sending a 40MB raw master file over the thumbnail endpoint
+    if size in ("1080", "2048") and media.thumbnail_256_path and os.path.isfile(media.thumbnail_256_path):
+        return FileResponse(
+            media.thumbnail_256_path,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=120", "X-Thumbnail-Fallback": "256p"}
+        )
         
     if media.original_path and os.path.isfile(media.original_path):
         # Never stream multi-gigabyte video original files as image thumbnails!
