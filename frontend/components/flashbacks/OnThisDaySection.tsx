@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Sparkles, Calendar, ChevronRight, X, Image as ImageIcon } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Sparkles, Calendar, ChevronLeft, ChevronRight, X, Image as ImageIcon } from 'lucide-react';
 import { MediaItem } from '../timeline/PhotoCard';
 
 export interface FlashbackGroup {
@@ -28,6 +28,17 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
   const [flashbacks, setFlashbacks] = useState<FlashbackGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDismissed, setIsDismissed] = useState(false);
+
+  // Scroll and Navigation State
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // Mouse Drag-to-Scroll State
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartX = useRef(0);
+  const dragScrollLeft = useRef(0);
+  const hasDraggedDistance = useRef(0);
 
   useEffect(() => {
     // Check if dismissed in this session
@@ -57,6 +68,114 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
       .catch((e) => console.error('Flashbacks fetch error:', e))
       .finally(() => setLoading(false));
   }, [apiUrl]);
+
+  // Check scroll boundary limits
+  const checkScrollLimits = () => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const { scrollLeft, scrollWidth, clientWidth } = container;
+    setCanScrollLeft(scrollLeft > 6);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 6);
+  };
+
+  useEffect(() => {
+    checkScrollLimits();
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const onScroll = () => checkScrollLimits();
+    container.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', checkScrollLimits);
+
+    const timer = setTimeout(checkScrollLimits, 200);
+
+    return () => {
+      clearTimeout(timer);
+      container.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', checkScrollLimits);
+    };
+  }, [flashbacks]);
+
+  // Mouse wheel horizontal translation
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0 || e.shiftKey) return;
+
+      const maxScroll = container.scrollWidth - container.clientWidth;
+      if (maxScroll <= 0) return;
+
+      const atStart = container.scrollLeft <= 0;
+      const atEnd = container.scrollLeft >= maxScroll - 2;
+
+      // If scrolling vertically and container can scroll horizontally
+      if ((e.deltaY > 0 && !atEnd) || (e.deltaY < 0 && !atStart)) {
+        e.preventDefault();
+        container.scrollLeft += e.deltaY;
+        checkScrollLimits();
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [flashbacks]);
+
+  // Smooth button scroll
+  const handleScroll = (direction: 'left' | 'right') => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const scrollAmount = Math.max(300, Math.floor(container.clientWidth * 0.75));
+    container.scrollBy({
+      left: direction === 'left' ? -scrollAmount : scrollAmount,
+      behavior: 'smooth',
+    });
+    setTimeout(checkScrollLimits, 350);
+  };
+
+  // Keyboard navigation
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      handleScroll('left');
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      handleScroll('right');
+    }
+  };
+
+  // Mouse drag-to-scroll handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    setIsDragging(true);
+    dragStartX.current = e.pageX - container.offsetLeft;
+    dragScrollLeft.current = container.scrollLeft;
+    hasDraggedDistance.current = 0;
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    e.preventDefault();
+    const x = e.pageX - container.offsetLeft;
+    const walk = (x - dragStartX.current);
+    container.scrollLeft = dragScrollLeft.current - walk;
+    hasDraggedDistance.current = Math.abs(x - dragStartX.current);
+    checkScrollLimits();
+  };
+
+  const handleMouseUpOrLeave = () => {
+    setIsDragging(false);
+    setTimeout(() => {
+      hasDraggedDistance.current = 0;
+    }, 120);
+  };
 
   const handleDismiss = () => {
     setIsDismissed(true);
@@ -92,96 +211,161 @@ export const OnThisDaySection: React.FC<OnThisDaySectionProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={handleDismiss}
-          className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors"
-          title="Dismiss for this session"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        {/* Controls: Left/Right arrows + Dismiss */}
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => handleScroll('left')}
+            disabled={!canScrollLeft}
+            className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none rounded-xl transition-all cursor-pointer"
+            title="Scroll left (Left Arrow key)"
+            aria-label="Scroll left"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => handleScroll('right')}
+            disabled={!canScrollRight}
+            className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none rounded-xl transition-all cursor-pointer"
+            title="Scroll right (Right Arrow key)"
+            aria-label="Scroll right"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <div className="w-px h-4 bg-white/20 mx-0.5" />
+          <button
+            onClick={handleDismiss}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+            title="Dismiss for this session"
+            aria-label="Dismiss for this session"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Carousel */}
-      <div className="relative flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-indigo-600/40">
-        {flashbacks.map((fb) => {
-          const coverUrl = fb.cover_media?.thumbnail_url
-            ? `${apiUrl}${fb.cover_media.thumbnail_url}`
-            : null;
+      {/* Carousel Container with Floating Arrows */}
+      <div className="relative group/carousel">
+        {/* Left Floating Arrow */}
+        {canScrollLeft && (
+          <button
+            onClick={() => handleScroll('left')}
+            className="absolute left-1 top-1/2 -translate-y-1/2 z-20 p-2 md:p-2.5 rounded-full bg-slate-950/85 hover:bg-indigo-600 text-white border border-white/20 shadow-2xl backdrop-blur-md transition-all duration-200 hover:scale-110 active:scale-95 flex items-center justify-center cursor-pointer"
+            title="Scroll left"
+            aria-label="Scroll left"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
 
-          return (
-            <div
-              key={fb.year}
-              className="flex-shrink-0 group relative w-64 md:w-72 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-400/50 rounded-2xl p-3.5 transition-all duration-300 transform hover:-translate-y-1 shadow-lg hover:shadow-indigo-500/10 cursor-pointer flex flex-col justify-between"
-              onClick={() => {
-                if (fb.cover_media) {
-                  onSelectPhoto(fb.cover_media);
-                }
-              }}
-            >
-              {/* Year & Badge */}
-              <div className="flex items-center justify-between mb-2.5">
-                <span className="flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-2.5 py-1 rounded-full">
-                  <Calendar className="w-3.5 h-3.5" />
-                  {fb.title}
-                </span>
-                <span className="text-[11px] font-semibold text-slate-300 bg-black/40 px-2 py-0.5 rounded-full">
-                  {fb.count} photo{fb.count !== 1 ? 's' : ''}
-                </span>
-              </div>
+        {/* Right Floating Arrow */}
+        {canScrollRight && (
+          <button
+            onClick={() => handleScroll('right')}
+            className="absolute right-1 top-1/2 -translate-y-1/2 z-20 p-2 md:p-2.5 rounded-full bg-slate-950/85 hover:bg-indigo-600 text-white border border-white/20 shadow-2xl backdrop-blur-md transition-all duration-200 hover:scale-110 active:scale-95 flex items-center justify-center cursor-pointer"
+            title="Scroll right"
+            aria-label="Scroll right"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        )}
 
-              {/* Cover Photo */}
-              <div className="relative w-full h-36 md:h-40 rounded-xl overflow-hidden bg-slate-900 border border-white/10 mb-3 shadow-inner">
-                {coverUrl ? (
-                  <img
-                    src={coverUrl}
-                    alt={fb.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-600">
-                    <ImageIcon className="w-8 h-8" />
+        {/* Horizontal Carousel */}
+        <div
+          ref={scrollContainerRef}
+          tabIndex={0}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUpOrLeave}
+          onMouseLeave={handleMouseUpOrLeave}
+          onKeyDown={handleKeyDown}
+          className={`relative flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-indigo-600/40 select-none focus:outline-none focus:ring-1 focus:ring-indigo-400/50 rounded-2xl ${
+            isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+        >
+          {flashbacks.map((fb) => {
+            const coverUrl = fb.cover_media?.thumbnail_url
+              ? `${apiUrl}${fb.cover_media.thumbnail_url}`
+              : null;
+
+            return (
+              <div
+                key={fb.year}
+                className="flex-shrink-0 group relative w-64 md:w-72 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-indigo-400/50 rounded-2xl p-3.5 transition-all duration-300 transform hover:-translate-y-1 shadow-lg hover:shadow-indigo-500/10 cursor-pointer flex flex-col justify-between"
+                onClick={() => {
+                  if (hasDraggedDistance.current > 5) return;
+                  if (fb.cover_media) {
+                    onSelectPhoto(fb.cover_media);
+                  }
+                }}
+              >
+                {/* Year & Badge */}
+                <div className="flex items-center justify-between mb-2.5">
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-2.5 py-1 rounded-full">
+                    <Calendar className="w-3.5 h-3.5" />
+                    {fb.title}
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-300 bg-black/40 px-2 py-0.5 rounded-full">
+                    {fb.count} photo{fb.count !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {/* Cover Photo */}
+                <div className="relative w-full h-36 md:h-40 rounded-xl overflow-hidden bg-slate-900 border border-white/10 mb-3 shadow-inner">
+                  {coverUrl ? (
+                    <img
+                      src={coverUrl}
+                      alt={fb.title}
+                      draggable={false}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 pointer-events-none select-none"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-600">
+                      <ImageIcon className="w-8 h-8" />
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2.5">
+                    <p className="text-[11px] text-slate-200 font-medium truncate">
+                      {fb.subtitle}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Mini previews strip */}
+                {fb.items.length > 1 && (
+                  <div className="flex items-center gap-1.5 pt-1 border-t border-white/10 overflow-hidden">
+                    {fb.items.slice(0, 5).map((it) => (
+                      <div
+                        key={it.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (hasDraggedDistance.current > 5) return;
+                          onSelectPhoto(it);
+                        }}
+                        className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 border border-white/20 hover:ring-2 hover:ring-amber-400 transition-all cursor-pointer"
+                        title={it.filename}
+                      >
+                        <img
+                          src={`${apiUrl}${it.thumbnail_url}`}
+                          alt={it.filename}
+                          draggable={false}
+                          className="w-full h-full object-cover pointer-events-none select-none"
+                          loading="lazy"
+                        />
+                      </div>
+                    ))}
+                    {fb.items.length > 5 && (
+                      <span className="text-[10px] text-slate-400 font-bold pl-1">
+                        +{fb.items.length - 5}
+                      </span>
+                    )}
+                    <ChevronRight className="w-4 h-4 ml-auto text-slate-400 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all" />
                   </div>
                 )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2.5">
-                  <p className="text-[11px] text-slate-200 font-medium truncate">
-                    {fb.subtitle}
-                  </p>
-                </div>
               </div>
-
-              {/* Mini previews strip */}
-              {fb.items.length > 1 && (
-                <div className="flex items-center gap-1.5 pt-1 border-t border-white/10 overflow-hidden">
-                  {fb.items.slice(0, 5).map((it) => (
-                    <div
-                      key={it.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectPhoto(it);
-                      }}
-                      className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0 border border-white/20 hover:ring-2 hover:ring-amber-400 transition-all cursor-pointer"
-                      title={it.filename}
-                    >
-                      <img
-                        src={`${apiUrl}${it.thumbnail_url}`}
-                        alt={it.filename}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    </div>
-                  ))}
-                  {fb.items.length > 5 && (
-                    <span className="text-[10px] text-slate-400 font-bold pl-1">
-                      +{fb.items.length - 5}
-                    </span>
-                  )}
-                  <ChevronRight className="w-4 h-4 ml-auto text-slate-400 group-hover:text-amber-300 group-hover:translate-x-0.5 transition-all" />
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
