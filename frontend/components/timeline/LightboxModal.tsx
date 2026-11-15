@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   X, 
   Download, 
@@ -97,6 +97,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const { isCasting, activeSession, castMedia } = useCast();
   const [isHighResLoaded, setIsHighResLoaded] = useState(false);
+  const [is1080Loaded, setIs1080Loaded] = useState(false);
+  const [isLoadingHighRes, setIsLoadingHighRes] = useState(false);
   const [currentDisplaySrc, setCurrentDisplaySrc] = useState<string>('');
   const [showSidebar, setShowSidebar] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'faces'>('info');
@@ -611,6 +613,8 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsHighResLoaded(false);
+    setIs1080Loaded(false);
+    setIsLoadingHighRes(false);
     setVideoPlaybackError(null);
     setEditingFaceId(null);
     setIsAddingFace(false);
@@ -641,10 +645,10 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     if (!isCurrentVideo) {
       const preview1080Url = `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
       const img1080 = new window.Image();
-      img1080.src = preview1080Url;
       img1080.onload = () => {
         if (isMounted) {
           setCurrentDisplaySrc(preview1080Url);
+          setIs1080Loaded(true);
         }
       };
       img1080.onerror = () => {
@@ -652,12 +656,29 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         if (isMounted) {
           const rawUrl = `${apiUrl}/api/v1/media/${photo.id}/view${tokenQuery}`;
           const fallbackImg = new window.Image();
-          fallbackImg.src = rawUrl;
           fallbackImg.onload = () => {
-            if (isMounted) setCurrentDisplaySrc(rawUrl);
+            if (isMounted) {
+              setCurrentDisplaySrc(rawUrl);
+              setIs1080Loaded(true);
+              setIsHighResLoaded(true);
+            }
           };
+          fallbackImg.onerror = () => {
+            if (isMounted) {
+              setIs1080Loaded(false);
+            }
+          };
+          fallbackImg.src = rawUrl;
         }
       };
+      img1080.src = preview1080Url;
+      // Instant cache hit if image was already cached by browser or service worker
+      if (img1080.complete && img1080.naturalWidth > 0) {
+        if (isMounted) {
+          setCurrentDisplaySrc(preview1080Url);
+          setIs1080Loaded(true);
+        }
+      }
     }
 
     // Step 3: Fetch detected faces for this photo
@@ -698,26 +719,51 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     return () => clearTimeout(prefetchTimer);
   }, [nextPhoto?.id, prevPhoto?.id, apiUrl]);
 
-  // On-demand original raw download only when zooming deep (> 1.2x) to save network & memory
-  useEffect(() => {
-    if (!photo?.id || isCurrentVideo || isHighResLoaded || zoom <= 1.2) return;
-
-    let isMounted = true;
+  // Dedicated on-demand loader for uncompressed original camera file
+  const loadHighResOriginal = useCallback(() => {
+    if (!photo?.id || isCurrentVideo || isHighResLoaded || isLoadingHighRes) return;
+    setIsLoadingHighRes(true);
     const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
     const fullResUrl = `${apiUrl}/api/v1/media/${photo.id}/view${token ? `?token=${token}` : ''}`;
     const fullImg = new window.Image();
-    fullImg.src = fullResUrl;
     fullImg.onload = () => {
+      setIsHighResLoaded(true);
+      setIsLoadingHighRes(false);
+      setCurrentDisplaySrc(fullResUrl);
+    };
+    fullImg.onerror = () => {
+      setIsLoadingHighRes(false);
+    };
+    fullImg.src = fullResUrl;
+  }, [photo?.id, isCurrentVideo, isHighResLoaded, isLoadingHighRes, apiUrl]);
+
+  // When zooming in (> 1.1x), load the high-resolution thumbnail (1080p WebP) for razor-sharp clarity without network stall
+  useEffect(() => {
+    if (!photo?.id || isCurrentVideo || is1080Loaded || isHighResLoaded || zoom <= 1.1) return;
+
+    let isMounted = true;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('memorypics_token') : null;
+    const tokenParam = token ? `&token=${token}` : '';
+    const hdThumbUrl = `${apiUrl}/api/v1/media/${photo.id}/thumbnail?size=1080${tokenParam}`;
+    const img = new window.Image();
+    img.onload = () => {
       if (isMounted) {
-        setIsHighResLoaded(true);
-        setCurrentDisplaySrc(fullResUrl);
+        setCurrentDisplaySrc(hdThumbUrl);
+        setIs1080Loaded(true);
       }
     };
+    img.src = hdThumbUrl;
+    if (img.complete && img.naturalWidth > 0) {
+      if (isMounted) {
+        setCurrentDisplaySrc(hdThumbUrl);
+        setIs1080Loaded(true);
+      }
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [photo?.id, zoom, isHighResLoaded, apiUrl]);
+  }, [photo?.id, zoom, is1080Loaded, isHighResLoaded, isCurrentVideo, apiUrl]);
 
   // Load known people list on-demand only when face editing/tagging is activated
   useEffect(() => {
@@ -961,6 +1007,9 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
         window.open(`/similar?id=${photo.id}`, '_blank');
       } else if (e.key.toLowerCase() === 'e' && !isCurrentVideo) {
         window.location.href = `/edit?id=${photo.id}`;
+      } else if (e.key.toLowerCase() === 'o' && !isCurrentVideo) {
+        e.preventDefault();
+        loadHighResOriginal();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -980,6 +1029,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
     isCurrentVideo,
     onClose,
     onToggleFavorite,
+    loadHighResOriginal,
   ]);
 
   if (!photo) return null;
@@ -1093,6 +1143,43 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
 
         {/* Top Controls: Toggle Sidebar & Close */}
         <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+          {/* Extra Action Button: Load Directly the Original Uncompressed Master */}
+          {!isCurrentVideo && (
+            <button
+              type="button"
+              onClick={loadHighResOriginal}
+              disabled={isHighResLoaded || isLoadingHighRes}
+              className={`px-3 py-2 rounded-full font-semibold text-xs transition shadow-lg backdrop-blur-sm flex items-center gap-1.5 border ${
+                isHighResLoaded
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/60 cursor-default'
+                  : isLoadingHighRes
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-500/60 animate-pulse cursor-wait'
+                  : 'bg-black/60 hover:bg-emerald-950/90 text-slate-200 hover:text-emerald-300 border-white/20 hover:border-emerald-500/60 hover:scale-105 active:scale-95 cursor-pointer'
+              }`}
+              title={
+                isHighResLoaded
+                  ? 'Original uncompressed camera master loaded at 100% fidelity'
+                  : isLoadingHighRes
+                  ? 'Downloading uncompressed original camera file...'
+                  : 'Load directly the uncompressed camera original master (O)'
+              }
+            >
+              {isLoadingHighRes ? (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              ) : isHighResLoaded ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>
+                {isHighResLoaded
+                  ? 'Original Loaded'
+                  : isLoadingHighRes
+                  ? 'Loading Orig...'
+                  : 'Load Original'}
+              </span>
+            </button>
+          )}
           {!isCurrentVideo && (
             <a
               href={`/edit?id=${photo.id}`}
@@ -1880,20 +1967,41 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({
             <div className="h-4 w-px bg-slate-700" />
 
             {/* Quality Indicator Badge */}
-            <span
-              className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border transition-all ${
-                isHighResLoaded
-                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-700/60'
-                  : 'bg-slate-800 text-slate-400 border-slate-700'
-              }`}
-              title={
-                isHighResLoaded
-                  ? 'Uncompressed original camera image loaded'
-                  : 'Loading uncompressed original quality...'
-              }
-            >
-              {isHighResLoaded ? 'Original HD' : 'Loading HD...'}
-            </span>
+            {isHighResLoaded ? (
+              <span
+                className="text-[9px] font-semibold px-2.5 py-0.5 rounded-full border transition-all bg-emerald-950/80 text-emerald-400 border-emerald-700/60 flex items-center gap-1.5 select-none"
+                title="Uncompressed original camera master loaded at 100% fidelity"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Original HD</span>
+              </span>
+            ) : isLoadingHighRes ? (
+              <span
+                className="text-[9px] font-semibold px-2.5 py-0.5 rounded-full border transition-all bg-amber-950/80 text-amber-300 border-amber-700/60 flex items-center gap-1.5 animate-pulse select-none"
+                title="Downloading uncompressed original camera file..."
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <span>Loading Full Res...</span>
+              </span>
+            ) : is1080Loaded ? (
+              <button
+                type="button"
+                onClick={loadHighResOriginal}
+                className="text-[9px] font-semibold px-2.5 py-0.5 rounded-full border transition-all bg-sky-950/80 text-sky-300 border-sky-700/60 hover:bg-sky-900/90 hover:text-white flex items-center gap-1.5 cursor-pointer select-none"
+                title="Crisp 1080p HD preview loaded. Click to load uncompressed original camera master"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                <span>1080p HD</span>
+              </button>
+            ) : (
+              <span
+                className="text-[9px] font-semibold px-2.5 py-0.5 rounded-full border transition-all bg-slate-800/90 text-slate-300 border-slate-700 flex items-center gap-1.5 select-none"
+                title="Displaying fast preview while 1080p HD preview loads in background..."
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+                <span>Preview 512p</span>
+              </span>
+            )}
           </div>
 
           {/* Floating Bottom-Right Quick Action: Delete Photo */}

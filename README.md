@@ -585,6 +585,12 @@ mymemorypics/
 
 ## 🗺️ Roadmap & Delivered Enhancements
 
+- [x] **💎 High-Res Thumbnail on Zoom, Dedicated 'Load Original' Action & True HD Indicator (`v0.5.3`)**:
+  - **🔍 High-Res Thumbnail on Zoom**: When zooming into a photo (>1.1x), the viewer dynamically loads the high-resolution 1080p WebP preview for razor-sharp clarity without pulling multi-megabyte uncompressed camera files, keeping pan and zoom interactions silky smooth.
+  - **🚀 Dedicated 'Load Original' Action Button**: Added a prominent button in the top controls bar and an interactive trigger in the bottom toolbar (with keyboard shortcut <kbd>O</kbd>) allowing users to load uncompressed original camera files directly on demand.
+  - **🏷️ Elimination of Perpetual 'Loading HD...' Loop**: Fixed misleading ternary logic in the Lightbox toolbar that was strictly bound to `isHighResLoaded` (which only triggered when zooming deep >1.2x), causing un-zoomed 1080p photos to report `Loading HD...` indefinitely even after high-definition images had fully rendered.
+  - **🎯 Three-Tier Quality State Architecture**: Implemented real-time tracking across 3 distinct resolution tiers: `Preview (512p)` during initial instant render, `1080p HD` (with sky blue dot) as soon as the HD WebP image arrives, and `Original HD` (with emerald green dot) when uncompressed camera masters are loaded.
+  - **🏎️ Instant Cache-Hit Detection**: Added synchronous `complete` inspection on Image pre-loaders, ensuring images already cached by browser or service worker show `1080p HD` in 0ms without badge flicker.
 - [x] **⚡ Instant Lightbox & Accelerated 1080p WebP Pipeline (`v0.5.2`)**:
   - **🚀 Instant 0ms Progressive Lightbox Display**: The Lightbox viewer now renders the browser-cached 512px thumbnail immediately upon opening, guaranteeing zero blank wait-times or loading spinners, and seamlessly transitions to crisp 1080p WebP once loaded in the background.
   - **🔍 Disk-Aware 1080p Pre-Generation Pipeline**: Overhauled the background worker task in `worker.py` to identify photos physically missing 1080p WebP files on disk (restoring 17,062 renditions across 8 concurrent worker threads with BICUBIC downsampling and JPEG DCT draft decoding).

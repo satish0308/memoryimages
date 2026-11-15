@@ -8,6 +8,7 @@ RUN npm install
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+ARG BUILD_VERSION=v0.5.3
 COPY . .
 
 RUN mkdir -p /app/public
